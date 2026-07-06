@@ -1,0 +1,533 @@
+name: trustguard-agent
+
+x-python-env: &python-env
+  WORKSPACE_ROOT: /data/workspace
+  REDIS_URL: redis://redis:6379/0
+  MQ_BROKER_URL: amqp://guest:guest@rabbitmq:5672/
+  MQ_TOPIC_AGENT: execute_tasks_agent
+
+x-optional-env-files: &optional-env-files
+  - path: .env
+    required: false
+
+x-build-args: &build-args
+  DOCKERHUB_REGISTRY: ${DOCKERHUB_REGISTRY:-docker.io}
+  TRUSTGUARD_NETWORK_PROXY: ${TRUSTGUARD_NETWORK_PROXY:-}
+  NPM_CONFIG_REGISTRY: ${NPM_CONFIG_REGISTRY:-}
+  UV_INDEX_URL: ${UV_INDEX_URL:-}
+  UV_EXTRA_INDEX_URL: ${UV_EXTRA_INDEX_URL:-}
+  UV_DEFAULT_INDEX: ${UV_DEFAULT_INDEX:-}
+  PIP_INDEX_URL: ${PIP_INDEX_URL:-}
+  PIP_EXTRA_INDEX_URL: ${PIP_EXTRA_INDEX_URL:-}
+  DEBIAN_MIRROR_URL: ${DEBIAN_MIRROR_URL:-}
+  DEBIAN_SECURITY_MIRROR_URL: ${DEBIAN_SECURITY_MIRROR_URL:-}
+  GOPROXY: ${GOPROXY:-}
+  ALPINE_MIRROR_URL: ${ALPINE_MIRROR_URL:-}
+  RUBYGEMS_MIRROR_URL: ${RUBYGEMS_MIRROR_URL:-}
+
+x-build-extra-hosts: &build-extra-hosts
+  - "host.docker.internal:host-gateway"
+
+x-build-network: &build-network host
+
+services:
+  mysql:
+    image: ${MYSQL_IMAGE:-${DOCKERHUB_REGISTRY:-docker.io}/library/mysql:8.0}
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-trustguard_agent}
+      MYSQL_USER: ${MYSQL_USER:-trustguard}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-trustguard}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./docker/mysql-init.d:/docker-entrypoint-initdb.d:ro
+      - ./docker/conf.d:/etc/mysql/conf.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-root}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: ${REDIS_IMAGE:-${DOCKERHUB_REGISTRY:-docker.io}/library/redis:7-alpine}
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  rabbitmq:
+    image: ${RABBITMQ_IMAGE:-${DOCKERHUB_REGISTRY:-docker.io}/library/rabbitmq:3-management-alpine}
+    restart: unless-stopped
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 25s
+
+  qdrant:
+    image: ${QDRANT_IMAGE:-${DOCKERHUB_REGISTRY:-docker.io}/qdrant/qdrant:latest}
+    ports:
+      - "18104:6333"
+      - "18105:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: unless-stopped
+
+  evidence:
+    build:
+      context: ./evidence
+      dockerfile: Dockerfile
+      args: *build-args
+      extra_hosts: *build-extra-hosts
+      network: *build-network
+    image: ${TRUSTGUARD_IMAGE_PREFIX:-trustguard-}evidence
+    restart: unless-stopped
+    ports:
+      - "18103:18103"
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: ${MYSQL_USER:-trustguard}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-trustguard}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-trustguard_agent}
+      WORKSPACE_ROOT: /data/workspace
+      SERVER_PORT: 18103
+    volumes:
+      - workspace:/data/workspace
+    depends_on:
+      mysql: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:18103/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  orchestrator:
+    build:
+      context: ./orchestrator
+      dockerfile: Dockerfile
+      args: *build-args
+      extra_hosts: *build-extra-hosts
+      network: *build-network
+    image: ${TRUSTGUARD_IMAGE_PREFIX:-trustguard-}orchestrator
+    restart: unless-stopped
+    ports:
+      - "18081:18081"
+    environment:
+      <<: *python-env
+      EVIDENCE_BASE_URL: http://evidence:18103
+      EXECUTOR_BASE_URL: http://executor:18102
+      ENABLE_EXECUTOR: "true"
+      KB_QDRANT_URL: http://qdrant:6333
+      SKILLS_ROOT: /app/skills
+      TOOLS_REGISTRY_YAML: /app/tools_registry.yaml
+      ORCH_TASK_STORE_BACKEND: redis
+      ORCH_DEFAULT_RUN_MAX_DURATION_SECONDS: ${ORCH_DEFAULT_RUN_MAX_DURATION_SECONDS:-900}
+      ORCH_MAX_PLAN_ROUNDS_PER_PHASE: "10"
+      ORCH_PHASE_WALL_CLOCK_LIMIT_SEC: "300"
+      TRUSTGUARD_AGENT_MODE: deterministic
+      TRUSTGUARD_EXECUTOR_MODE: inline
+    env_file: *optional-env-files
+    volumes:
+      - ./skills:/app/skills:ro
+      - ./docker/tools_registry.yaml:/app/tools_registry.yaml:ro
+      - workspace:/data/workspace
+    depends_on:
+      evidence: { condition: service_healthy }
+      executor: { condition: service_started }
+      redis: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+      qdrant: { condition: service_started }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:18081/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  executor:
+    build:
+      context: ./executor
+      dockerfile: Dockerfile
+      args: *build-args
+      extra_hosts: *build-extra-hosts
+      network: *build-network
+    image: ${TRUSTGUARD_IMAGE_PREFIX:-trustguard-}executor
+    restart: unless-stopped
+    working_dir: /srv/executor
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "18102"]
+    ports:
+      - "18102:18102"
+    environment:
+      <<: *python-env
+      TRUSTGUARD_TOOLS_ROOT: /app/TRUSTGUARD_TOOLS_ROOT
+      TOOLS_REGISTRY_YAML: /app/tools_registry.yaml
+      TRUSTGUARD_SKILLS_ROOT: /app/skills
+      EXECUTOR_LOCALHOST_ALIAS: host.docker.internal
+      EXECUTOR_POINTER_ONLY: "true"
+      EXECUTOR_USE_SKILL_CONTAINERS: "true"
+      EXECUTOR_SKILL_IMAGE_PREFIX: ${TRUSTGUARD_SKILL_IMAGE_PREFIX:-trustguard-skill-}
+      EXECUTOR_DOCKER_NETWORK: trustguard-agent_default
+      EXECUTOR_SCRIPT_DEFAULT_TIMEOUT_SECONDS: "90"
+      EXECUTOR_SCRIPT_HARD_TIMEOUT_SECONDS: "120"
+      EXECUTOR_SCRIPT_NUCLEI_DEFAULT_TIMEOUT_SECONDS: "300"
+      EXECUTOR_SCRIPT_NUCLEI_HARD_TIMEOUT_SECONDS: "600"
+      NMAP_HARD_TIMEOUT_SECONDS: "120"
+    env_file: *optional-env-files
+    volumes:
+      - executor_tools:/app/TRUSTGUARD_TOOLS_ROOT
+      - ./skills:/app/skills:ro
+      - ./docker/tools_registry.yaml:/app/tools_registry.yaml:ro
+      - workspace:/data/workspace
+      - /var/run/docker.sock:/var/run/docker.sock
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:18102/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  mq-agent-worker:
+    build:
+      context: ./executor
+      dockerfile: Dockerfile
+      args: *build-args
+      extra_hosts: *build-extra-hosts
+      network: *build-network
+    image: ${TRUSTGUARD_IMAGE_PREFIX:-trustguard-}executor
+    working_dir: /srv/executor
+    command: ["python", "-m", "app.mq_agent_daemon"]
+    environment:
+      <<: *python-env
+      TRUSTGUARD_TOOLS_ROOT: /app/TRUSTGUARD_TOOLS_ROOT
+      TOOLS_REGISTRY_YAML: /app/tools_registry.yaml
+      TRUSTGUARD_SKILLS_ROOT: /app/skills
+      EXECUTOR_LOCALHOST_ALIAS: host.docker.internal
+      EXECUTOR_POINTER_ONLY: "true"
+      EXECUTOR_USE_SKILL_CONTAINERS: "true"
+      EXECUTOR_SKILL_IMAGE_PREFIX: ${TRUSTGUARD_SKILL_IMAGE_PREFIX:-trustguard-skill-}
+      EXECUTOR_DOCKER_NETWORK: trustguard-agent_default
+    env_file: *optional-env-files
+    volumes:
+      - executor_tools:/app/TRUSTGUARD_TOOLS_ROOT
+      - ./skills:/app/skills:ro
+      - ./docker/tools_registry.yaml:/app/tools_registry.yaml:ro
+      - workspace:/data/workspace
+      - /var/run/docker.sock:/var/run/docker.sock
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      redis: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+    restart: unless-stopped
+
+  gateway:
+    build:
+      context: ./gateway
+      dockerfile: Dockerfile
+      args: *build-args
+      extra_hosts: *build-extra-hosts
+      network: *build-network
+    image: ${TRUSTGUARD_IMAGE_PREFIX:-trustguard-}gateway
+    restart: unless-stopped
+    ports:
+      - "18080:18080"
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: ${MYSQL_USER:-trustguard}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-trustguard}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-trustguard_agent}
+      REDIS_URL: redis://redis:6379/0
+      MQ_BROKER_URL: amqp://guest:guest@rabbitmq:5672/
+      ORCHESTRATOR_BASE_URL: http://orchestrator:18081
+      EVIDENCE_BASE_URL: http://evidence:18103
+      EXECUTOR_BASE_URL: http://executor:18102
+      SERVER_PORT: 18080
+    env_file: *optional-env-files
+    depends_on:
+      mysql: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+      evidence: { condition: service_healthy }
+      orchestrator: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:18080/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args: *build-args
+      extra_hosts: *build-extra-hosts
+      network: *build-network
+    image: ${TRUSTGUARD_IMAGE_PREFIX:-trustguard-}frontend
+    ports:
+      - "127.0.0.1:17999:80"
+    depends_on:
+      gateway: { condition: service_healthy }
+    restart: unless-stopped
+
+  skill-curl-raw:
+    profiles: ["skills"]
+    build:
+      context: ./skills/curl-raw
+      dockerfile: Dockerfile
+      args: *build-args
+      extra_hosts: *build-extra-hosts
+      network: *build-network
+    image: ${TRUSTGUARD_SKILL_IMAGE_PREFIX:-trustguard-skill-}curl-raw:latest
+
+  skill-nmap:
+    profiles: ["skills"]
+    build:
+      context: ./skills/nmap
+      dockerfile: Dockerfile
+      args: *build-args
+      extra_hosts: *build-extra-hosts
+      network: *build-network
+    image: ${TRUSTGUARD_SKILL_IMAGE_PREFIX:-trustguard-skill-}nmap:latest
+
+  skill-http-enum:
+    profiles: ["skills"]
+    build:
+      context: ./skills/http-enum
+      dockerfile: Dockerfile
+      args: *build-args
+      extra_hosts: *build-extra-hosts
+      network: *build-network
+    image: ${TRUSTGUARD_SKILL_IMAGE_PREFIX:-trustguard-skill-}http-enum:latest
+
+  skill-httpx:
+    profiles: ["skills"]
+    build:
+      context: ./skills/httpx
+      dockerfile: Dockerfile
+      args: *build-args
+      extra_hosts: *build-extra-hosts
+      network: *build-network
+    image: ${TRUSTGUARD_SKILL_IMAGE_PREFIX:-trustguard-skill-}httpx:latest
+
+  skill-ehole:
+    profiles: ["skills"]
+    build:
+      context: ./skills/ehole
+      dockerfile: Dockerfile
+      args: *build-args
+      extra_hosts: *build-extra-hosts
+      network: *build-network
+    image: ${TRUSTGUARD_SKILL_IMAGE_PREFIX:-trustguard-skill-}ehole:latest
+
+  skill-dirsearch:
+    profiles: ["skills"]
+    build:
+      context: ./skills/dirsearch
+      dockerfile: Dockerfile
+      args: *build-args
+      extra_hosts: *build-extra-hosts
+      network: *build-network
+    image: ${TRUSTGUARD_SKILL_IMAGE_PREFIX:-trustguard-skill-}dirsearch:latest
+
+  skill-ffuf-dir-enum:
+    profiles: ["skills"]
+    build:
+      context: ./skills/ffuf-dir-enum
+      dockerfile: Dockerfile
+      args: *build-args
+      extra_hosts: *build-extra-hosts
+      network: *build-network
+    image: ${TRUSTGUARD_SKILL_IMAGE_PREFIX:-trustguard-skill-}ffuf-dir-enum:latest
+
+  skill-katana:
+    profiles: ["skills"]
+    build:
+      context: ./skills
+      dockerfile: katana/Dockerfile
+      args: *build-args
+      extra_hosts: *build-extra-hosts
+      network: *build-network
+    image: ${TRUSTGUARD_SKILL_IMAGE_PREFIX:-trustguard-skill-}katana:latest
+
+  skill-dispatcher:
+    profiles: ["skills"]
+    build:
+      context: ./skills
+      dockerfile: dispatcher/Dockerfile
+      args: *build-args
+      extra_hosts: *build-extra-hosts
+      network: *build-network
+    image: ${TRUSTGUARD_SKILL_IMAGE_PREFIX:-trustguard-skill-}dispatcher:latest
+
+  skill-nuclei:
+    profiles: ["skills"]
+    build:
+      context: ./skills
+      dockerfile: nuclei/Dockerfile
+      args: *build-args
+      extra_hosts: *build-extra-hosts
+      network: *build-network
+    image: ${TRUSTGUARD_SKILL_IMAGE_PREFIX:-trustguard-skill-}nuclei:latest
+
+  skill-nikto-scan:
+    profiles: ["skills"]
+    build:
+      context: ./skills/nikto-scan
+      dockerfile: Dockerfile
+      args: *build-args
+      extra_hosts: *build-extra-hosts
+      network: *build-network
+    image: ${TRUSTGUARD_SKILL_IMAGE_PREFIX:-trustguard-skill-}nikto-scan:latest
+
+  skill-fscan:
+    profiles: ["skills"]
+    build:
+      context: ./skills/fscan
+      dockerfile: Dockerfile
+      args: *build-args
+      extra_hosts: *build-extra-hosts
+      network: *build-network
+    image: ${TRUSTGUARD_SKILL_IMAGE_PREFIX:-trustguard-skill-}fscan:latest
+
+  skill-metasploit:
+    profiles: ["skills"]
+    build:
+      context: ./skills/metasploit
+      dockerfile: Dockerfile
+      args: *build-args
+      extra_hosts: *build-extra-hosts
+      network: *build-network
+    image: ${TRUSTGUARD_SKILL_IMAGE_PREFIX:-trustguard-skill-}metasploit:latest
+
+  skill-metasploit-session:
+    profiles: ["skills"]
+    build:
+      context: ./skills/metasploit-session
+      dockerfile: Dockerfile
+      args: *build-args
+      extra_hosts: *build-extra-hosts
+      network: *build-network
+    image: ${TRUSTGUARD_SKILL_IMAGE_PREFIX:-trustguard-skill-}metasploit-session:latest
+
+  skill-python-sandbox:
+    profiles: ["skills"]
+    build:
+      context: ./skills/python-sandbox
+      dockerfile: Dockerfile
+      args: *build-args
+      extra_hosts: *build-extra-hosts
+      network: *build-network
+    image: ${TRUSTGUARD_SKILL_IMAGE_PREFIX:-trustguard-skill-}python-sandbox:latest
+
+  skill-sqlmap:
+    profiles: ["skills"]
+    build:
+      context: ./skills/sqlmap
+      dockerfile: Dockerfile
+      args: *build-args
+      extra_hosts: *build-extra-hosts
+      network: *build-network
+    image: ${TRUSTGUARD_SKILL_IMAGE_PREFIX:-trustguard-skill-}sqlmap:latest
+
+  skill-fenjing:
+    profiles: ["skills"]
+    build:
+      context: ./skills/fenjing
+      dockerfile: Dockerfile
+      args: *build-args
+      extra_hosts: *build-extra-hosts
+      network: *build-network
+    image: ${TRUSTGUARD_SKILL_IMAGE_PREFIX:-trustguard-skill-}fenjing:latest
+
+  skill-baidu-search:
+    profiles: ["skills"]
+    build:
+      context: ./skills/baidu-search
+      dockerfile: Dockerfile
+      args: *build-args
+      extra_hosts: *build-extra-hosts
+      network: *build-network
+    image: ${TRUSTGUARD_SKILL_IMAGE_PREFIX:-trustguard-skill-}baidu-search:latest
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      BAIDU_API_KEY: ${BAIDU_API_KEY:-}
+
+  skill-read-workspace-artifact:
+    profiles: ["skills"]
+    build:
+      context: ./skills/read_workspace_artifact
+      dockerfile: Dockerfile
+      args: *build-args
+      extra_hosts: *build-extra-hosts
+      network: *build-network
+    image: ${TRUSTGUARD_SKILL_IMAGE_PREFIX:-trustguard-skill-}read_workspace_artifact:latest
+
+  skill-read-target-list:
+    profiles: ["skills"]
+    build:
+      context: ./skills/read_target_list
+      dockerfile: Dockerfile
+      args: *build-args
+      extra_hosts: *build-extra-hosts
+      network: *build-network
+    image: ${TRUSTGUARD_SKILL_IMAGE_PREFIX:-trustguard-skill-}read_target_list:latest
+
+  skill-webshell-php:
+    profiles: ["skills"]
+    build:
+      context: ./skills/webshell-php
+      dockerfile: Dockerfile
+      args: *build-args
+      extra_hosts: *build-extra-hosts
+      network: *build-network
+    image: ${TRUSTGUARD_SKILL_IMAGE_PREFIX:-trustguard-skill-}webshell-php:latest
+
+  skill-whatweb-fingerprint:
+    profiles: ["skills"]
+    build:
+      context: ./skills/whatweb-fingerprint
+      dockerfile: Dockerfile
+      args: *build-args
+      extra_hosts: *build-extra-hosts
+      network: *build-network
+    image: ${TRUSTGUARD_SKILL_IMAGE_PREFIX:-trustguard-skill-}whatweb-fingerprint:latest
+
+  skill-linpeas:
+    profiles: ["skills"]
+    build:
+      context: ./skills/linpeas
+      dockerfile: Dockerfile
+      args: *build-args
+      extra_hosts: *build-extra-hosts
+    image: ${TRUSTGUARD_SKILL_IMAGE_PREFIX:-trustguard-skill-}linpeas:latest
+
+  skill-v1-micro-sample:
+    profiles: ["skills"]
+    build:
+      context: .
+      dockerfile: skills/v1-micro-sample/Dockerfile
+      args: *build-args
+      extra_hosts: *build-extra-hosts
+      network: *build-network
+    image: ${TRUSTGUARD_SKILL_IMAGE_PREFIX:-trustguard-skill-}v1-micro-sample:latest
+
+volumes:
+  mysql_data:
+  qdrant_data:
+  workspace:
+  executor_tools:

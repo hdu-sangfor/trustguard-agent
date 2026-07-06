@@ -1,0 +1,10 @@
+# Katana sparse follow-up seed paths.
+# One path per line. Relative paths are auto-normalized to "/<path>".
+/showcase.jsp
+/index.jsp
+/welcome.jsp
+/home.jsp
+/layout.jsp
+/struts2-showcase
+/struts2-showcase/
+/showcase

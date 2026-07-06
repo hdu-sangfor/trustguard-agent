@@ -1,0 +1,51 @@
+name: Skill Image Security
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - "**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: skill-image-security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  skill-image-security:
+    name: Skill Image Security (${{ matrix.skill }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        skill:
+          - httpx
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install skill image security tools
+        shell: bash
+        run: .github/workflows/skill-image-security.d/install-tools.sh
+
+      - name: Scan skill image
+        shell: bash
+        run: .github/workflows/skill-image-security.d/scan-skill-image.sh ".github/workflows/skill-image-security.d/env/${{ matrix.skill }}.env"
+
+      - name: Upload skill security artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-skill-${{ matrix.skill }}
+          path: |
+            ci-artifacts/sbom-skill-${{ matrix.skill }}.spdx.json
+            ci-artifacts/grype-skill-${{ matrix.skill }}.json
+            ci-artifacts/grype-skill-${{ matrix.skill }}.txt
+          if-no-files-found: error

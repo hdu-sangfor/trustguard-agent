@@ -1,0 +1,40 @@
+{
+  "snapshot_version": "r4f-e/v1",
+  "http_payload": {
+    "task_id": "t-snapshot-r4f-e",
+    "skill_id": "nmap",
+    "target": "host:example.com",
+    "params": {
+      "ports": "80,443",
+      "timeout": 120
+    },
+    "allowed_target": "host:example.com",
+    "context": {
+      "phase": "RECON",
+      "plan_id": "p-snapshot",
+      "request_id": "req-snapshot-r4f-e",
+      "agent_role": "orchestrator"
+    },
+    "execution_kind": "skill",
+    "request_id": "req-snapshot-r4f-e"
+  },
+  "mq_payload": {
+    "request_id": "req-snapshot-r4f-e",
+    "task_id": "t-snapshot-r4f-e",
+    "skill_id": "nmap",
+    "target": "host:example.com",
+    "params": {
+      "ports": "80,443",
+      "timeout": 120
+    },
+    "allowed_target": "host:example.com",
+    "context": {
+      "phase": "RECON",
+      "plan_id": "p-snapshot",
+      "request_id": "req-snapshot-r4f-e",
+      "agent_role": "orchestrator"
+    },
+    "todo_id": null,
+    "execution_kind": "skill"
+  }
+}

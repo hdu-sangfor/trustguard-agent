@@ -1,0 +1,651 @@
+{
+  "version": "4.0",
+  "config": {
+    "max_total_lines": 120000,
+    "enforce_private": true,
+    "private_fail_policy": "hard_fail",
+    "dedup_keep_first": true
+  },
+  "seeds": [
+    "seeds/struts2.txt",
+    "seeds/spring.txt"
+  ],
+  "base": [
+    "base/core_top10k.txt"
+  ],
+  "private": [
+    "dict_private/my_common_leak.txt",
+    "dict_private/struts2.txt"
+  ],
+  "mappings": {
+    "actuator": [
+      "dict_open/actuator_short.txt"
+    ],
+    "adfs": [
+      "dict_open/adfs_short.txt"
+    ],
+    "admin": [
+      "dict_open/admin_short.txt",
+      "dict_private/internal_admin.txt"
+    ],
+    "adobe_aem": [
+      "dict_open/adobe_aem_short.txt"
+    ],
+    "alphanum_case": [
+      "dict_open/alphanum_case_short.txt"
+    ],
+    "android": [
+      "dict_open/android_short.txt"
+    ],
+    "apache": [
+      "dict_open/apache_short.txt"
+    ],
+    "api": [
+      "dict_open/api_short.txt"
+    ],
+    "apk": [
+      "dict_open/apk_short.txt"
+    ],
+    "asax": [
+      "dict_open/asax_short.txt"
+    ],
+    "ascx": [
+      "dict_open/ascx_short.txt"
+    ],
+    "asmx": [
+      "dict_open/asmx_short.txt"
+    ],
+    "asp": [
+      "dict_open/asp_short.txt"
+    ],
+    "aws": [
+      "dict_open/aws_short.txt"
+    ],
+    "axis": [
+      "dict_open/axis_short.txt"
+    ],
+    "azure": [
+      "dict_open/azure_short.txt"
+    ],
+    "backdoors": [
+      "dict_open/backdoors_short.txt"
+    ],
+    "bitrix": [
+      "dict_open/bitrix_short.txt"
+    ],
+    "bot_control_panels": [
+      "dict_open/bot_control_panels_short.txt"
+    ],
+    "c": [
+      "dict_open/c_short.txt"
+    ],
+    "caobox_cms": [
+      "dict_open/caobox_cms_short.txt"
+    ],
+    "cgi": [
+      "dict_open/cgi_short.txt"
+    ],
+    "cms": [
+      "dict_open/cms_short.txt"
+    ],
+    "coldfusion": [
+      "dict_open/coldfusion_short.txt"
+    ],
+    "command_injection": [
+      "dict_open/command_injection_short.txt"
+    ],
+    "commands_linux": [
+      "dict_open/commands_linux_short.txt"
+    ],
+    "commands_osx": [
+      "dict_open/commands_osx_short.txt"
+    ],
+    "commands_windows": [
+      "dict_open/commands_windows_short.txt"
+    ],
+    "common_unix_httpd_logs": [
+      "dict_open/common_unix_httpd_logs_short.txt"
+    ],
+    "conf": [
+      "dict_open/conf_short.txt"
+    ],
+    "config": [
+      "dict_open/config_short.txt"
+    ],
+    "confluence": [
+      "dict_open/confluence_short.txt"
+    ],
+    "cors": [
+      "dict_open/cors_short.txt"
+    ],
+    "cpp": [
+      "dict_open/cpp_short.txt"
+    ],
+    "crlf": [
+      "dict_open/crlf_short.txt"
+    ],
+    "cs": [
+      "dict_open/cs_short.txt"
+    ],
+    "css": [
+      "dict_open/css_short.txt"
+    ],
+    "dangerzone": [
+      "dict_open/dangerzone_short.txt"
+    ],
+    "db_backups": [
+      "dict_open/db_backups_short.txt"
+    ],
+    "debug": [
+      "dict_open/debug_short.txt"
+    ],
+    "default_credentials": [
+      "dict_open/default_credentials_short.txt"
+    ],
+    "deserialization": [
+      "dict_open/deserialization_short.txt"
+    ],
+    "directories": [
+      "dict_open/directories_short.txt"
+    ],
+    "django": [
+      "dict_open/django_short.txt"
+    ],
+    "dll": [
+      "dict_open/dll_short.txt"
+    ],
+    "dns": [
+      "dict_open/dns_short.txt"
+    ],
+    "do": [
+      "dict_open/do_short.txt"
+    ],
+    "docker": [
+      "dict_open/docker_short.txt"
+    ],
+    "domino": [
+      "dict_open/domino_short.txt"
+    ],
+    "dorks": [
+      "dict_open/dorks_short.txt"
+    ],
+    "dotfiles": [
+      "dict_open/dotfiles_short.txt"
+    ],
+    "drupal": [
+      "dict_open/drupal_short.txt"
+    ],
+    "ec2": [
+      "dict_open/ec2_short.txt"
+    ],
+    "editor": [
+      "dict_open/editor_short.txt"
+    ],
+    "env": [
+      "dict_open/env_short.txt"
+    ],
+    "error": [
+      "dict_open/error_short.txt"
+    ],
+    "extensions": [
+      "dict_open/extensions_short.txt"
+    ],
+    "fatwire": [
+      "dict_open/fatwire_short.txt"
+    ],
+    "flask": [
+      "dict_open/flask_short.txt"
+    ],
+    "flyspray": [
+      "dict_open/flyspray_short.txt"
+    ],
+    "frontpage": [
+      "dict_open/frontpage_short.txt"
+    ],
+    "fuzz_admin_panels": [
+      "dict_open/fuzz_admin_panels_short.txt"
+    ],
+    "fuzz_general": [
+      "dict_open/fuzz_general_short.txt"
+    ],
+    "fuzz_mutations": [
+      "dict_open/fuzz_mutations_short.txt"
+    ],
+    "git_config": [
+      "dict_open/git_config_short.txt"
+    ],
+    "golang": [
+      "dict_open/golang_short.txt"
+    ],
+    "graphql": [
+      "dict_open/graphql_short.txt"
+    ],
+    "gtld": [
+      "dict_open/gtld_short.txt"
+    ],
+    "help": [
+      "dict_open/help_short.txt"
+    ],
+    "hp_system_mgmt_homepage": [
+      "dict_open/hp_system_mgmt_homepage_short.txt"
+    ],
+    "htaccess": [
+      "dict_open/htaccess_short.txt"
+    ],
+    "html": [
+      "dict_open/html_short.txt"
+    ],
+    "http_methods": [
+      "dict_open/http_methods_short.txt"
+    ],
+    "http_owa": [
+      "dict_open/http_owa_short.txt"
+    ],
+    "hyperion": [
+      "dict_open/hyperion_short.txt"
+    ],
+    "iis": [
+      "dict_open/iis_short.txt"
+    ],
+    "inc": [
+      "dict_open/inc_short.txt"
+    ],
+    "index": [
+      "dict_open/index_short.txt"
+    ],
+    "ini": [
+      "dict_open/ini_short.txt"
+    ],
+    "install": [
+      "dict_open/install_short.txt"
+    ],
+    "iplanet": [
+      "dict_open/iplanet_short.txt"
+    ],
+    "iso": [
+      "dict_open/iso_short.txt"
+    ],
+    "jar": [
+      "dict_open/jar_short.txt"
+    ],
+    "java": [
+      "dict_open/java_short.txt",
+      "seeds/struts2.txt"
+    ],
+    "javascript": [
+      "dict_open/javascript_short.txt"
+    ],
+    "jboss": [
+      "dict_open/jboss_short.txt"
+    ],
+    "jenkins": [
+      "dict_open/jenkins_short.txt"
+    ],
+    "jersey": [
+      "dict_open/jersey_short.txt"
+    ],
+    "joomla": [
+      "dict_open/joomla_short.txt"
+    ],
+    "jrun": [
+      "dict_open/jrun_short.txt"
+    ],
+    "jsf": [
+      "dict_open/jsf_short.txt"
+    ],
+    "json": [
+      "dict_open/json_short.txt"
+    ],
+    "jsp": [
+      "dict_open/jsp_short.txt"
+    ],
+    "juicy": [
+      "dict_open/juicy_short.txt"
+    ],
+    "jwt": [
+      "dict_open/jwt_short.txt"
+    ],
+    "k8s": [
+      "dict_open/k8s_short.txt"
+    ],
+    "kentico": [
+      "dict_open/kentico_short.txt"
+    ],
+    "kibana": [
+      "dict_open/kibana_short.txt"
+    ],
+    "lang_english": [
+      "dict_open/lang_english_short.txt"
+    ],
+    "lang_finnish": [
+      "dict_open/lang_finnish_short.txt"
+    ],
+    "lang_french": [
+      "dict_open/lang_french_short.txt"
+    ],
+    "lang_spanish": [
+      "dict_open/lang_spanish_short.txt"
+    ],
+    "laravel": [
+      "dict_open/laravel_short.txt"
+    ],
+    "ldap": [
+      "dict_open/ldap_short.txt"
+    ],
+    "ldap_attributes": [
+      "dict_open/ldap_attributes_short.txt"
+    ],
+    "lfi": [
+      "dict_open/lfi_short.txt"
+    ],
+    "liferay": [
+      "dict_open/liferay_short.txt"
+    ],
+    "linux": [
+      "dict_open/linux_short.txt"
+    ],
+    "log": [
+      "dict_open/log_short.txt"
+    ],
+    "log4j": [
+      "dict_open/log4j_short.txt"
+    ],
+    "logins": [
+      "dict_open/logins_short.txt"
+    ],
+    "lotusnotes": [
+      "dict_open/lotusnotes_short.txt"
+    ],
+    "mac": [
+      "dict_open/mac_short.txt"
+    ],
+    "magento": [
+      "dict_open/magento_short.txt"
+    ],
+    "malicious": [
+      "dict_open/malicious_short.txt"
+    ],
+    "mdb": [
+      "dict_open/mdb_short.txt"
+    ],
+    "mdf": [
+      "dict_open/mdf_short.txt"
+    ],
+    "microsoft": [
+      "dict_open/microsoft_short.txt"
+    ],
+    "modx": [
+      "dict_open/modx_short.txt"
+    ],
+    "names": [
+      "dict_open/names_short.txt"
+    ],
+    "netware": [
+      "dict_open/netware_short.txt"
+    ],
+    "nginx": [
+      "dict_open/nginx_short.txt"
+    ],
+    "nodejs": [
+      "dict_open/nodejs_short.txt"
+    ],
+    "nosql": [
+      "dict_open/nosql_short.txt"
+    ],
+    "npmrc": [
+      "dict_open/npmrc_short.txt"
+    ],
+    "oauth": [
+      "dict_open/oauth_short.txt"
+    ],
+    "open_redirect": [
+      "dict_open/open_redirect_short.txt"
+    ],
+    "oracle": [
+      "dict_open/oracle_short.txt"
+    ],
+    "parameters": [
+      "dict_open/parameters_short.txt"
+    ],
+    "paths": [
+      "dict_open/paths_short.txt"
+    ],
+    "pdb": [
+      "dict_open/pdb_short.txt"
+    ],
+    "peoplesoft": [
+      "dict_open/peoplesoft_short.txt"
+    ],
+    "perl": [
+      "dict_open/perl_short.txt"
+    ],
+    "permutations": [
+      "dict_open/permutations_short.txt"
+    ],
+    "php": [
+      "dict_open/php_short.txt"
+    ],
+    "php_myadmin": [
+      "dict_open/php_myadmin_short.txt"
+    ],
+    "php_nuke": [
+      "dict_open/php_nuke_short.txt"
+    ],
+    "phpunit": [
+      "dict_open/phpunit_short.txt"
+    ],
+    "piwik": [
+      "dict_open/piwik_short.txt"
+    ],
+    "properties": [
+      "dict_open/properties_short.txt"
+    ],
+    "proxy_conf": [
+      "dict_open/proxy_conf_short.txt"
+    ],
+    "python": [
+      "dict_open/python_short.txt"
+    ],
+    "raft": [
+      "dict_open/raft_short.txt"
+    ],
+    "rails": [
+      "dict_open/rails_short.txt"
+    ],
+    "readme": [
+      "dict_open/readme_short.txt"
+    ],
+    "resx": [
+      "dict_open/resx_short.txt"
+    ],
+    "reverse_proxy_inconsistencies": [
+      "dict_open/reverse_proxy_inconsistencies_short.txt"
+    ],
+    "rfi": [
+      "dict_open/rfi_short.txt"
+    ],
+    "root": [
+      "dict_open/root_short.txt"
+    ],
+    "roundcube": [
+      "dict_open/roundcube_short.txt"
+    ],
+    "ruby": [
+      "dict_open/ruby_short.txt"
+    ],
+    "sap": [
+      "dict_open/sap_short.txt"
+    ],
+    "schemes": [
+      "dict_open/schemes_short.txt"
+    ],
+    "secret_keywords": [
+      "dict_open/secret_keywords_short.txt"
+    ],
+    "setup": [
+      "dict_open/setup_short.txt"
+    ],
+    "sh": [
+      "dict_open/sh_short.txt"
+    ],
+    "sharepoint": [
+      "dict_open/sharepoint_short.txt"
+    ],
+    "shells": [
+      "dict_open/shells_short.txt"
+    ],
+    "shopware": [
+      "dict_open/shopware_short.txt"
+    ],
+    "sid": [
+      "dict_open/sid_short.txt"
+    ],
+    "sitecore": [
+      "dict_open/sitecore_short.txt"
+    ],
+    "sitefinity": [
+      "dict_open/sitefinity_short.txt"
+    ],
+    "siteminder": [
+      "dict_open/siteminder_short.txt"
+    ],
+    "sln": [
+      "dict_open/sln_short.txt"
+    ],
+    "snmp": [
+      "dict_open/snmp_short.txt"
+    ],
+    "source": [
+      "dict_open/source_short.txt"
+    ],
+    "spring": [
+      "dict_open/spring_short.txt"
+    ],
+    "sql": [
+      "dict_open/sql_short.txt"
+    ],
+    "sqli": [
+      "dict_open/sqli_short.txt"
+    ],
+    "ssi_esi": [
+      "dict_open/ssi_esi_short.txt"
+    ],
+    "ssrf": [
+      "dict_open/ssrf_short.txt"
+    ],
+    "ssti": [
+      "dict_open/ssti_short.txt"
+    ],
+    "subdomains": [
+      "dict_open/subdomains_short.txt"
+    ],
+    "sunappserverglassfish": [
+      "dict_open/sunappserverglassfish_short.txt"
+    ],
+    "svc": [
+      "dict_open/svc_short.txt"
+    ],
+    "swagger": [
+      "dict_open/swagger_short.txt"
+    ],
+    "swf": [
+      "dict_open/swf_short.txt"
+    ],
+    "symfony": [
+      "dict_open/symfony_short.txt"
+    ],
+    "test": [
+      "dict_open/test_short.txt"
+    ],
+    "tftp": [
+      "dict_open/tftp_short.txt"
+    ],
+    "tomcat": [
+      "dict_open/tomcat_short.txt"
+    ],
+    "tpl": [
+      "dict_open/tpl_short.txt"
+    ],
+    "traversal": [
+      "dict_open/traversal_short.txt"
+    ],
+    "txt": [
+      "dict_open/txt_short.txt"
+    ],
+    "umbraco": [
+      "dict_open/umbraco_short.txt"
+    ],
+    "upload_variants": [
+      "dict_open/upload_variants_short.txt"
+    ],
+    "uri_fuzzing": [
+      "dict_open/uri_fuzzing_short.txt"
+    ],
+    "usernames": [
+      "dict_open/usernames_short.txt"
+    ],
+    "vb": [
+      "dict_open/vb_short.txt"
+    ],
+    "vignette": [
+      "dict_open/vignette_short.txt"
+    ],
+    "web_files": [
+      "dict_open/web_files_short.txt"
+    ],
+    "web_inf": [
+      "dict_open/web_inf_short.txt"
+    ],
+    "weblogic": [
+      "dict_open/weblogic_short.txt"
+    ],
+    "websocket": [
+      "dict_open/websocket_short.txt"
+    ],
+    "websphere": [
+      "dict_open/websphere_short.txt"
+    ],
+    "wellknown": [
+      "dict_open/wellknown_short.txt"
+    ],
+    "windows": [
+      "dict_open/windows_short.txt"
+    ],
+    "wordpress": [
+      "dict_open/wordpress_short.txt"
+    ],
+    "ws_dirs": [
+      "dict_open/ws_dirs_short.txt"
+    ],
+    "wsdl": [
+      "dict_open/wsdl_short.txt"
+    ],
+    "xml": [
+      "dict_open/xml_short.txt"
+    ],
+    "xpath": [
+      "dict_open/xpath_short.txt"
+    ],
+    "xslt": [
+      "dict_open/xslt_short.txt"
+    ],
+    "xss": [
+      "dict_open/xss_short.txt"
+    ],
+    "xxe": [
+      "dict_open/xxe_short.txt"
+    ],
+    "yaml": [
+      "dict_open/yaml_short.txt"
+    ],
+    "yii": [
+      "dict_open/yii_short.txt"
+    ],
+    "zend": [
+      "dict_open/zend_short.txt"
+    ],
+    "zip": [
+      "dict_open/zip_short.txt"
+    ]
+  }
+}

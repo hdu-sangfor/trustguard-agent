@@ -1,0 +1,9 @@
+{
+  "slug": "ysoserial",
+  "version": "1.0.0",
+  "category": "EXPLOIT",
+  "description": "Java deserialization payload generator for common gadget chains (CommonsBeanutils, CC1-CC6)",
+  "entrypoint": "scripts/execute.py",
+  "tags": ["exploit", "rce"],
+  "phases": ["EXPLOIT"]
+}

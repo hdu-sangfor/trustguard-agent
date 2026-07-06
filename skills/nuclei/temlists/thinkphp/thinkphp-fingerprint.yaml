@@ -1,0 +1,35 @@
+id: thinkphp-fingerprint-detect
+
+info:
+  name: ThinkPHP Framework Fingerprint
+  author: pentest-platform
+  severity: info
+  description: |
+    Confirms ThinkPHP framework presence via common response fingerprints
+    (powered-by headers, default welcome page strings, and error layouts).
+    Non-destructive; used as a safe-poc fallback when RCE endpoints are
+    blocked or not yet exposed.
+  tags: safe-poc, thinkphp, tech
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/"
+      - "{{BaseURL}}/index.php"
+      - "{{BaseURL}}/public/index.php"
+    matchers-condition: or
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "ThinkPHP"
+          - "十年磨一剑"
+          - "顶层的设计"
+      - type: word
+        part: header
+        words:
+          - "ThinkPHP"
+      - type: regex
+        part: body
+        regex:
+          - "(?i)powered\\s*by\\s*ThinkPHP"

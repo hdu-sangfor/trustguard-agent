@@ -1,0 +1,7 @@
+/actuator
+/actuator/health
+/actuator/env
+/actuator/mappings
+/swagger-ui/
+/v3/api-docs
+/error

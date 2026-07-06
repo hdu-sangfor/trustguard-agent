@@ -1,0 +1,14 @@
+/openmessaging.asmx?wsdl
+/tecopenmessaging/openmessaging.asmx?wsdl
+/tomconnect/openmessaging.asmx?wsdl
+/tomconnect_apo/openmessaging.asmx?wsdl
+/tompreprod/openmessaging.asmx?wsdl
+AWSECommerceService.wsdl
+Authentication.wsdl
+ProjectService.wsdl
+UserService.wsdl
+customer.wsdl
+domain.wsdl
+domaincontact.wsdl
+domainuscontact.wsdl
+fund.wsdl

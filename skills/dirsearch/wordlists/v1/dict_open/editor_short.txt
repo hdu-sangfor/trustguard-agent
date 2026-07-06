@@ -1,0 +1,3 @@
+/etc/importers/bulkeditor.html
+/wp-content/plugins/admin-menu-editor/menu-editor.php
+/wp-content/plugins/user-role-editor/user-role-editor.php

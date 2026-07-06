@@ -1,0 +1,245 @@
+# 渗透工具注册表：标注每个工具在 TRUSTGUARD_TOOLS_ROOT 下的位置
+# Executor / 脚本通过本文件解析出可执行路径，便于扩展到 50+ 工具
+#
+# Skill 定义统一放在项目根目录 skills/。可构建 skill 需包含 SKILL.md、_meta.json、Dockerfile；
+# 文档/占位 skill 可只提供 SKILL.md/_meta.json，不进入 skills profile。
+# Skill 镜像构建通过根 docker-compose.yml 的 skills profile；构建单个镜像：
+# docker compose --profile skills build skill-nmap
+#
+# 工具根目录：由环境变量 TRUSTGUARD_TOOLS_ROOT 指定。
+# 路径：均相对于该根目录，例如 WebTesting/sqlmap-1.10 表示 {TRUSTGUARD_TOOLS_ROOT}/WebTesting/sqlmap-1.10
+#
+# 分类与架构文档 §7 对应：
+#   NetworkScan / VulnScan / WebTesting / BruteForce / PostExploit / Search
+
+# R5b 契约（与 executor app/registry_validation.py 一致，CI：tests/contracts/test_tools_registry_contract_unit.py）：
+#   每个 skill 必填：category（非空字符串）、runner（python|binary）、path、executable
+#   path / executable 可为 ""（表示脚本/PATH 模式）；可选 default_args: [标量列表]
+# R5c（可选键 extract_kb_features，bool；省略=false）：
+#   false/省略：默认 no-op — 禁止将「依赖包内 extract_kb_features 实现」的产物写入向量特征路径
+#   true：声明 skills/<id>/kb_features.py 中 extract_kb_features；executor 挂载到 parsed_artifacts.kb_features
+#   策略 API：executor app/kb_feature_policy.py、orchestrator core/kb_feature_policy.py
+# 以下为示例与已配置项，按需增删
+tools:
+
+  curl-raw:
+    category: Recon/ThreatModel/VulnScan/Exploit
+    path: ""
+    executable: ""
+    runner: python
+
+  # ---------- 网络扫描 ----------
+  nmap:
+    category: NetworkScan
+    path: NetworkScan/nmap
+    executable: nmap
+    runner: binary
+    extract_kb_features: true
+    # 系统 PATH 中已有 nmap 时，path 可留空或填 ""
+
+  # ---------- Web 枚举 ----------
+  http-enum:
+    category: WebRecon
+    path: ""
+    executable: ""
+    runner: python
+
+  httpx:
+    category: WebRecon
+    path: ""
+    executable: ""
+    runner: python
+
+  ehole:
+    category: WebRecon
+    path: ""
+    executable: ""
+    runner: python
+
+  #whatweb-fingerprint:
+  #  category: WebRecon
+  #  path: ""
+  #  executable: ""
+  #  runner: python
+
+  # ffuf-dir-enum:
+  #   category: WebRecon
+  #   path: ""
+  #   executable: ""
+  #   runner: python
+
+  dirsearch:
+    category: WebRecon
+    path: ""
+    executable: ""
+    runner: python
+
+  # Web 漏洞流水线：katana（发现）→ dispatcher（ETL/分片）→ nuclei（-l 分片扫描）
+  katana:
+    category: WebRecon
+    path: ""
+    executable: ""
+    runner: python
+
+  dispatcher:
+    # 加入 ThreatModel/Exploit：THREAT_MODEL 阶段需 dispatcher 整合证据；EXPLOIT 阶段重组 chunk 驱动利用/复测扫描
+    category: WebRecon/ThreatModel/VulnScan/Exploit
+    path: ""
+    executable: ""
+    runner: python
+
+  # ---------- 漏洞扫描 ----------
+  nuclei:
+    # 加入 Exploit：nuclei 带有 exploit tag 的模板可用于定向漏洞利用验证（如 S2-057 OGNL PoC），
+    # 避免 EXPLOIT 阶段只剩 curl-raw 盲打（已观察到 task-0385... 的失效场景）
+    category: VulnScan/Exploit
+    path: VulnScan/nuclei
+    executable: nuclei
+    runner: python
+    extract_kb_features: true
+
+  #nikto-scan:
+  #  category: VulnScan
+  #  path: ""
+  #  executable: ""
+  #  runner: python
+
+  #fscan:
+  #  category: Recon/VulnScan/Exploit
+  #  path: VulnScan/fscan
+  #  executable: fscan
+  #  runner: binary
+    # 系统 PATH 中已有 fscan 时，path 可留空或填 ""
+
+  # metasploit:
+  #   category: VulnScan/Exploit
+  #   path: PostExploit/metasploit
+  #   executable: msfconsole
+  #   runner: binary
+
+  #metasploit-session:
+  #  category: Exploit
+  #  path: PostExploit/metasploit
+  #  executable: msfconsole
+  #  runner: binary
+
+  # ---------- Python Sandbox ----------
+  #python-sandbox:
+  #  category: Exploit/Recon
+  #  path: ""
+  #  executable: ""
+  #  runner: python
+
+  # ---------- Web 应用测试 ----------
+  #sqlmap:
+  #  category: WebTesting
+  #  path: WebTesting/sqlmap-1.10
+  #  executable: sqlmap.py
+  #  runner: python
+    # 可选：默认参数模板，Executor 可据此拼接 target 等
+    # default_args: ["--batch", "--risk=1", "--level=1"]
+
+  #fenjing:
+  #  category: WebTesting
+  #  path: ""
+  #  executable: ""
+  #  runner: python 
+
+  # ---------- 暴力破解 ----------
+  # hydra:
+  #   category: BruteForce
+  #   path: BruteForce/hydra
+  #   executable: hydra
+  #   runner: binary
+
+  # ---------- 后渗透 ----------
+  # impacket:
+  #   category: PostExploit
+  #   path: PostExploit/impacket
+  #   executable: ""
+  #   runner: python
+
+  # ---------- 联网搜索（编排器/LLM 可用） ----------
+  baidu-search:
+    category: Search
+    path: ""
+    executable: ""
+    runner: python
+    # 由外部 skill 脚本 skills/baidu-search/scripts/execute.py 调用，需环境变量 BAIDU_API_KEY
+
+  # ---------- 证据读取（工作区工件） ----------
+  read_workspace_artifact:
+    category: Search/VulnScan/Exploit
+    path: ""
+    executable: ""
+    runner: python
+
+  read_target_list:
+    category: Search/VulnScan/Exploit
+    path: ""
+    executable: ""
+    runner: python
+
+  # ---------- V1 样板 Micro-Skill（Pydantic + S-06 + Agent 摘要；见 skills/v1-micro-sample） ----------
+  v1-micro-sample:
+    category: WebRecon
+    path: ""
+    executable: ""
+    runner: python
+
+  # ---------- Webshell 工具 ----------
+  # webshell-php:
+  #   category: WebTesting/Exploit
+  #   path: ""
+  #   executable: ""
+  #   runner: python
+
+  # ---------- CVE 专用利用技能 ----------
+  exploit-thinkphp:
+    category: Exploit
+    path: ""
+    executable: ""
+    runner: python
+
+  shiro_exploit:
+    category: Exploit
+    path: ""
+    executable: ""
+    runner: python
+
+  fastjson-exploit:
+    category: Exploit
+    path: ""
+    executable: ""
+    runner: python
+
+  ysoserial:
+    category: Exploit
+    path: ""
+    executable: ""
+    runner: python
+
+  jndi_exploit:
+    category: Exploit
+    path: ""
+    executable: ""
+    runner: python
+
+  exploit-weblogic:
+    category: Exploit
+    path: ""
+    executable: ""
+    runner: python
+
+  exploit-tomcat:
+    category: Exploit
+    path: ""
+    executable: ""
+    runner: python
+
+  # ---------- 权限提升 ----------
+  # linpeas:
+  #   category: PostExploit
+  #   path: ""
+  #   executable: ""
+  #   runner: python

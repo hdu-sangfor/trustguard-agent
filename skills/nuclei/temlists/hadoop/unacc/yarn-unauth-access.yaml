@@ -1,0 +1,27 @@
+id: local-hadoop-yarn-unauth-access
+
+info:
+  name: Hadoop YARN ResourceManager Unauthorized Access
+  author: pentest-platform
+  severity: high
+  tags: safe-poc,hadoop,yarn,unauth,exposure,misconfig
+
+# Detects unauthenticated access to Hadoop YARN ResourceManager REST API.
+# An exposed YARN ResourceManager API (port 8088) allows submitting arbitrary
+# applications, enabling unauthenticated remote command execution.
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/ws/v1/cluster/info"
+
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "clusterInfo"
+          - "resourceManagerVersion"
+        condition: and
+      - type: status
+        status: [200]

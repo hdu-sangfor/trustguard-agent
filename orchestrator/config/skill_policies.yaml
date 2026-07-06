@@ -1,0 +1,164 @@
+# 编排器技能策略（与具体 Skill 脚本解耦；修改后需重启编排器）
+# nuclei: IML 白名单、狙击指纹映射、URL 路径启发。
+# 注意：这里的 java/php/python 等 tags 是被扫描目标的技术栈标签，用于匹配 Nuclei 模板；
+# 不表示 TrustGuard Agent 自身使用这些语言作为运行技术栈。
+version: 1
+
+nuclei:
+  iml_tag_sets:
+    1: [network, ssl, tls, weak-cipher]
+    2: [tech-stack, tech, exposure, waf]
+    3: [cve, exposure, misconfig, vuln]
+    4: [cve, exposure, misconfig, vuln, rce, sqli, xss]
+
+  sniper_boost_tags: [rce, fileupload, misconfig, cve, exposure]
+
+  # 证据文本（小写）子串 -> 追加的 Nuclei -tags（顺序：更长、更具体的 match 应写在文件更靠前）
+  tech_tag_mapping:
+    - match: "apache struts2"
+      tags: [struts2, apache, java]
+    - match: "struts22"
+      tags: [struts2, apache, java]
+    - match: "struts2"
+      tags: [struts2, apache, java]
+    - match: "spring boot"
+      tags: [spring, springboot, java]
+    - match: "springboot"
+      tags: [spring, springboot, java]
+    - match: "spring framework"
+      tags: [spring, java]
+    - match: "spring"
+      tags: [spring, java]
+    - match: "weblogic"
+      tags: [weblogic, oracle, java]
+    - match: "glassfish"
+      tags: [glassfish, java]
+    - match: "wildfly"
+      tags: [wildfly, jboss, java]
+    - match: "jboss"
+      tags: [jboss, java]
+    - match: "jetty"
+      tags: [jetty, java]
+    - match: "tomcat"
+      tags: [tomcat, apache, java]
+    - match: "jenkins"
+      tags: [jenkins, java]
+    - match: "thinkphp"
+      tags: [thinkphp, php]
+    - match: "wordpress"
+      tags: [wordpress, wp, php]
+    - match: "drupal"
+      tags: [drupal, php]
+    - match: "joomla"
+      tags: [joomla, php]
+    - match: "laravel"
+      tags: [laravel, php]
+    - match: "django"
+      tags: [django, python]
+    - match: "rails"
+      tags: [rails, ruby]
+    - match: "express"
+      tags: [express, nodejs]
+    - match: "nodejs"
+      tags: [nodejs, javascript]
+    - match: "asp.net"
+      tags: [aspnet, iis]
+    - match: "dotnet"
+      tags: [aspnet, iis]
+    - match: "kubernetes"
+      tags: [k8s, misconfig]
+    - match: "elasticsearch"
+      tags: [elasticsearch]
+    - match: "apache solr"
+      tags: [solr, java]
+    - match: "solr"
+      tags: [solr, java]
+    - match: "apache shiro"
+      tags: [shiro, java]
+    - match: "shiro"
+      tags: [shiro, java]
+    - match: "nacos"
+      tags: [nacos, java]
+    - match: "xxl-job"
+      tags: [xxl-job, java]
+    - match: "xxljob"
+      tags: [xxl-job, java]
+    - match: "weblogic"
+      tags: [weblogic, oracle, java]
+    - match: "apache activemq"
+      tags: [activemq, apache, java]
+    - match: "activemq"
+      tags: [activemq, apache, java]
+    - match: "apache kafka"
+      tags: [kafka, apache, java]
+    - match: "kafka"
+      tags: [kafka, java]
+    - match: "mongodb"
+      tags: [mongodb]
+    - match: "memcached"
+      tags: [memcached]
+    - match: "redis"
+      tags: [redis]
+    - match: "etcd"
+      tags: [etcd, misconfig]
+    - match: "docker"
+      tags: [docker, misconfig]
+    - match: "php"
+      tags: [php]
+    - match: "nginx"
+      tags: [nginx]
+    - match: "iis"
+      tags: [iis]
+    - match: "apache httpd"
+      tags: [apache, php]
+    - match: "apache hadoop"
+      tags: [hadoop, java, misconfig]
+    - match: "hadoop"
+      tags: [hadoop, java, misconfig]
+    - match: "hadoop yarn"
+      tags: [hadoop, java, misconfig]
+    - match: "yarn resourcemanager"
+      tags: [hadoop, java, misconfig]
+
+  # URL（小写）子串匹配，可多段叠加
+  path_url_hints:
+    - contains: ".action"
+      tags: [struts2, apache, java]
+    - contains: ".do"
+      tags: [java, spring]
+    - contains: "/actuator"
+      tags: [springboot, spring, exposure, misconfig]
+    - contains: "/invoker/"
+      tags: [jboss, java, rce]
+    - contains: "phpmyadmin"
+      tags: [php, sqli, misconfig]
+    - contains: "wp-admin"
+      tags: [wordpress, php]
+    - contains: "wp-content"
+      tags: [wordpress, php]
+    - contains: "/jenkins"
+      tags: [jenkins, java]
+    - contains: "/jenkins/"
+      tags: [jenkins, java]
+    - contains: "/manager/html"
+      tags: [tomcat, java, misconfig]
+    - contains: "/host-manager/"
+      tags: [tomcat, java, misconfig]
+    - contains: "/solr/"
+      tags: [solr, java, rce]
+    - contains: "/nacos/"
+      tags: [nacos, java]
+    - contains: "/xxl-job"
+      tags: [xxl-job, java, rce]
+    - contains: "/run"
+      tags: [xxl-job, java, rce]
+    - contains: "/nacos/v1/"
+      tags: [nacos, java]
+    - contains: "/ws/v1/cluster"
+      tags: [hadoop, java, misconfig, rce]
+    - contains: "/cluster/apps"
+      tags: [hadoop, java, misconfig, rce]
+    - contains: "/.git"
+      tags: [exposure, misconfig]
+    - contains: "/.env"
+      tags: [exposure, misconfig]

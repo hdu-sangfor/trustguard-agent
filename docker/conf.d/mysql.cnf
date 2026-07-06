@@ -1,0 +1,9 @@
+[mysqld]
+# 允许通过网络访问（而不是只监听本地 socket）
+bind-address = 0.0.0.0
+
+# 确保不会禁用网络（如果镜像里有 skip-networking，就用这行覆盖掉）
+# skip-networking
+
+character-set-server = utf8mb4
+collation-server     = utf8mb4_unicode_ci

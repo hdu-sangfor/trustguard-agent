@@ -1,0 +1,34 @@
+name: Stack Config Check
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - "**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stack-config-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  stack-config:
+    name: Stack Config Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate full-stack config
+        run: docker compose config
+
+      - name: Validate skill config
+        run: docker compose --profile skills config

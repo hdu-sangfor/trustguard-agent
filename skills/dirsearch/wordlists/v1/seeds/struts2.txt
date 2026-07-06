@@ -1,0 +1,6 @@
+/struts2-showcase/
+/struts2-showcase/index.action
+/struts2-showcase/struts/
+/showcase/
+/index.action
+/login.action

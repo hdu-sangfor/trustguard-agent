@@ -1,0 +1,120 @@
+"1"
+":test"
+"\x00"
+"access":"y"
+"access":"yes"
+"access":1
+"access":true
+"adm":"y"
+"adm":"yes"
+"adm":1
+"adm":true
+"adm1n":"yes"
+"adm1n":1
+"adm1n":true
+"adm1n":y"
+"admin":"y"
+"admin":"yes"
+"admin":1
+"admin":true
+"dbg":"y"
+"dbg":"yes"
+"dbg":1
+"dbg":true
+"debug":"y"
+"debug":"yes"
+"debug":1
+"debug":true
+"edit":"y"
+"edit":"yes"
+"edit":1
+"edit":true
+"grant":"y"
+"grant":"yes"
+"grant":1
+"grant":true
+"test":"y"
+"test":"yes"
+"test":1
+"test":true
+-1
+/Properties/launchSettings.json
+/launchSettings.json
+0
+1
+NMTOKEN  string
+Name  string
+QName  string
+["\x00"]
+[]
+[{"1":"0"}]
+anyAtomicType  string
+anyURI  string
+base64Binary  string
+boolean  boolean
+byte  number
+datatype  JSON primitive type
+date  string
+dateTime  string
+dateTimeStamp  string
+dayTimeDuration  string
+decimal  number
+double  number
+duration  string
+float  number
+gDay  string
+gMonth  string
+gMonthDay  string
+gYear  string
+gYearMonth  string
+hexBinary  string
+html  string
+int  number
+integer  number
+json  string
+language  string
+long  number
+negativeInteger  number
+nonNegativeInteger  number
+nonPositiveInteger  number
+normalizedString  string
+null
+positiveInteger  number
+short  number
+string  string
+time  string
+token  string
+unsignedByte  number
+unsignedInt  number
+unsignedLong  number
+unsignedShort  number
+xml  string
+yearMonthDuration  string
+{"$gt": ""}
+{"$or":"1"}
+{"$or":"1==1"}
+{"$where":"1"}
+{"$where":"1==1"}
+{"0":"\x00"}
+{"0":[1]}
+{"0":[]}
+{"1":"0"}
+{"1":0}
+{":test":"1"}
+{"\x00":""}
+{"\x00":"0"}
+{"\x00":0}
+{"\x00":[1]}
+{"\x00":[]}
+{"__constructor":"null"}
+{"_constructor":"null"}
+{"_id":"1"}
+{"_id":1}
+{"_uid":"1"}
+{"_uid":1}
+{"constructor":"null"}
+{"id":"1"}
+{"id":1}
+{"uid":"1"}
+{"uid":1}
+{}

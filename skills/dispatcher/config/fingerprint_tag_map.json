@@ -1,0 +1,35 @@
+{
+  "rules": [
+    {
+      "priority": 125,
+      "contains_any": ["jetty", "struts"],
+      "stack_hint": "java",
+      "nuclei_tags": "struts2,rce,cve,java"
+    },
+    {
+      "priority": 100,
+      "contains_any": ["struts", "spring", "tomcat"],
+      "stack_hint": "java"
+    },
+    {
+      "priority": 90,
+      "contains_any": ["wordpress", "php"],
+      "stack_hint": "php"
+    },
+    {
+      "priority": 80,
+      "contains_any": ["asp.net", "iis"],
+      "stack_hint": "dotnet"
+    },
+    {
+      "priority": 70,
+      "contains_any": ["node", "express"],
+      "stack_hint": "nodejs"
+    },
+    {
+      "priority": 110,
+      "regex_any": ["\\bjenkins\\b", "\\bweblogic\\b"],
+      "stack_hint": "java"
+    }
+  ]
+}

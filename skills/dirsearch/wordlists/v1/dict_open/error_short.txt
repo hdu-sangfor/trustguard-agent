@@ -1,0 +1,798 @@
+":visited and :link styles can only differ by color. Some styles were not applied to :visited."
+"@font-face encountered unknown error"
+"@font-face failed OpenType embedding permission check. Permission must be Installable."
+"@font-face failed WOFF integrity check"
+"@font-face failed cross-origin request. No Access-Control-Allow-Origin header."
+"@font-face failed cross-origin request. Resource access is restricted."
+"@font-face mismatch between document origin and EOT root string"
+"@font-face unable to load invalid OpenType font."
+"A colon ":" must not occur in a name."
+"A download in this page was blocked by Tracking Protection.[URL provided here]"
+"A parsed entity must not contain a direct or indirect reference to itself."
+"Access Denied. Failed to revoke cross-origin URL: [URL]."
+"An XML declaration is only allowed at the beginning of the file."
+"An attribute with the same name already exists on this element."
+"Applying Integrated XSLT Handling."
+"Attribute values must not contain direct or indirect references to external entities."
+"CSS was ignored due to mime type mismatch"
+"Character reference is missing an ending semicolon ";"."
+"Codepage [encoding] from [domain] overrides conflicting codepage [encoding] from [domain]"
+"Codepage restart from [encoding] to [encoding]"
+"DTD was found but is prohibited."
+"Decimal digit expected."
+"Declared prefix."
+"End-tag name does not match the corresponding start-tag name."
+"Entity reference cannot contain the name of an unparsed entity."
+"Exceeded maximum depth of nested elements."
+"Exceeded maximum number of entity expansions."
+"Expected "="."
+"Expected ">"."
+"Expected "NDATA"."
+"Expected "PUBLIC"."
+"Expected "SYSTEM"."
+"Expected "["."
+"Extra <body> tag found. Only one <body> tag should exist per document."
+"Extra <html> tag fond. Only one <html> tag should exist per document."
+"Failed parsing directive in[policy type] at [directive name]."
+"Failed to create new stylesheet. There are more than [maximum] stylesheets in the document."
+"Failed to enforce sandbox directive in [policy type] because [reason for canceling the operation]."
+"Found <frameset> too far down in the document. This tag should occur before a <body> is created."
+"Found xml:space attribute with invalid value. Valid values are "preserve" or "default"."
+"Frame [source name] being allowed due to host override."
+"HTTPS security is compromised by [name of resource]"
+"Hexadecimal digit expected."
+"Illegal XML character."
+"Illegal name character."
+"Illegal qualified name character."
+"Incorrect ATTLIST declaration syntax."
+"Incorrect CDATA section syntax."
+"Incorrect DOCTYPE declaration syntax."
+"Incorrect ELEMENT declaration syntax."
+"Incorrect ENTITY declaration syntax."
+"Incorrect NOTATION declaration syntax."
+"Incorrect XML declaration syntax."
+"Incorrect comment syntax."
+"Incorrect conditional section syntax."
+"Incorrect document syntax."
+"Incorrect encoding name syntax."
+"Incorrect processing instruction syntax."
+"Incorrect public identifier syntax."
+"Incorrect system identifier syntax."
+"Incorrect text declaration syntax."
+"Internet Explorer is running in Enterprise Mode emulating IE8"
+"Invalid character "
+"Invalid encoding."
+"Invalid end tag </>. End tags should not be empty."
+"Invalid end tag: </br>. Use <br> or <br/> instead."
+"Invalid name."
+"Invalid nesting. A <button> tag should not be placed within another <button>."
+"Invalid nesting. A <form> tag should not be placed within another <form>."
+"Invalid nesting. A <nobr> tag should not be placed within another <nobr>."
+"Invalid nesting. A header tag such as <h1> or <h2> should not be placed within another header tag."
+"Invalid nesting. An <a> tag should not be placed within another <a>."
+"Invalid tag name. First character should match [a-zA-Z]."
+"Invalid tag start: <?. Question marks should not start tags."
+"Leading "xml"."
+"MX_E_MX"
+"Malformed end tag. End tags should not contain attributes."
+"Malformed start tag. Attributes should be separated by whitespace."
+"Multiple Access-Control-Allow-Credentials headers are not allowed for CORS response."
+"Multiple Access-Control-Allow-Origin headers are not allowed for CORS response."
+"Multiple colons ":" must not occur in a qualified name."
+"NC_E_NC"
+"Navigation occurred"
+"Non-default namespace declarations must not have an empty URI."
+"Not all chunks of data have been read."
+"Numeric character reference does not resolve to a valid character."
+"Only one root element is allowed."
+"Origin [domain] not found in Access-Control-Allow-Origin header."
+"Overlapping end tag. Tags should be structured like <b><i></i></b> instead of <b><i></b></i>."
+"Parameter entity references are not allowed within markup declarations in an internal DTD subset."
+"Potential cross-site scripting detected in [URL]. The content has been modified by the XSS Filter."
+"Quote character expected."
+"Redirect was blocked for CORS request."
+"Redirects are not allowed for CORS preflight requests."
+"Request header [header] was not present in the Access-Control-Allow-Headers list."
+"Request method [method] was not present in the Access-Control-Allow-Methods list."
+"Required nodes not in scope."
+"SC_E_SC"
+"SVG Path data has incorrect format and could not be completely parsed."
+"SVG Point list has incorrect format and could not be completely parsed."
+"Script eval being allowed due to host override."
+"Script from [URL] was blocked due to mime type mismatch"
+"Semicolon expected."
+"Source [source URL]was already provided for directive [directive type] for[policy type]."
+"Tag cannot be self-closing. Use an explicit closing tag."
+"The "xmlns" prefix is reserved for use by XML."
+"The < character is not allowed in attributes values."
+"The CDATA-section-close delimiter "]]>" must not be used in element content."
+"The Unicode value of the specified character entity is invalid."
+"The certificate protecting this web site uses weak cryptography"
+"The content of the specified entity is not well-formed."
+"The specified entity has not been declared."
+"The specified prefix has not been declared."
+"Unable to switch the encoding."
+"Unexpected <image> in HTML content. Use <img> instead."
+"Unexpected DOCTYPE. Only one DOCTYPE is allowed and it must occur before any elements."
+"Unexpected character at start of numeric character reference. Expected [0-9]."
+"Unexpected character in DOCTYPE."
+"Unexpected character in character entity. Expected a decimal digit."
+"Unexpected character in character entity. Expected a hexadecimal digit."
+"Unexpected character in comment end. Expected "-->"."
+"Unexpected character token."
+"Unexpected end of file."
+"Unexpected end of input."
+"Unexpected end tag."
+"Unexpected head-level element encountered outside of <head>."
+"Unexpected keyword in DOCTYPE. Expected "PUBLIC" or "SYSTEM"."
+"Unexpected quote after "PUBLIC" or "SYSTEM" keyword. Expected whitespace."
+"Unexpected start tag."
+"Unexpected start tag: The <isindex> element is deprecated and should not be used."
+"Unexpected token."
+"Unknown directive in[directive name] in [policy type] -- directive will be ignored."
+"Unmatched end tag."
+"Unrecognized encoding."
+"Unrecognized input encoding signature."
+"Unrecognized named character reference."
+"Unspecified XML error."
+"Unsupported directive[directive name] in [policy type] -- directive will be ignored."
+"WC_E_WC"
+"WR_E_DUPLICATEATTRIBUTE: writer: duplicate attribute."
+"WR_E_INVALIDACTION: writer: performing the requested action would result in invalid XML document."
+"WR_E_INVALIDSURROGATEPAIR: writer: input contains invalid or incomplete surrogate pair."
+"WR_E_NAMESPACEUNDECLARED: writer: namespace is not declared."
+"WR_E_NONWHITESPACE: writer: specified string is not whitespace."
+"WR_E_NSPREFIXDECLARED: writer: namespace prefix is already declared with a different namespace."
+"WR_E_NSPREFIXWITHEMPTYNSURI: writer: cannot use prefix with empty namespace URI."
+"WR_E_WR"
+"WR_E_XMLNSPREFIXDECLARATION: writer: can not redefine the xmlns prefix."
+"Whitespace expected."
+"Wildcard in Access-Control-Allow-Origin not allowed when credentials flag is set to true."
+"XMLHttpRequest for [URL] caused a response headers parsing failure."
+"[Policy type] policy was empty."
+"[domain] has been configured to run in Compatibility View through Group Policy."
+"[domain] is a website you've added to Compatibility View."
+' doesn't exist
+.lib section in a.out corrupted
+/
+/anchor/errors.log
+/core/authorize.php
+/wp-content/plugins/members/admin/class-role-edit.php
+/wp-content/plugins/members/admin/class-role-new.php
+/wp-content/plugins/members/inc/class-role.php
+05_errors.phpt
+10errormap.phpt
+<b>Warning</b>: ibase_
+A codepage was specified that was different than the server's.
+AND 1=0
+AND 1=0#
+AND 1=0--
+AND 1=1
+AND 1=1#
+AND 1=1--
+AS INJECTX WHERE 1=1 AND 1=0
+AS INJECTX WHERE 1=1 AND 1=0#
+AS INJECTX WHERE 1=1 AND 1=0--
+AS INJECTX WHERE 1=1 AND 1=1
+AS INJECTX WHERE 1=1 AND 1=1#
+AS INJECTX WHERE 1=1 AND 1=1--
+AUTHENTICATION TIMEOUT
+Access Database Engine
+Accessing a corrupted shared library
+Address already in use
+Address family not supported by protocol
+Address family not supported by protocol family
+Advertise error
+An illegal character has been found in the statement
+An imported style sheet wasn't used because the wrong MIME type was in the HTTP header.
+Area
+Argument list too long
+Attempting to link in too many shared libraries
+Attribute not found
+Authentication error
+BAD GATEWAY
+BAD METHOD
+BAD REQUEST
+Bad address
+Bad file descriptor
+Bad font file format
+Bad message
+Bad or Corrupt message
+Bad procedure for program
+Block device required
+Broken pipe
+CLI Driver
+CONFLICT
+CSP codes
+CSP143xx
+CSS codes
+CSS31xx
+Can not access a needed shared library
+Can't assign requested address
+Can't send after socket shutdown
+Cannot allocate memory
+Cannot assign requested address
+Cannot exec a shared library directly
+Cannot send after transport endpoint shutdown
+Change one so they match.
+Change only the color attribute.
+Channel number out of range
+Check the format of the commands.
+Code
+Code Prefix
+Codes returned from remote servers in response to HTTP requests.
+Column count doesn't match
+Column count doesn't match value count at row
+Communication error on send
+Connection refused
+Connection reset by peer
+Connection timed out
+Content Security Policy
+Content in the webpage invoked a character encoding that's not allowed in this context.
+Cross-device link
+DB2 SQL error
+DB2 SQL error:
+DENIED
+Data type mismatch in criteria expression.
+Description
+Destination address required
+Device busy
+Device not a stream
+Device not configured
+Device or resource busy
+Directory not empty
+Disc quota exceeded
+Disk quota exceeded
+Document mode restart from [mode] to [mode]
+Driver
+Dynamic SQL Error
+EXPECTATION FAILED
+Error
+Error messages from the WebGL context. See also GLSL errors.
+Errors with XML parsing and validation.
+Exception
+Exchange full
+Exec format error
+FAILED DEPENDENCY
+FORBIDDEN
+File descriptor in bad state
+File exists
+File name too long
+File too large
+Find out more about the XSS Filter.
+Function not implemented
+Further extensions to the request are required for the server to fulfill it.
+GATEWAY TIMEOUT
+GONE
+Get the correct permission or licenses for embedding the font.
+Get the permission or licenses for the current and valid font-face.
+HAVING 1=0
+HAVING 1=0#
+HAVING 1=0--
+HAVING 1=1
+HAVING 1=1#
+HAVING 1=1--
+HTML
+HTML codes
+HTML5 parser warnings
+HTML5 parsing
+HTTP
+HTTP Codes
+Host is down
+IM A TEAPOT
+INSUFFICIENT STORAGE
+Identifier removed
+Illegal byte sequence
+Illegal seek
+Inappropriate file type or format
+Inappropriate ioctl for device
+Incorrect syntax near
+Ingres SQLSTATE
+Input/output error
+Interrupted system call
+Interrupted system call should be restarted
+Invalid argument
+Invalid cross-device link
+Invalid exchange
+Invalid or incomplete multibyte or wide character
+Invalid request code
+Invalid request descriptor
+Invalid slot
+Is a directory
+Is a named type file
+JET Database Engine
+JavaScript runtime errors
+JavaScript syntax errors
+Key has been revoked
+Key has expired
+Key was rejected by service
+LENGTH REQUIRED
+LOCKED
+LOOP DETECTED
+Level 2 halted
+Level 2 not synchronized
+Level 3 halted
+Level 3 reset
+Link has been severed
+Link number out of range
+Machine is not on the network
+Make sure all content is using the allowed encoding that is specified in the message.
+Make sure that points are complete and correctly formatted for the users coordinate system.
+Make sure you have the most direct path to the CORS resource in your XMLHttpRequest.
+Memory page has hardware error
+Message
+Message too long
+Microsoft OLE DB Provider for ODBC Drivers
+Microsoft OLE DB Provider for SQL Server
+Multihop attempted
+MySQL server version for the right syntax to use
+MySqlClient.
+NETWORK AUTHENTICATION REQUIRED
+NONE ACCEPTABLE
+NOT EXTENDED
+NOT FOUND
+NOT SUPPORTED
+Name not unique on network
+Need authenticator
+Network dropped connection on reset
+Network is down
+Network is unreachable
+No CSI structure available
+No STREAM resources
+No XENIX semaphores available
+No anode
+No buffer space available
+No child processes
+No data available
+No locks available
+No medium found
+No message available
+No message of desired type
+No responses acceptable to the client were found.
+No route to host
+No space left on device
+No such device
+No such device or address
+No such file or directory
+No such process
+None - user initiated.
+Not a STREAM
+Not a XENIX named type file
+Not a directory
+Not currently implemented in the HTTP protocol.
+Not supported
+Npgsql.
+Numerical argument out of domain
+Numerical result out of range
+OR 1=0
+OR 1=0#
+OR 1=0--
+OR 1=1
+OR 1=1#
+OR 1=1--
+OR x=x
+OR x=x#
+OR x=x--
+OR x=y
+OR x=y#
+OR x=y--
+ORA-
+ORDER BY 1
+ORDER BY 1#
+ORDER BY 1--
+ORDER BY 10
+ORDER BY 10#
+ORDER BY 10--
+ORDER BY 11
+ORDER BY 11#
+ORDER BY 11--
+ORDER BY 12
+ORDER BY 12#
+ORDER BY 12--
+ORDER BY 13
+ORDER BY 13#
+ORDER BY 13--
+ORDER BY 14
+ORDER BY 14#
+ORDER BY 14--
+ORDER BY 15
+ORDER BY 15#
+ORDER BY 15--
+ORDER BY 16
+ORDER BY 16#
+ORDER BY 16--
+ORDER BY 17
+ORDER BY 17#
+ORDER BY 17--
+ORDER BY 18
+ORDER BY 18#
+ORDER BY 18--
+ORDER BY 19
+ORDER BY 19#
+ORDER BY 19--
+ORDER BY 2
+ORDER BY 2#
+ORDER BY 2--
+ORDER BY 20
+ORDER BY 20#
+ORDER BY 20--
+ORDER BY 21
+ORDER BY 21#
+ORDER BY 21--
+ORDER BY 22
+ORDER BY 22#
+ORDER BY 22--
+ORDER BY 23
+ORDER BY 23#
+ORDER BY 23--
+ORDER BY 24
+ORDER BY 24#
+ORDER BY 24--
+ORDER BY 25
+ORDER BY 25#
+ORDER BY 25--
+ORDER BY 26
+ORDER BY 26#
+ORDER BY 26--
+ORDER BY 27
+ORDER BY 27#
+ORDER BY 27--
+ORDER BY 28
+ORDER BY 28#
+ORDER BY 28--
+ORDER BY 29
+ORDER BY 29#
+ORDER BY 29--
+ORDER BY 3
+ORDER BY 3#
+ORDER BY 3--
+ORDER BY 30
+ORDER BY 30#
+ORDER BY 30--
+ORDER BY 4
+ORDER BY 4#
+ORDER BY 4--
+ORDER BY 5
+ORDER BY 5#
+ORDER BY 5--
+ORDER BY 6
+ORDER BY 6#
+ORDER BY 6--
+ORDER BY 7
+ORDER BY 7#
+ORDER BY 7--
+ORDER BY 8
+ORDER BY 8#
+ORDER BY 8--
+ORDER BY 9
+ORDER BY 9#
+ORDER BY 9--
+Object is remote
+Occur when your script attempts to perform an action that the system cannot execute.
+Operation Canceled
+Operation already in progress
+Operation canceled
+Operation not permitted
+Operation not possible due to RF-kill
+Operation not supported
+Operation not supported by device
+Operation now in progress
+Oracle error
+Out of streams resources
+Owner died
+PAYLOAD TOO LARGE
+PAYMENT REQUIRED
+PRECONDITION FAILED
+PRECONDITION REQUIRED
+PROXY AUTHENTICATION REQUIRED
+Package not installed
+Permission denied
+PostgreSQL
+PostgreSQL query failed:
+Procedure or function
+Program version wrong
+Protocol driver not attached
+Protocol error
+Protocol family not supported
+Protocol not available
+Protocol not supported
+Protocol option not available
+Protocol wrong type for socket
+Proxy authentication required.
+REQUEST HEADER FIELDS TOO LARGE
+REQUEST TIMEOUT
+REQUESTED RANGE NOT SATISFIABLE
+RETRY WITH
+RFS specific error
+RPC prog. not avail
+RPC struct is bad
+RPC version wrong
+Read-only file system
+Remote I/O error
+Remote address changed
+Remove the duplicate script.
+Remove the duplicate source identified.
+Required key not available
+Resource deadlock avoided
+Resource temporarily unavailable
+Resources blocked by the use of a Content-Security-Policy HTTP header.
+Result too large or too small
+Roadhouse.Cms.
+SCRIPT10xx
+SCRIPT50xx
+SEC71xx
+SERVER ERROR
+SERVICE UNAVAILABLE
+SQL Server
+SQL error
+SQL syntax
+SQLite.Exception
+SQLite/JDBCDriver
+SQLiteException
+STREAM ioctl timeout
+SVG codes
+SVG560x
+Scalable Vector Graphics
+Security
+Security codes
+Server errors and status
+Server message
+Sintaxis incorrecta cerca de
+Socket is already connected
+Socket is not connected
+Socket operation on non-socket
+Socket type not supported
+Software caused connection abort
+Srmount error
+Stale NFS file handle
+Stale file handle
+State not recoverable
+Streams pipe error
+Structure needs cleaning
+Stylesheets
+Success
+Suggested fix
+Sybase message
+Sybase message:
+Syntax error in string in query expression
+System.Data.OleDb.OleDbException
+System.Data.SQLite.SQLiteException
+System.Data.SqlClient.
+System.Data.SqlClient.SqlException
+TOO MANY REQUESTS
+Text file busy
+The HTTP verb used is not allowed.
+The TLS security certificate used by this website uses weak cryptography
+The client must authenticate to gain network access.
+The client must switch to a different protocol.
+The directive set in the CSP policy is not known and will be ignored.
+The font might not be configured for cross-domain access.
+The font-face doesn't have permissions to install with the current webpage.
+The font-face is not valid for this use.
+The network administrator has specified that the webpage be run in Compatibility View.
+The origin server requires the request to be conditional.
+The path to the CORS resource contained a redirect that violated security rules.
+The previously valid authentication has expired.
+The request could not be completed due to a conflict with the current state of the resource.
+The request could not be processed by the server due to invalid syntax.
+The request failed due to the failure of a previous request.
+The request should be retried after doing the appropriate action.
+The request was timed out waiting for a gateway.
+The request was well-formed but could not be processed due to semantic errors.
+The requested resource requires user authentication.
+The resource being accessed is locked.
+The response header contained multiple Access-Control-Allow-Credentials headers.
+The response header contained multiple Access-Control-Allow-Origin headers.
+The server cannot meet the requirements of the Expect request-header field.
+The server detected an infinite loop while servicing the request.
+The server does not support the functionality required to fulfill the request.
+The server encountered an unexpected condition that prevented it from fulfilling the request.
+The server is unable to store the representation needed to complete the request.
+The server refuses to accept the request without a defined content length.
+The server timed out waiting for the request.
+The service is temporarily overloaded.
+The source frame identified has been allowed due to an override set in the host CSP policy.
+The user blocked a script or content by using Tracking Protection.
+The webpage requires a different document mode than the browser was currently set to.
+There is more than one "X-UA-Compatible" "META" tag in the <head> section of the source code.
+This is an informational message and not an error.
+Timer expired
+Too many levels of remote in path
+Too many levels of symbolic links
+Too many links
+Too many open files
+Too many open files in system
+Too many processes
+Too many references: can't splice
+Too many references: cannot splice
+Too many users
+Transparent content negotiation for the request resulted in circular references.
+Transport endpoint is already connected
+Transport endpoint is not connected
+UNPROCESSABLE ENTITY
+UNSUPPORTED MEDIA TYPE
+UPGRADE REQUIRED
+URI TOO LONG
+Unclosed quotation mark after the character string
+Unclosed quotation mark before the character string
+Undefined error: 0
+Unexpected end of command in statement
+Unknown error 41
+Unknown error 58
+Unknown error: 97
+Update the server’s TLS certificate
+Use max-width and min-width.
+Use the same codepage as the server to avoid this message.
+User initiated.
+Userrole.cs
+Userroles.php
+VARIANT ALSO NEGOTIATES
+VERSION NOT SUPPORTED
+Validation warnings thrown by the HTML5 parser.
+Value too large for defined data type
+Value too large to be stored in data type
+WHERE 1=1 AND 1=0
+WHERE 1=1 AND 1=0#
+WHERE 1=1 AND 1=0--
+WHERE 1=1 AND 1=1
+WHERE 1=1 AND 1=1#
+WHERE 1=1 AND 1=1--
+Warning
+WebGL
+WebGL11_xxx
+Wrong medium type
+XML
+XML codes
+XML5xxx
+You have an error in your SQL syntax near
+You have an error in your SQL syntax;
+You need to contact the network administrator.
+Your CSS contains an -ms-view-state media query.
+[DM_QUERY_E_SYNTAX]
+[Macromedia][SQLServer JDBC Driver]
+[Microsoft][ODBC Microsoft Access Driver]
+[Microsoft][ODBC SQL Server Driver]
+[MySQL][ODBC
+[SQLITE_ERROR]
+[SqlException
+admin_error.inc.php
+adodb-error.inc.php
+class.error.php
+com.informix.jdbc
+com.mysql.jdbc.exceptions
+db2_
+db_error.php
+db_error.phpt
+db_error2.phpt
+db_mysql_error.php
+default_error.php
+display_errors.php
+error
+error-fr.html
+error-id.html
+error-messages
+error-zh.html
+error.asp
+error.atom.php
+error.cpp
+error.ctp
+error.h
+error.html
+error.html.php
+error.inc.html
+error.inc.php
+error.inc.svn-base
+error.ini
+error.log
+error.message.inc
+error.mod.php
+error.phtml
+error.rdf.php
+error.test.php
+error.tmpl
+error.tmpl.php
+error.tpl
+error.tpl.php
+error.txt
+error.txt.php
+error.xml
+error.xml.php
+error1.tpl
+error400-en.html
+error400-id.html
+error400-zh.html
+error400.html
+error401.php
+error404-en.html
+error404-fr.html
+error404-id.html
+error404-zh.html
+error404.aspx
+error404.aspx.cs
+error404.ctp
+error404.html
+error404.php
+error404.thtml
+error404Success.php
+error500-en.html
+error500-fr.html
+error500-id.html
+error500-zh.html
+error500.html
+error500.php
+error503-en.html
+error503-fr.html
+error503-id.html
+error503-zh.html
+error503.html
+errorBrowser.php
+errorHandler
+errorPages
+errorSuccess.php
+error_404.php
+error_body.tpl
+error_db.php
+error_dump.php
+error_general.php
+error_handler.php
+error_log
+error_log.php
+error_log.phpt
+error_message.html
+error_messages.yml
+error_page.php
+error_pages
+error_php.php
+error_report.php
+error_view.php
+errorhandling.php
+errorlog.txt
+errormessage.tpl
+errorpage.html
+errors.asp
+errors.en.ini
+errors.html
+errors.lang.php
+errors.log
+errors.tpl
+errors.tpl.inc
+errors.txt
+errors_test.php
+function.error.php
+generalerror.vm
+has occurred in the vicinity of:
+in query expression
+init_errors.php
+install_error.html
+install_error.tpl
+iperror.php
+java.sql.SQLException
+kAMDSuccess = 0x0
+loginerror.php
+main-errors.html
+new-error.log
+on MySQL result index
+onerror.html
+onerror.inc
+opt.error.php
+org.hsqldb.jdbc
+org.postgresql.util.PSQLException
+pclerror.lib.php
+scaffold_error.ctp
+scatterrotex1.php
+session_error.php
+smtp_error.phpt
+supplied argument is not a valid MySQL
+supplied argument is not a valid PostgreSQL result
+sybase
+sys_nerr: 135 errno: 0
+sys_nerr: 97 errno: 0
+test_error.php
+the used select statements have different number of columns
+userrole.class.php
+userrole.php
+valid MySQL result
+valid PostgreSQL result
+view.error.php
+xml-errors.xml
+{{paths}}

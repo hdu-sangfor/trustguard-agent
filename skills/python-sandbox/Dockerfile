@@ -1,0 +1,45 @@
+ARG DOCKERHUB_REGISTRY=docker.io
+ARG PIP_INDEX_URL
+ARG PIP_EXTRA_INDEX_URL
+ARG DEBIAN_MIRROR_URL
+ARG DEBIAN_SECURITY_MIRROR_URL
+FROM ${DOCKERHUB_REGISTRY}/library/python:3.11-slim
+ARG PIP_INDEX_URL
+ARG PIP_EXTRA_INDEX_URL
+ARG DEBIAN_MIRROR_URL
+ARG DEBIAN_SECURITY_MIRROR_URL
+RUN if [ -n "${PIP_INDEX_URL}" ] || [ -n "${PIP_EXTRA_INDEX_URL}" ]; then \
+        { \
+            echo "[global]"; \
+            if [ -n "${PIP_INDEX_URL}" ]; then echo "index-url = ${PIP_INDEX_URL}"; fi; \
+            if [ -n "${PIP_EXTRA_INDEX_URL}" ]; then echo "extra-index-url = ${PIP_EXTRA_INDEX_URL}"; fi; \
+        } > /etc/pip.conf; \
+    fi
+
+RUN if [ -n "${DEBIAN_MIRROR_URL}" ]; then \
+        sed -i "s|http://deb.debian.org/debian|${DEBIAN_MIRROR_URL}|g" /etc/apt/sources.list.d/debian.sources; \
+    fi; \
+    if [ -n "${DEBIAN_SECURITY_MIRROR_URL}" ]; then \
+        sed -i "s|http://security.debian.org/debian-security|${DEBIAN_SECURITY_MIRROR_URL}|g" /etc/apt/sources.list.d/debian.sources; \
+    fi
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+
+# Install required Python packages
+RUN pip install requests --no-cache-dir
+
+# Create skill directory and set non-root user for security
+RUN mkdir -p /skill && useradd -m -u 1000 sandboxuser && chown -R sandboxuser:sandboxuser /skill
+USER sandboxuser
+
+WORKDIR /skill
+COPY scripts ./scripts
+
+# Set resource limits in production
+# You can add these to docker-compose.yml:
+#   deploy:
+#     resources:
+#       limits:
+#         cpus: '0.5'
+#         memory: 256M
+
+ENTRYPOINT ["python3", "scripts/execute.py"]

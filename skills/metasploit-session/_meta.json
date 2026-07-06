@@ -1,0 +1,6 @@
+{
+  "name": "metasploit-session",
+  "description": "Enhanced Metasploit with session management and interactive command execution",
+  "category": "Exploit",
+  "version": "1.0.0"
+}

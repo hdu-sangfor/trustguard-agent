@@ -1,0 +1,31 @@
+{
+  "generic": [
+    "generic.txt"
+  ],
+  "java_core": [
+    "java_core.txt"
+  ],
+  "struts2": [
+    "struts2.txt"
+  ],
+  "spring": [
+    "spring.txt"
+  ],
+  "api": [
+    "api.txt"
+  ],
+  "generic_full": [
+    "fuzzDicts/directoryDicts/Filenames_or_Directories_All.txt",
+    "fuzzDicts/directoryDicts/top7000.txt"
+  ],
+  "java_full": [
+    "fuzzDicts/uploadFileExtDicts/jsp_upload_fuzz.txt",
+    "fuzzDicts/uploadFileExtDicts/tomcat_upload_fuzz.txt",
+    "fuzzDicts/directoryDicts/vuls/tomcat.txt",
+    "fuzzDicts/directoryDicts/Filenames_or_Directories_All.txt",
+    "struts2.txt"
+  ],
+  "api_fuzz": [
+    "fuzzDicts/apiDict/api.txt"
+  ]
+}

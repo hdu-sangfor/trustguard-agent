@@ -1,0 +1,5 @@
+{
+  "slug": "dirsearch",
+  "version": "1.0.0",
+  "entrypoint": "utils/execute_v1.py"
+}

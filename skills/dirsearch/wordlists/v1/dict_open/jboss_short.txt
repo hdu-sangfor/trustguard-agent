@@ -1,0 +1,58 @@
+---- Scanning URL: https://finalstage.att.com/ ----
+-----------------
+/
+/WEB-INF/jboss-web.xml
+/admin-console
+/css
+/css/
+/css/footer.js
+/debug.seam
+/images
+/images/
+/invoker/JMXInvokerServlet
+/jbossws
+/jbossws/services
+/jbpm-console/app/tasks.jsf
+/jmx-console
+/jmx-console/
+/jmx-console/HtmlAdaptor
+/jmx-console/HtmlAdaptor?action=displayMBeans
+/jmx-console/filterView.jsp
+/juddi/
+/robots.txt
+/status?full=true
+/web-console
+/web-console/Invoker
+/web-console/ServerInfo.jsp
+==> DIRECTORY: https://finalstage.att.com/ads/
+==> DIRECTORY: https://finalstage.att.com/affiliates/
+==> DIRECTORY: https://finalstage.att.com/akamai/
+==> DIRECTORY: https://finalstage.att.com/alaska/
+By The Dark Raver
+DIRB v2.22
+OPTION: Not Recursive
+OPTION: Not Stoping on warning messages
+OPTION: Printing LOCATION header
+OPTION: Silent Mode
+URL_BASE: https://finalstage.att.com/
+WORDLIST_FILES: ./wordlists/big.txt
+admin-console/
+invoker/
+invoker/EJBInvokerServlet
+invoker/JMXInvokerServlet
+jbossmq-httpil/
+jbossws/services
+jmx-console
+jmx-console/
+jmx-console/HtmlAdaptor
+status
+web-console
+web-console/
+web-console/AOPBinding.jsp
+web-console/Invoker
+web-console/ServerInfo.jsp
+web-console/SysProperties.jsp
+web-console/WebModule.jsp
+web-console/applet.jsp
+web-console/listMonitors.jsp
+web-console/status

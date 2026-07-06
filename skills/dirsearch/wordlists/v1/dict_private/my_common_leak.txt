@@ -1,0 +1,6 @@
+/.env
+/.git/config
+/.svn/entries
+/backup.zip
+/config.php.bak
+/db.sql

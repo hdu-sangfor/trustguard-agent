@@ -1,0 +1,40 @@
+{
+  "default_base": [
+    "onelistforallshort.txt",
+    "dict/paths_short.txt"
+  ],
+  "keywords": {
+    "java": [
+      "dict/java_short.txt",
+      "dict/jsp_short.txt",
+      "struts2.txt",
+      "dict/tomcat_short.txt"
+    ],
+    "php": [
+      "dict/php_short.txt",
+      "dict/php_myadmin_short.txt"
+    ],
+    "asp": [
+      "dict/asp_short.txt",
+      "dict/iis_short.txt"
+    ],
+    "api": [
+      "dict/api_short.txt",
+      "dict/json_short.txt"
+    ],
+    "admin": [
+      "dict/admin_short.txt",
+      "dict/logins_short.txt"
+    ],
+    "sensitive": [
+      "dict/config_short.txt",
+      "dict/env_short.txt",
+      "dict/db_backups_short.txt"
+    ],
+    "infra": [
+      "dict/docker_short.txt",
+      "dict/k8s_short.txt",
+      "dict/jenkins_short.txt"
+    ]
+  }
+}

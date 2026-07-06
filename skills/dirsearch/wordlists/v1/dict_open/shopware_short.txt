@@ -1,0 +1,8 @@
+/admin
+/backend
+/public/recovery/install/index.php
+backend/
+composer.json
+composer.lock
+config.php.dist
+phpinfo.php

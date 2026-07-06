@@ -1,0 +1,1397 @@
+*
+*.do
+*.jsp
+*.jsv
+*.jsw
+/
+/*
+/*.do
+/*.jsp
+/*.jsv
+/*.jsw
+/AddressBookJ2WB
+/AddressBookJ2WB/*
+/AddressBookJ2WE/*.jsp
+/AddressBookJ2WE/*.jsv
+/AddressBookJ2WE/*.jsw
+/AddressBookJ2WE/services/AddressBook
+/AddressBookJ2WE/services/AddressBook/wsdl/*
+/AddressBookW2JB
+/AddressBookW2JB/*
+/AddressBookW2JE/*.jsp
+/AddressBookW2JE/*.jsv
+/AddressBookW2JE/*.jsw
+/AddressBookW2JE/services/AddressBook
+/AddressBookW2JE/services/AddressBook/wsdl/*
+/AlbumCatalogWeb
+/AlbumCatalogWeb/*
+/AlbumCatalogWeb/docs/*
+/AlbumCatalogWeb/docsservlet
+/AlbumCatalogWeb/docsservlet/*
+/AlbumCatalogWebservlet
+/AlbumCatalogWebservlet/*
+/AppInstallStatusServlet
+/AppManagementStatus
+/AppServer
+/ApplicationProfileSample
+/ApplicationProfileSample/*
+/ApplicationProfileSample/docs/*
+/ApplicationProfileSampleservlet
+/ApplicationProfileSampleservlet/*
+/BBApp
+/Bank/*.jsp
+/Bank/*.jsv
+/Bank/*.jsw
+/Bank/services/Transfer_SEI
+/Bank/services/Transfer_SEI/wsdl
+/Bank/services/Transfer_SEI/wsdl/*
+/BeenThere
+/ClusterRollout
+/ControllerServlet
+/DynaCacheESI
+/DynaCacheESI/esiInavlidator
+/DynamicQuery/EmployeeFinder
+/DynamicQuery/EmployeeFinder/*
+/DynamicQuery/docs/*
+/ErrorReporter
+/ErrorServlet
+/FileTransfer
+/GalleryMenu
+/Greenhouse
+/Greenhouse/*
+/GreenhouseByWebSphere/docs/*
+/GreenhouseEJB/*.jsp
+/GreenhouseEJB/*.jsv
+/GreenhouseEJB/*.jsw
+/GreenhouseEJB/services/GreenhouseFront
+/GreenhouseEJB/services/GreenhouseFront/wsdl/*
+/GreenhouseWeb
+/GreenhouseWeb/*
+/GreenhouseWebservlet
+/GreenhouseWebservlet/*
+/Greenhouseservlet
+/Greenhouseservlet/*
+/HelloHTML.jsp
+/HelloHTMLError.jsp
+/HelloPervasive
+/HelloVXML.jsp
+/HelloVXMLError.jsp
+/HelloWML.jsp
+/HelloWMLError.jsp
+/HelloWorld
+/HelloWorldServlet
+/HitCount
+/HitCount.jsp
+/IBMDefaultErrorReporter
+/IBMWebAS
+/JTAExtensionsSamples/TransactionTracker
+/JTAExtensionsSamples/TransactionTracker/*
+/JTAExtensionsSamples/docs/*
+/MANIFEST.MF
+/META-INF
+/MessageDrivenBeans/docs/*
+/MessageDrivenBeans/docsservlet/*
+/OrderProcessorEJB/*
+/OrderProcessorEJB/*.jsp
+/OrderProcessorEJB/*.jsv
+/OrderProcessorEJB/*.jsw
+/OrderProcessorEJB/services/FrontGate
+/OrderProcessorEJB/services/FrontGate/wsdl/*
+/PlantsByWebSphere
+/PlantsByWebSphere/*
+/PlantsByWebSphere/docs
+/SamplesGallery
+/SamplesGallery/*
+/SimpleServlet
+/SnoopServlet
+/SourceCodeViewer
+/Sourceservlet-classViewer
+/StockQuote/*.jsp
+/StockQuote/*.jsv
+/StockQuote/*.jsw
+/StockQuote/services/xmltoday-delayed-quotes
+/StockQuote/services/xmltoday-delayed-quotes/wsdl/*
+/TechnologySamples/AddressBook
+/TechnologySamples/AddressBook/*
+/TechnologySamples/AddressBook/*.jsp
+/TechnologySamples/AddressBook/*.jsv
+/TechnologySamples/AddressBook/*.jsw
+/TechnologySamples/AddressBook/AddressBookServlet
+/TechnologySamples/AddressBook/servlet/*
+/TechnologySamples/BasicCalculator
+/TechnologySamples/BasicCalculator/*
+/TechnologySamples/BulletinBoard
+/TechnologySamples/BulletinBoard/*
+/TechnologySamples/BulletinBoardservlet
+/TechnologySamples/BulletinBoardservlet/*
+/TechnologySamples/Calendar
+/TechnologySamples/Calendar/*
+/TechnologySamples/FilterServlet
+/TechnologySamples/FilterServlet/*
+/TechnologySamples/FormLogin
+/TechnologySamples/FormLogin/*
+/TechnologySamples/FormLoginservlet
+/TechnologySamples/FormLoginservlet/*
+/TechnologySamples/JAASLogin
+/TechnologySamples/JAASLogin/*
+/TechnologySamples/JAASLoginservlet
+/TechnologySamples/JAASLoginservlet/*
+/TechnologySamples/MovieReview
+/TechnologySamples/MovieReview/*
+/TechnologySamples/MovieReview2_0
+/TechnologySamples/MovieReview2_0/*
+/TechnologySamples/MovieReview2_1
+/TechnologySamples/MovieReview2_1/*
+/TechnologySamples/PageReturner
+/TechnologySamples/PageReturner/*
+/TechnologySamples/PageReturnerservlet
+/TechnologySamples/PageReturnerservlet/*
+/TechnologySamples/ReadingList
+/TechnologySamples/ReadingList/*
+/TechnologySamples/SimpleJSP
+/TechnologySamples/SimpleJSP/*
+/TechnologySamples/SimpleServlet
+/TechnologySamples/SimpleServlet/*
+/TechnologySamples/Subscription
+/TechnologySamples/Subscription/*
+/TechnologySamples/Subscriptionservlet
+/TechnologySamples/Subscriptionservlet/*
+/TechnologySamples/Taglib
+/TechnologySamples/Taglib/*
+/TechnologySamples/docs
+/WEB-INF
+/WEB-INF./web.xml
+/WEB-INF/web.xml
+/WSsamples
+/WSsamples/*
+/WSsamples/de
+/WSsamples/de/*
+/WSsamples/en
+/WSsamples/en/*
+/WSsamples/es
+/WSsamples/es/*
+/WSsamples/fr
+/WSsamples/fr/*
+/WSsamples/index.jsp
+/WSsamples/it
+/WSsamples/it/*
+/WSsamples/ja
+/WSsamples/ja/*
+/WSsamples/ko
+/WSsamples/ko/*
+/WSsamples/pt_br
+/WSsamples/pt_br/*
+/WSsamples/zh_cn
+/WSsamples/zh_cn/*
+/WSsamples/zh_tw
+/WSsamples/zh_tw/*
+/WarehouseEJB/*.jsp
+/WarehouseEJB/*.jsv
+/WarehouseEJB/*.jsw
+/WarehouseEJB/services/WarehouseFront
+/WarehouseEJB/services/WarehouseFront/wsdl/*
+/WarehouseWeb
+/WarehouseWeb/*
+/WarehouseWebservlet
+/WarehouseWebservlet/*
+/WebServicesSamples/docs/*
+/WebSphere
+/WebSphereBank
+/WebSphereBank/*
+/WebSphereBank/docs/*
+/WebSphereBankDeposit
+/WebSphereBankDeposit/*
+/WebSphereBankDepositservlet
+/WebSphereBankDepositservlet/*
+/WebSphereBankservlet
+/WebSphereBankservlet/*
+/WebSphereSamples
+/WebSphereSamples.Configuration.config
+/WebSphereSamples/
+/WebSphereSamples/SingleSamples/AccountAndTransfer/create.html
+/WebSphereSamples/SingleSamples/Increment/increment.html
+/WebSphereSamples/YourCo/main.html
+/_DynaCacheEsi
+/_DynaCacheEsi/*
+/_DynaCacheEsi/esiInvalidator
+/ab/*
+/ab/docs/*
+/activitysessions/docs/*
+/addNodeListener
+/admin
+/admin-authz.xml
+/admin.conf
+/admin.passwd
+/admin/*
+/admin/logon.jsp
+/admin/secure/logon.jsp
+/apadminred
+/apadminred.html
+/aphtpasswd.html
+/asynchbeans/*
+/asynchbeans/docs/*
+/cachemonitor
+/cachemonitor/statistics.jsp
+/cell.xml
+/cells
+/cgi-bin
+/cgi-bin/
+/com.ibm.ws.console.events
+/com.ibm.ws.console.events/runtime_messages.jsp
+/config
+/console
+/debug_error.jsp
+/docpicker/internal_proxy/http/oast.me
+/error
+/error.jsp
+/esiInavlidator
+/estore
+/estore/annotated-index.html
+/estore/index.html
+/estore/populate
+/examples
+/hello
+/helloEJB
+/hitcount
+/httpd.conf
+/i18nctxSample
+/i18nctxSample/*
+/i18nctxSample/docs/*
+/ibm
+/ibm/console
+/ibm_security_logout
+/icons
+/images
+/index.html
+/index.jsp
+/ivt
+/ivt/*
+/ivt/ivtDate.jsp
+/ivt/ivtejb
+/ivt/ivtservler
+/ivt/ivtservlet
+/ivtejb
+/ivtserver
+/ivtservlet
+/j_security_check
+/jsp
+/login.html
+/manual
+/manual/index.html
+/node.xml
+/nodes
+/opc/*.jsp
+/opc/*.jsv
+/opc/*.jsw
+/opc/services/BrokerServiceIntfPort
+/opc/services/BrokerServiceIntfPort/wsdl/*
+/opc/services/OrderTrackingIntfPort
+/opc/services/OrderTrackingIntfPort/wsdl/*
+/opc/services/PurchaseOrderIntfPort
+/opc/services/PurchaseOrderIntfPort/wsdl/*
+/opt
+/opt/IBM/WebSphere8/AppServer/installedConnectors/sib.api.jmsra.rar
+/opt/IBM/WebSphere8/AppServer/installedConnectors/wmq.jmsra.rar
+/opt/IBM/WebSphere8/AppServer/lib/EJBCommandTarget.jar
+/opt/IBM/WebSphere8/AppServer/lib/IVTClient.jar
+/opt/IBM/WebSphere8/AppServer/lib/OTiSConvertTime.jar
+/opt/IBM/WebSphere8/AppServer/lib/activation-impl.jar
+/opt/IBM/WebSphere8/AppServer/lib/admin.config.sched.jar
+/opt/IBM/WebSphere8/AppServer/lib/aspectjrt.jar
+/opt/IBM/WebSphere8/AppServer/lib/batch.wccm.jar
+/opt/IBM/WebSphere8/AppServer/lib/batchprops.jar
+/opt/IBM/WebSphere8/AppServer/lib/batchutilsfep.jar
+/opt/IBM/WebSphere8/AppServer/lib/batfepapi.jar
+/opt/IBM/WebSphere8/AppServer/lib/bootstrap.jar
+/opt/IBM/WebSphere8/AppServer/lib/bsf-engines.jar
+/opt/IBM/WebSphere8/AppServer/lib/commandlineutils.jar
+/opt/IBM/WebSphere8/AppServer/lib/commons-discovery.jar
+/opt/IBM/WebSphere8/AppServer/lib/databeans.jar
+/opt/IBM/WebSphere8/AppServer/lib/ffdcSupport.jar
+/opt/IBM/WebSphere8/AppServer/lib/htmlshell.jar
+/opt/IBM/WebSphere8/AppServer/lib/iscdeploy.jar
+/opt/IBM/WebSphere8/AppServer/lib/ivblogbr.jar
+/opt/IBM/WebSphere8/AppServer/lib/j2ee.jar
+/opt/IBM/WebSphere8/AppServer/lib/jNative2ascii.jar
+/opt/IBM/WebSphere8/AppServer/lib/jacl.jar
+/opt/IBM/WebSphere8/AppServer/lib/jrom.jar
+/opt/IBM/WebSphere8/AppServer/lib/launchclient.jar
+/opt/IBM/WebSphere8/AppServer/lib/lmproxy.jar
+/opt/IBM/WebSphere8/AppServer/lib/mail-impl.jar
+/opt/IBM/WebSphere8/AppServer/lib/openwebbeans.jar
+/opt/IBM/WebSphere8/AppServer/lib/pc-appext.jar
+/opt/IBM/WebSphere8/AppServer/lib/pmirm4arm.jar
+/opt/IBM/WebSphere8/AppServer/lib/rrd-appext.jar
+/opt/IBM/WebSphere8/AppServer/lib/rsadbutils.jar
+/opt/IBM/WebSphere8/AppServer/lib/rsahelpers.jar
+/opt/IBM/WebSphere8/AppServer/lib/serviceadapter.jar
+/opt/IBM/WebSphere8/AppServer/lib/setup.jar
+/opt/IBM/WebSphere8/AppServer/lib/startup.jar
+/opt/IBM/WebSphere8/AppServer/lib/tcljava.jar
+/opt/IBM/WebSphere8/AppServer/lib/urlprotocols.jar
+/opt/IBM/WebSphere8/AppServer/lib/wses_dynaedge.jar
+/opt/IBM/WebSphere8/AppServer/lib/wsif-compatb.jar
+/petstore
+/petstore/*
+/ping
+/removeNodeListener
+/resources.xml
+/runtime_messages.jsp
+/samples/activitysessions
+/samples/activitysessions/*
+/scheduler
+/scheduler/*
+/scheduler/docs/*
+/scripts
+/secure/downloadFile/*
+/securecleanup
+/security.xml
+/server-info
+/server-status
+/server.xml
+/serverindex.xml
+/servers
+/servlet
+/servlet/*
+/servlet/ControllerServlet
+/servlet/ErrorReporter
+/servlet/HelloWorldServlet
+/servlet/HitCount
+/servlet/SimpleServlet
+/servlet/SnoopServlet
+/servlet/TheExpiringHTMLServlet
+/servlet/WebSphereSamples.Configuration.config
+/servlet/WebSphereSamples.Form.FormServlet
+/servlet/WebSphereSamples.YourCo.News.NewsServlet
+/servlet/aphtpassword
+/servlet/com.ibm.as400ad.webfacing.runtime.httpcontroller.ControllerServlet
+/servlet/com.ibm.servlet.engine.webapp.DefaultErrorReporter
+/servlet/com.ibm.servlet.engine.webapp.InvokerServlet
+/servlet/com.ibm.servlet.engine.webapp.SimpleFileServlet
+/servlet/com.ibm.servlet.engine.webapp.UncaughtServletException
+/servlet/com.ibm.servlet.engine.webapp.WebAppErrorReport
+/servlet/hello
+/servlet/snoop
+/servlet/snoop2
+/servletcache
+/showCfg
+/sibstatus
+/simple.jsp
+/simpleJSP
+/snoop
+/snoop/*
+/snoop2
+/statistics.jsp
+/status
+/statuspoll
+/theme
+/tradetheme
+/transfer
+/uddigui/*
+/uddisoap/*
+/variables.xml
+/very_simple.jsp
+/virtualhosts.xml
+/wasPerfTool
+/wasPerfTool/*
+/wasPerfToolservlet
+/wasPerfToolservlet/*
+/web.xml
+/webapp
+/webapp/examples/ErrorServlet
+/webapp/examples/HelloPervasive
+/webapp/examples/HitCount
+/webapp/examples/SourceCodeViewer
+/webapp/examples/login.html
+/webapp/examples/ping
+/webapp/examples/showCfg
+/webapp/examples/showcfg
+/webapp/examples/simple.jsp
+/webapp/examples/verify
+/webexec
+/workarea/*
+/workarea/docs/*
+/wps/PA_WCM_Authoring_UI/proxy/http/oast.me
+0
+80
+===
+A required class was not found. This is an application error.
+A servlet mapping specified in the webconfig.xml is not valid. System action is required.
+A thread is no longer tied to a single connection. System action is required.
+A user action is not required.
+ARD is not enabled correctly. System action is required.
+Account for the exception in target code.
+Action	A user action is not required.
+Action	Account for the exception in target code.
+Action	Add a url pattern or servlet name to the filter mapping.
+Action	Add a url pattern to the servlet mapping.
+Action	Add the listener via an annotation or via the web.xml to enable the execution of this method.
+Action	An exception occurred while creating the listener instance
+Action	Be sure the class exists and is visible on the application class path.
+Action	Be sure the web group and virtual host is defined and deployed.
+Action	Change code to implement the expected interface.
+Action	Change or remove the mapping from your application configuration.
+Action	Change the application descriptors to 2.5 level if you are using a * mapping.
+Action	Change the value of the attribute to a valid integer value.
+Action	Check Java 2 Security policy to verify whether this access should be allowed.
+Action	Check client header creation.
+Action	Check directory specification for errors.
+Action	Check for errors earlier in the logs that may have caused initialization to fail.
+Action	Check for mapping clash in webconfig.xml
+Action	Check for the definition of the specified annotation helper and add it if necessary.
+Action	Check if the Session Manager is configured correctly.
+Action	Check if the class has been removed.
+Action	Check that the class file was not renamed after it was compiled.
+Action	Check that the class resides in the proper package directory.
+Action	Check that the class was transferred to the filesystem using a binary transfer mode.
+Action	Check the FFDC logs for more details on the error
+Action	Check the FFDC logs for more details on the error.
+Action	Check the System.out and System.err logs for more information on the exception generated.
+Action	Check the annotation helper implementation class and fix it.
+Action	Check the class specified in the Extension Point.
+Action	Check the exception logs for the reason that the annotation helper could not be instantiated.
+Action	Check the servlet mappings in webconfig.xml and make appropriate changes
+Action	Check the value of the responsebuffersize custom property.
+Action	Check to make sure the original product class path has not been modified.
+Action	Check to see if an additional virtual host alias needs to be added.
+Action	Check your server configuration to see what the value is set to.
+Action	Check your web.xml has a servlet definition for this servlet mapping.
+Action	Collect server logs and contact IBM support.
+Action	Configure this property at the web container level.
+Action	Edit your virtual host alias and remove any duplicates.
+Action	Either set the buffer size before writing data or reset the buffer before setting the size.
+Action	Enable programmatic session configuration.
+Action	Ensure that all of the parameters in the inbound request are valid.
+Action	Ensure that the mentioned file is in place.
+Action	Examine the server logs to determine the root cause of the problem.
+Action	Follow the instructions in the Information Center to add a new virtual host alias.
+Action	Gather logs and contact IBM service.
+Action	Gather server logs and contact IBM service.
+Action	Gather server logs and contact IBM support.
+Action	Gather web container trace and contact IBM support.
+Action	Increase the file size attribute of the multipart configuration for the given servlet.
+Action	Increase the request size attribute of the multipart configuration for the given servlet.
+Action	Install an application to initialize the web container.
+Action	Investigate nested error and perform appropriate action.
+Action	It is recommended to enable the object pool service.
+Action	Look in the error log to determine the root cause of this problem.
+Action	Make sure all required classes are placed in the folders/jars representing the class path
+Action	Make sure that the server configuration depends upon the session feature set.
+Action	Make sure the class exists within the web module's class loader.
+Action	Make sure the directory exists or that you are requesting the right directory.
+Action	Make sure the requesting entity has the required privileges.
+Action	Make sure the servlet class file is available on the application class path.
+Action	Make sure your class path reflects all the classes you may be accessing
+Action	Modify application code according to error explanation.
+Action	Modify the application code to add a listener of the accepted type
+Action	Modify the class to add one of the urlPatterns or value attributes
+Action	Modify the class to extend the correct super class
+Action	Modify the class to only include one of the urlPatterns or value attribute
+Action	Modify the class to specify a valid name in the annotation
+Action	Modify the failing servlet/JSP.
+Action	Only write buffers of size of 0 or greater.
+Action	Place servlet class on classpath of the application server.
+Action	Please check the file serving attributes in your ibm-web-ext.xmi or ibm-web-ext.xml file.
+Action	Re-compile the class and try again.
+Action	Re-compile the servlet with all required components placed in the class path.
+Action	Reaper processing is just a form of garbage collection.
+Action	Recompile the servlet using only the classes in the application's runtime class path.
+Action	Refer to the information center for more details.
+Action	Remove the additional call to dispatch.
+Action	Remove the duplicate mapping.
+Action	Review application to determine cause of problem.
+Action	Review logs to determine whether the specified encoding is a valid encoding.
+Action	Review the logs and contact support.
+Action	Review the logs to determine the status code of the error.
+Action	Review the logs.
+Action	Review the message to determine the root cause of the problem.
+Action	See root cause.
+Action	See the Error Page Exception for a description of the problem with the specified error page.
+Action	See the root cause of the exception.
+Action	Set fileServingEnabled=false in the ibm-web-ext.xmi file which is under WEB-INF folder.
+Action	Supply a leading slash before the path and try again.
+Action	Supply a value to the mentioned parameter.
+Action	Varies by root cause.
+Action	Varies depending on reported root cause.
+Action	Varies with root cause.
+Action	Verify a valid servlet class was provided for the servlet.
+Action	Verify that the ServletContainerInitializer is configured correctly.
+Action	Verify that the cell.xml exists and is readable.
+Action	Verify that the injected resources exist and are accessible to the filter.
+Action	Verify that the injected resources exist and are accessible to the servlet.
+Action	Verify that the path is correct and there are no hardware issues.
+Action	Verify the class exists and has all of its dependencies in the classpath.
+Action	Verify the class exists within the application.
+Action	Verify the client is sending the full request.
+Action	Verify the custom property is correct
+Action	Verify the jar file is valid and is not being updated during traversal.
+Action	Verify the listener is a valid type and available to the application
+Action	Verify the mapping is valid.
+Action	Verify the timer manager selected in the web container panel is valid.
+Action	Verify the value for the single thread model pool size is a valid integer.
+Action	Verify the value for the single thread model servlet maximum idle time is a valid integer.
+Action	Verify there are no code logic or timing issues causing this illegal behavior.
+Action	Verify there is a public no argument constructor on the servlet.
+Action	You can only modify the session configuration before the application is initialized.
+Action	none
+Action	none.
+AddressBookJ2WB
+AddressBookJ2WB/*
+AddressBookJ2WE/*.jsp
+AddressBookJ2WE/*.jsv
+AddressBookJ2WE/*.jsw
+AddressBookJ2WE/services/AddressBook
+AddressBookJ2WE/services/AddressBook/wsdl/*
+AddressBookW2JB
+AddressBookW2JB/*
+AddressBookW2JE/*.jsp
+AddressBookW2JE/*.jsv
+AddressBookW2JE/*.jsw
+AddressBookW2JE/services/AddressBook
+AddressBookW2JE/services/AddressBook/wsdl/*
+AlbumCatalogWeb
+AlbumCatalogWeb/*
+AlbumCatalogWeb/docs/*
+AlbumCatalogWeb/docsservlet
+AlbumCatalogWeb/docsservlet/*
+AlbumCatalogWebservlet
+AlbumCatalogWebservlet/*
+An exception occurred.
+AppInstallStatusServlet
+AppManagementStatus
+AppServer
+Application server identifier.
+ApplicationProfileSample
+ApplicationProfileSample/*
+ApplicationProfileSample/docs/*
+ApplicationProfileSampleservlet
+ApplicationProfileSampleservlet/*
+Attempting to output a buffer of size less than 0. This is an application error.
+BBApp
+Bank/*.jsp
+Bank/*.jsv
+Bank/*.jsw
+Bank/services/Transfer_SEI
+Bank/services/Transfer_SEI/wsdl
+Bank/services/Transfer_SEI/wsdl/*
+Be sure the specified file exists and is in the correct format according to java.utils.Properties.
+Be sure the specified file existsand is in the correct format according to java.utils.Properties.
+Be sure the web group and virtual host is defined and deployed.
+BeenThere
+Cannot serve the contents of a JSP file
+Change code to implement the expected interface.
+Change or remove the mapping from your application configuration.
+Change the application descriptors to 2.5 level if you are using a * mapping.
+Check client header creation.
+Check directory specification for errors.
+Check for mapping clash in webconfig.xml
+Check for the definition of the specified annotation helper and add it if necessary.
+Check if the Session Manager is configured correctly.
+Check that the class file was not renamed after it was compiled.
+Check that the class resides in the proper package directory.
+Check that the class was transferred to the filesystem using a binary transfer mode.
+Check the FFDC logs for more details on the error
+Check the FFDC logs for more details on the error.
+Check the annotation helper implementation class and fix it.
+Check the exception logs for the reason that the annotation helper could not be instantiated.
+Check the servlet mappings in webconfig.xml and make appropriate changes
+Check to make sure the original WAS class path has not been modified.
+Check to see if an additional virtual host alias needs to be added.
+ClusterRollout
+Configure this property at the webcontainer level.
+ControllerServlet
+Could not bind the specified host name to the specified servlet host.
+Could not destroy specified servlet. This is an application error.
+Could not initialize the specified servlet. This is an application error.
+Could not load the specified file. System action is required.
+Could not obtain a valid Session Context for the WebApp. System action is required.
+Date format is not valid.
+DefaultErrorReport was invoked but no error was found. This is a system error.
+DynaCacheESI
+DynaCacheESI/esiInavlidator
+DynamicQuery/EmployeeFinder
+DynamicQuery/EmployeeFinder/*
+DynamicQuery/docs/*
+Either set the buffer size before writing data or reset the buffer before setting the size.
+Ensure that the mentioned file is in place.
+Error that caused the problem.
+ErrorPageApp
+ErrorReporter
+ErrorServlet
+Examine the server logs to determine the root cause of the problem.
+Exception occurred in the reaper thread processing. This is a system error.
+Exception that occurred when processing the request.
+Explanation	A NumberFormatException occurred when trying to set the single thread model pool size.
+Explanation	A ServletContextListener can not be added from another ServletContextListener
+Explanation	A filter mapping is incomplete without a url pattern or servlet name to map to.
+Explanation	A problem occurred while initializing the application's ServletContainerInitializers.
+Explanation	A required class was not found. This is an application error.
+Explanation	A security problem was encountered during request processing.
+Explanation	A servlet mapping is incomplete without a url pattern to map to.
+Explanation	A servlet with the same name already exists for this application.
+Explanation	A session cannot be accessed. The session manager feature set has not been started.
+Explanation	A thread is no longer tied to a single connection. System action is required.
+Explanation	ARD is not enabled correctly. System action is required.
+Explanation	An IOException can occur for any number of reasons related to I/O.
+Explanation	An IOException was thrown from WebContainer's handleRequest method.
+Explanation	An IllegalAccessException occurred calling newInstance on the servlet.
+Explanation	An UnavailableException was thrown from the servlet.
+Explanation	An error occurred while invoking a call to AsyncContext dispatch.
+Explanation	An exception occurred invoking the async error mechanism.
+Explanation	An exception occurred invoking the async listeners.
+Explanation	An exception occurred retrieving the peer certificate.
+Explanation	An exception occurred while creating the listener instance
+Explanation	An exception occurred while trying to add a listener
+Explanation	An exception occurred.
+Explanation	An exception was thrown from a filter.
+Explanation	An internal server error occurred creating the channel object.
+Explanation	An internal server error occurred destroying the servlet.
+Explanation	An internal server error occurred unloading the servlet.
+Explanation	An unexpected configuration exception occurred.
+Explanation	An unexpected configuration exceptoin occurred.
+Explanation	An unexpected error occurred starting the web container channel chains.
+Explanation	An unexpected error occurred while populating the namespace.
+Explanation	An unexpected exception occurred adding the WebContainerService.
+Explanation	An unexpected exception occurred closing the output stream.
+Explanation	An unexpected exception occurred during resource injection.
+Explanation	An unexpected exception occurred flushng out the rest of the response data.
+Explanation	An unexpected exception occurred handling an extension point.
+Explanation	An unexpected exception occurred initializing the login processor.
+Explanation	An unexpected exception occurred initializing the logout processor.
+Explanation	An unexpected exception occurred initializing the output stream.
+Explanation	An unexpected exception occurred initializing the security collaborator.
+Explanation	An unexpected exception occurred removing the web module.
+Explanation	An unexpected exception occurred when trying to retrieve the session context
+Explanation	An unexpected internal server error occurred when initializing the target mappings.
+Explanation	An unexpected internal server error occurred while adding the static file processor.
+Explanation	An unexpected internal server error occurred while registering web module MBean.
+Explanation	An unexpected servlet engine exception occurred. This is a system error.
+Explanation	Application server identifier.
+Explanation	Attempting to output a buffer of size less than 0. This is an application error.
+Explanation	Cannot serve the contents of a JSP file
+Explanation	Classpath errors occurred when serving the servlet.
+Explanation	Could not bind the specified host name to the specified servlet host.
+Explanation	Could not initialize the specified servlet. This is an application error.
+Explanation	Could not instantiate a class for use by the object pool. This is a system error.
+Explanation	Could not load the specified file. System action is required.
+Explanation	Date format is not valid.
+Explanation	DefaultErrorReport was invoked but no error was found. This is a system error.
+Explanation	Error creating PMI statistics group.
+Explanation	Error exception logged for a servlet by use of the ServletContext.
+Explanation	Error occurred while preparing the servlet wrapper for initialization.
+Explanation	Error processing has already been invoked by another thread.
+Explanation	Error removing PMI statistics instance.
+Explanation	Error that caused the problem.
+Explanation	Exception occurred in the reaper thread processing. This is a system error.
+Explanation	Exception that occurred when processing the request.
+Explanation	Filters can only be dynamically added before the ServletContext is initialized.
+Explanation	Format found for a request header is not valid.
+Explanation	HttpServletResponse.sendError was called with a status code but no explanation.
+Explanation	IO error encountered.
+Explanation	Illegal value for responsebuffersize custom property.
+Explanation	Informational message and exception logged for a servlet by use of the ServletContext..
+Explanation	Informational message and stack trace logged via ServletContext.log from an application.
+Explanation	Informational message logged for a servlet by use of the ServletContext.
+Explanation	Informational message logged via ServletContext.log from an application.
+Explanation	Internal exception.
+Explanation	Internal server error.
+Explanation	Internal web container error.
+Explanation	Java 2 Security policy prevented deleting the temporary directory
+Explanation	Missing flag value.
+Explanation	One of the servlets or filters in the request does not support asynchronous servlets.
+Explanation	Problem encountered parsing servlet parameters.
+Explanation	Problem invoking postConstruct or preDestroy.
+Explanation	Problem releasing a session.
+Explanation	Programmatic session configuration has been disabled on this server.
+Explanation	Request encoding specified on the request is not valid. This is an application error.
+Explanation	Security problem encountered during request processing. This is a system error.
+Explanation	See reported error.
+Explanation	Servlet is being destroyed after wait has timed out.
+Explanation	Servlets can only be dynamically added before the ServletContext is initialized.
+Explanation	Some annotations can only be applied to classes which extend the correct type.
+Explanation	Specified servlet is temporarily unavailable.
+Explanation	System action is required.
+Explanation	The JSP specification level supported by the application server.
+Explanation	The Servlet specification states you can only call dispatch once per call to startAsync
+Explanation	The class can not specify both urlPatterns and value in the annotation
+Explanation	The class must specify a valid name in the annotation
+Explanation	The class must specify patterns in the annotation via the urlPatterns or value attribute
+Explanation	The desired path is already assigned in a servlet mapping. This is an application error.
+Explanation	The filter did not load during startup.
+Explanation	The filter failed to initialize because an error occurred when a resource was injected.
+Explanation	The incoming request may be corrupted. This is an application error.
+Explanation	The listener being programmatically added does not implement a valid listener type
+Explanation	The listener failed to initialize because an error occured when a resource was injected.
+Explanation	The mentioned file was not found. This is an application error.
+Explanation	The method startAsync cannot be called after a complete per the Servlet specification.
+Explanation	The multipart/form-data request is larger than the maximum configured size.
+Explanation	The request must be of type multipart/form-data to be able to handle this method.
+Explanation	The request path maps to a context root on a non-matching virtual host.
+Explanation	The request tried to access a forbidden resource.
+Explanation	The same pattern was specified twice for the url patterns to deny for file serving.
+Explanation	The servlet class name is null so the request cannot be handled.
+Explanation	The servlet class was found to be corrupted. This is an application error.
+Explanation	The servlet does not accept multipart requests.
+Explanation	The servlet failed to initialize because an error occurred when a resource was injected.
+Explanation	The servlet specification level supported by the application server.
+Explanation	The specified annotation helper could not be instantiated. This is a system error.
+Explanation	The specified annotation helper has not been defined. This is a system error.
+Explanation	The specified annotation helper is not of the expected type. This is a system error.
+Explanation	The specified directory is not valid.
+Explanation	The specified path is not a directory.
+Explanation	The specified servlet has been unloaded after the destroy method has been called.
+Explanation	The specified servlet is being unloaded from service.
+Explanation	The virtual host was not found. System action is required.
+Explanation	There is no servlet definition for the servlet mapping.
+Explanation	There must be at least one async timer thread.
+Explanation	There was a problem invoking the specified error reporter.
+Explanation	There was a problem retrieving the restricted cookie patterns from the configuration.
+Explanation	There was an exception uploading the file.
+Explanation	This exception should never occur as the thread pools will queue up the work.
+Explanation	This is a system error error.
+Explanation	This is a system error.
+Explanation	This is an application error.
+Explanation	This is an internal system error and is probably caused by an earlier failure.
+Explanation	This is an unexpected internal error.
+Explanation	Uncaught exception created in servlet service method. This is an application error.
+Explanation	Unknown error related to the web container configuration.
+Explanation	Web module is starting and being made available for service.
+Explanation	WebAppSecurityCollaborator. This is a system error.
+Explanation	none
+Explanation	none.
+FileTransfer
+Follow the instructions in the Information Center to add a new virtual host alias.
+Format found for a request header is not valid.
+GalleryMenu
+Gather logs and contact IBM service.
+Gather server logs and contact IBM service.
+Greenhouse
+Greenhouse/*
+GreenhouseByWebSphere/docs/*
+GreenhouseEJB/*.jsp
+GreenhouseEJB/*.jsv
+GreenhouseEJB/*.jsw
+GreenhouseEJB/services/GreenhouseFront
+GreenhouseEJB/services/GreenhouseFront/wsdl/*
+GreenhouseWeb
+GreenhouseWeb/*
+GreenhouseWebservlet
+GreenhouseWebservlet/*
+Greenhouseservlet
+Greenhouseservlet/*
+HelloHTML.jsp
+HelloHTMLError.jsp
+HelloPervasive
+HelloVXML.jsp
+HelloVXMLError.jsp
+HelloWML.jsp
+HelloWMLError.jsp
+HelloWorld
+HelloWorldServlet
+HitCount
+HitCount.jsp
+IBMDefaultErrorReporter
+IBMWebAS
+IBM_WS_SYS_RESPONSESERVLET
+IBM_WS_SYS_RESPONSESERVLET/*
+IO error encountered.
+ISCAdminPortlet
+Informational message {2} logged via ServletContext.log from application {0} with context root {1}.
+Install an application to initialize the webcontainer.
+Internal exception.
+Internal server error.
+Internal web container error.
+It is recommended to enable the object pool service.
+JTAExtensionsSamples/TransactionTracker
+JTAExtensionsSamples/TransactionTracker/*
+JTAExtensionsSamples/docs/*
+Look in the error log to determine the root cause of this problem.
+MANIFEST.MF
+META-INF
+Make sure all required classes are placed in the folders/jars representing the class path
+Make sure the directory exists or that you are requesting the right directory.
+Make sure the requesting entity has the required privileges.
+Make sure the servlet class file is available on the application class path.
+Make sure your class path reflects all the classes you may be accessing
+MessageDrivenBeans/docs/*
+MessageDrivenBeans/docsservlet/*
+MessageMigrationUtility
+Missing flag value.
+Modify the failing servlet/JSP.
+Only write buffers of size of 0 or greater.
+OrderProcessorEJB/*
+OrderProcessorEJB/*.jsp
+OrderProcessorEJB/*.jsv
+OrderProcessorEJB/*.jsw
+OrderProcessorEJB/services/FrontGate
+OrderProcessorEJB/services/FrontGate/wsdl/*
+PlantsByWebSphere
+PlantsByWebSphere/*
+PlantsByWebSphere/docs
+PlantsByWebSphere/docs/*
+Problem encountered parsing servlet parameters.
+Problem encountered rolling back the specified user transaction. This is an application error.
+Problem invoking the specified error reporter.
+Problem releasing a session.
+Re-compile the class and try again.
+Re-compile the servlet with all required components placed in the class path.
+Reaper processing is just a form of garbage collection.
+Recompile the servlet using only the classes in the application's runtime class path.
+Refer to the information center for more details.
+Remove the duplicate mapping.
+Request encoding specified on the request is not valid. This is an application error.
+Review application to determine cause of problem.
+Review logs to determine whether the specified encoding is a valid encoding.
+Review the logs.
+Review the message to determine the root cause of the problem.
+SRVE
+SRVE0
+SamplesGallery
+SamplesGallery/*
+Security problem encountered during request processing. This is a system error.
+See reported error.
+See the Error Page Exception for a description of the problem with the specified error page.
+Servlet could not find a required class needed to service the request. This is an application error.
+Servlet is being destroyed after wait has timed out.
+Servlet is still handling the request. Waiting for request to complete before calling destroy.
+Set fileServingEnabled=false in the ibm-web-ext.xmi file which is under WEB-INF folder.
+SimpleServlet
+SnoopServlet
+SourceCodeViewer
+Sourceservlet-classViewer
+Specified servlet is temporarily unavailable.
+StockQuote/*.jsp
+StockQuote/*.jsv
+StockQuote/*.jsw
+StockQuote/services/xmltoday-delayed-quotes
+StockQuote/services/xmltoday-delayed-quotes/wsdl/*
+Supply a leading slash before the path and try again.
+Supply a value to the mentioned parameter.
+System action is required.
+TechnologySamples/AddressBook
+TechnologySamples/AddressBook/*
+TechnologySamples/AddressBook/*.jsp
+TechnologySamples/AddressBook/*.jsv
+TechnologySamples/AddressBook/*.jsw
+TechnologySamples/AddressBook/AddressBookServlet
+TechnologySamples/AddressBook/servlet/*
+TechnologySamples/BasicCalculator
+TechnologySamples/BasicCalculator/*
+TechnologySamples/BulletinBoard
+TechnologySamples/BulletinBoard/*
+TechnologySamples/BulletinBoardservlet
+TechnologySamples/BulletinBoardservlet/*
+TechnologySamples/Calendar
+TechnologySamples/Calendar/*
+TechnologySamples/FilterServlet
+TechnologySamples/FilterServlet/*
+TechnologySamples/FormLogin
+TechnologySamples/FormLogin/*
+TechnologySamples/FormLoginservlet
+TechnologySamples/FormLoginservlet/*
+TechnologySamples/JAASLogin
+TechnologySamples/JAASLogin/*
+TechnologySamples/JAASLoginservlet
+TechnologySamples/JAASLoginservlet/*
+TechnologySamples/MovieReview
+TechnologySamples/MovieReview/*
+TechnologySamples/MovieReview2_0
+TechnologySamples/MovieReview2_0/*
+TechnologySamples/MovieReview2_1
+TechnologySamples/MovieReview2_1/*
+TechnologySamples/PageReturner
+TechnologySamples/PageReturner/*
+TechnologySamples/PageReturnerservlet
+TechnologySamples/PageReturnerservlet/*
+TechnologySamples/ReadingList
+TechnologySamples/ReadingList/*
+TechnologySamples/SimpleJSP
+TechnologySamples/SimpleJSP/*
+TechnologySamples/SimpleServlet
+TechnologySamples/SimpleServlet/*
+TechnologySamples/Subscription
+TechnologySamples/Subscription/*
+TechnologySamples/Subscriptionservlet
+TechnologySamples/Subscriptionservlet/*
+TechnologySamples/Taglib
+TechnologySamples/Taglib/*
+TechnologySamples/docs
+TechnologySamples/docs/*
+TechnologySamples/docs/chs
+TechnologySamples/docs/chs/*
+TechnologySamples/docs/cht
+TechnologySamples/docs/cht/*
+TechnologySamples/docs/deu
+TechnologySamples/docs/deu/*
+TechnologySamples/docs/en
+TechnologySamples/docs/en/*
+TechnologySamples/docs/esp
+TechnologySamples/docs/esp/*
+TechnologySamples/docs/fra
+TechnologySamples/docs/fra/*
+TechnologySamples/docs/ita
+TechnologySamples/docs/ita/*
+TechnologySamples/docs/jpn
+TechnologySamples/docs/jpn/*
+TechnologySamples/docs/kor
+TechnologySamples/docs/kor/*
+TechnologySamples/docs/ptb
+TechnologySamples/docs/ptb/*
+The JSP specification level supported by the application server.
+The desired path is already assigned in a servlet mapping. This is an application error.
+The filter did not load during startup.
+The filter failed to initialize because an error occurred when a resource was injected.
+The incoming request may be corrupted. This is an application error.
+The listener failed to initialize because an error occured when a resource was injected.
+The mentioned file was not found. This is an application error.
+The request path maps to a context root on a non-matching virtual host.
+The request tried to access a forbidden resource.
+The servlet chain that has been defined can only handle HTTP requests. This is an application error.
+The servlet class was found to be corrupted. This is an application error.
+The servlet failed to initialize because an error occurred when a resource was injected.
+The servlet specification level supported by the application server.
+The specified annotation helper could not be instantiated. This is a system error.
+The specified annotation helper has not been defined. This is a system error.
+The specified annotation helper is not of the expected type. This is a system error.
+The specified directory is not valid.
+The specified path is not a directory.
+The specified servlet has been unloaded after the destroy method has been called.
+The specified servlet is being unloaded from service.
+The virtual host was not found. System action is required.
+There was no servlet mapping for the filter so it cannot be added. This is an application error.
+This is a system error error.
+This is a system error.
+This is an application error.
+This is an internal system error and is probably caused by an earlier failure.
+Unable to locate Virtual Host defined to handle this request URI. System action is required.
+Uncaught exception created in servlet service method. This is an application error.
+Varies by root cause.
+Varies depending on reported root cause.
+Varies with root cause.
+Verify that the injected resources exist and are accessible to the filter.
+Verify that the injected resources exist and are accessible to the servlet.
+Verify the class exists within the application.
+Verify the client is sending the full request.
+Verify the custom property is correct
+Verify the mapping is valid.
+WEB-INF
+WEB-INF./web.xml
+WEB-INF/web.xml
+WSPolicyManager
+WSsamples
+WSsamples/*
+WSsamples/de
+WSsamples/de/*
+WSsamples/en
+WSsamples/en/*
+WSsamples/es
+WSsamples/es/*
+WSsamples/fr
+WSsamples/fr/*
+WSsamples/index.jsp
+WSsamples/it
+WSsamples/it/*
+WSsamples/ja
+WSsamples/ja/*
+WSsamples/ko
+WSsamples/ko/*
+WSsamples/pt_br
+WSsamples/pt_br/*
+WSsamples/zh_cn
+WSsamples/zh_cn/*
+WSsamples/zh_tw
+WSsamples/zh_tw/*
+Wait and retry operation. Servlet might have been removed from service by server administrator.
+WarehouseEJB/*.jsp
+WarehouseEJB/*.jsv
+WarehouseEJB/*.jsw
+WarehouseEJB/services/WarehouseFront
+WarehouseEJB/services/WarehouseFront/wsdl/*
+WarehouseWeb
+WarehouseWeb/*
+WarehouseWebservlet
+WarehouseWebservlet/*
+WebAppSecurityCollaborator. This is a system error.
+WebContainer is not initialized until an application has been installed. This is a system error.
+WebModule is starting and being made available for service.
+WebServicesSamples/docs/*
+WebSphere
+WebSphereBank
+WebSphereBank/*
+WebSphereBank/docs/*
+WebSphereBankDeposit
+WebSphereBankDeposit/*
+WebSphereBankDepositservlet
+WebSphereBankDepositservlet/*
+WebSphereBankservlet
+WebSphereBankservlet/*
+WebSphereSamples
+WebSphereSamples.Configuration.config
+WebSphereSamples/
+WebSphereSamples/SingleSamples/AccountAndTransfer/create.html
+WebSphereSamples/SingleSamples/Increment/increment.html
+WebSphereSamples/YourCo/main.html
+WebSphereTPHosts
+_DynaCacheEsi
+_DynaCacheEsi/*
+_DynaCacheEsi/esiInvalidator
+ab/*
+ab/docs/*
+activitysessions/docs/*
+addNodeListener
+admin
+admin-authz.xml
+admin.conf
+admin.passwd
+admin/*
+admin/logon.jsp
+admin/secure/logon.jsp
+apadminred
+apadminred.html
+aphtpasswd.html
+asynchbeans/*
+asynchbeans/docs/*
+auth_error.jsp
+cachemonitor
+cachemonitor/statistics.jsp
+cell.xml
+cells
+cgi-bin
+cgi-bin/
+com.ibm.ws.console.events
+com.ibm.ws.console.events/runtime_messages.jsp
+config
+console
+contentapi
+debug_error.jsp
+ejb3sample/
+enabler
+error
+error.jsp
+esiInavlidator
+estore
+estore/annotated-index.html
+estore/index.html
+estore/populate
+examples
+hello
+helloEJB
+hitcount
+i18nctxSample
+i18nctxSample/*
+i18nctxSample/docs/*
+ibm
+ibm/console
+ibm/help
+ibm_security_logout
+icons
+images
+index.html
+index.jsp
+ivt
+ivt/*
+ivt/ivtAddition.jsp
+ivt/ivtDate.jsp
+ivt/ivtejb
+ivt/ivtserver
+ivt/ivtservler
+ivt/ivtservlet
+ivtejb
+ivtserver
+ivtservlet
+j_security_check
+jcr
+jcradmin
+jsp
+login.html
+lwp/imageServlet
+lwp/peopleSearch
+lwp/templatelibraryExport
+lwp/typeAhead
+manual
+manual/index.html
+mycontenthandler/
+mycontenthandler/wcmrest/
+mycontenthandler/wcmrest/Project
+nb
+node.xml
+nodes
+none
+none.
+opc/*.jsp
+opc/*.jsv
+opc/*.jsw
+opc/services/BrokerServiceIntfPort
+opc/services/BrokerServiceIntfPort/wsdl/*
+opc/services/OrderTrackingIntfPort
+opc/services/OrderTrackingIntfPort/wsdl/*
+opc/services/PurchaseOrderIntfPort
+opc/services/PurchaseOrderIntfPort/wsdl/*
+opt
+otis
+petstore
+petstore/*
+ping
+prm
+removeNodeListener
+replication
+resources.xml
+runtime_messages.jsp
+samples/activitysessions
+samples/activitysessions/*
+scheduler
+scheduler/*
+scheduler/docs/*
+scripts
+searchfeed
+secure/downloadFile/*
+securecleanup
+security.xml
+seedlist
+server-info
+server-status
+server.xml
+serverindex.xml
+servers
+servlet
+servlet/*
+servlet/ControllerServlet
+servlet/ErrorReporter
+servlet/HelloPervasiveServlet
+servlet/HelloWorldServlet
+servlet/HitCount
+servlet/SimpleServlet
+servlet/SnoopServlet
+servlet/TheExpiringHTMLServlet
+servlet/WebSphereSamples.Configuration.config
+servlet/WebSphereSamples.Form.FormServlet
+servlet/WebSphereSamples.YourCo.News.NewsServlet
+servlet/aphtpassword
+servlet/com.ibm.as400ad.webfacing.runtime.httpcontroller.ControllerServlet
+servlet/com.ibm.servlet.engine.webapp.DefaultErrorReporter
+servlet/com.ibm.servlet.engine.webapp.InvokerServlet
+servlet/com.ibm.servlet.engine.webapp.SimpleFileServlet
+servlet/com.ibm.servlet.engine.webapp.UncaughtServletException
+servlet/com.ibm.servlet.engine.webapp.WebAppErrorReport
+servlet/com.ibm.websphere.management.wsdm.jaxws.AppServiceGroupService
+servlet/com.ibm.websphere.management.wsdm.jaxws.ApplicationServerService
+servlet/com.ibm.websphere.management.wsdm.jaxws.ApplicationService
+servlet/com.ibm.websphere.management.wsdm.jaxws.DataSourceService
+servlet/com.ibm.websphere.management.wsdm.jaxws.DomainResourcesServiceGroupService
+servlet/com.ibm.websphere.management.wsdm.jaxws.EJBService
+servlet/com.ibm.websphere.management.wsdm.jaxws.J2EEFactoryService
+servlet/com.ibm.websphere.management.wsdm.jaxws.JVMService
+servlet/com.ibm.websphere.management.wsdm.jaxws.JaxrpcWebServiceService
+servlet/com.ibm.websphere.management.wsdm.jaxws.JaxwsWebServiceService
+servlet/com.ibm.websphere.management.wsdm.jaxws.ServiceGroupService
+servlet/com.ibm.websphere.management.wsdm.jaxws.ServletService
+servlet/com.ibm.websphere.management.wsdm.jaxws.WebServiceService
+servlet/com.ibm.websphere.management.wsdm.jaxws.WebSphereClusterService
+servlet/com.ibm.websphere.management.wsdm.jaxws.WebSphereDomainService
+servlet/com.ibm.ws.websvcs.transport.http.AsyncResponseServlet
+servlet/hello
+servlet/ivtEJBClient
+servlet/ivtServer
+servlet/ivtServlet
+servlet/java.lang.Throwable
+servlet/snoop
+servlet/snoop2
+servletcache
+showCfg
+sibstatus
+sibws
+simple.jsp
+simpleJSP
+sm
+snoop
+snoop/*
+snoop2
+soaphttp
+statistics.jsp
+status
+statuspoll
+theme
+tradetheme
+transfer
+uddigui
+uddigui/*
+uddisoap
+uddisoap/*
+uddiv3soap
+variables.xml
+very_simple.jsp
+virtualhosts.xml
+wasPerfTool
+wasPerfTool/*
+wasPerfToolservlet
+wasPerfToolservlet/*
+wasportlet
+wcmrest/
+web.xml
+webapp
+webapp/examples/ErrorServlet
+webapp/examples/HelloPervasive
+webapp/examples/HitCount
+webapp/examples/SourceCodeViewer
+webapp/examples/login.html
+webapp/examples/ping
+webapp/examples/showCfg
+webapp/examples/showcfg
+webapp/examples/simple.jsp
+webapp/examples/verify
+webexec
+websphere-management
+websphere-management/services/application
+websphere-management/services/application-service-group
+websphere-management/services/applicationserver
+websphere-management/services/datasource
+websphere-management/services/domain-resources-service-group
+websphere-management/services/ejb
+websphere-management/services/factory
+websphere-management/services/jaxrpcwebservices
+websphere-management/services/jaxwswebservices
+websphere-management/services/jvm
+websphere-management/services/service-group
+websphere-management/services/servlet
+websphere-management/services/vm-service-group
+websphere-management/services/webservices
+websphere-management/services/webspherecluster
+websphere-management/services/webspheredomain
+wim
+workarea/*
+workarea/docs/*
+wp_proxy
+wps
+wps/CacheProxyServlet/*
+wps/PA_Add_to_Sam_st_Portlet
+wps/PA_ApplicationCatalog
+wps/PA_Banner_Ad
+wps/PA_BksFinalJSRProject
+wps/PA_Blurb
+wps/PA_Bookmarks
+wps/PA_Clients_Manager
+wps/PA_Community_Port_App
+wps/PA_Credential_Admin
+wps/PA_DoWebAccessServlet
+wps/PA_Document_Viewer
+wps/PA_DynamicUIApp
+wps/PA_Eecontentandlayout
+wps/PA_FS_Disambiguation
+wps/PA_FeedReader
+wps/PA_FrequentUsers
+wps/PA_Groups_Viewer_App
+wps/PA_IBMCommonPIMPort
+wps/PA_Import_XML
+wps/PA_Login_Portlet_App
+wps/PA_LotusNotes
+wps/PA_LtusDocumentViewer
+wps/PA_LusWebConferencing
+wps/PA_MPagesandFavorites
+wps/PA_MageVirtualPortals
+wps/PA_Manage_Webservices
+wps/PA_Markups_Manager
+wps/PA_MyTeamspaces
+wps/PA_PTransformationApp
+wps/PA_Palette_Port_App
+wps/PA_ParamConfig
+wps/PA_People_Finder
+wps/PA_People_Picker_App
+wps/PA_PersontagServlet
+wps/PA_PolicyEditor
+wps/PA_PolicyEditorCA
+wps/PA_PolicyExplorer
+wps/PA_Policy_Status
+wps/PA_Portlet_Manager
+wps/PA_Principals_Manager
+wps/PA_Properties
+wps/PA_PropertiesPortApp
+wps/PA_RSS
+wps/PA_Reminder
+wps/PA_ResourceView
+wps/PA_Resource_Manager
+wps/PA_Roles
+wps/PA_SIAPI
+wps/PA_SQL_Query
+wps/PA_SametimeWhoIsHere
+wps/PA_SearchSitemapPort
+wps/PA_Search_Center
+wps/PA_Selfcare_Port_App
+wps/PA_Set_Permissions
+wps/PA_Settings
+wps/PA_SmetimeContactList
+wps/PA_TCustomizerPortApp
+wps/PA_TateCatalogPortApp
+wps/PA_ThemesAndSkinsMgr
+wps/PA_Tracing
+wps/PA_URL_mapping
+wps/PA_UniqueNames
+wps/PA_WCMLocalRendering
+wps/PA_WCM_Admin
+wps/PA_WCM_Authoring_UI
+wps/PA_WPS_Welcome
+wps/PA_Web
+wps/PA_WebScanner
+wps/PA_appearance
+wps/PA_dynamicpersontag
+wps/PA_portletWiring
+wps/PA_spa
+wps/WSRPBaseService
+wps/WSRPBaseService/*
+wps/WSRPBaseService_v2
+wps/WSRPBaseService_v2/*
+wps/WSRPPortletManagementService
+wps/WSRPPortletManagementService/*
+wps/WSRPPortletManagementService_v2
+wps/WSRPPortletManagementService_v2/*
+wps/WSRPServiceDescriptionService
+wps/WSRPServiceDescriptionService/*
+wps/WSRPServiceDescriptionService_v2
+wps/WSRPServiceDescriptionService_v2/*
+wps/WsrpProxyPortlet
+wps/catalogHandler
+wps/config
+wps/config/*
+wps/content/*
+wps/contenthandler/*
+wps/federation/*
+wps/iehs
+wps/login/*
+wps/mailServlets
+wps/mycontenthandler/*
+wps/myfederation/*
+wps/mypoc/*
+wps/myportal/*
+wps/myproxy/*
+wps/poc/*
+wps/portal/*
+wps/proxy/*
+wps/pznauthor6
+wps/pznlist6
+wps/pznpublish
+wps/pznutilities
+wps/redirect/*
+wps/richText
+wps/spellcheck
+wps/um
+wps/upCatalogHandler
+wps/wcm
+wps/wcmimport
+wps/wcmsearchseed
+wps/wprs
+wps/wsdl/*
+wps/wsrp/WSRPBaseService_v2
+wps/wsrp/WSRPBaseService_v2/*
+wps/wsrp/WSRPPortletManagementService
+wps/wsrp/WSRPPortletManagementService/*
+wps/wsrp/WSRPPortletManagementService_v2
+wps/wsrp/WSRPPortletManagementService_v2/*
+wps/wsrp/WSRPServiceDescriptionService
+wps/wsrp/WSRPServiceDescriptionService/*
+wps/wsrp/WSRPServiceDescriptionService_v2
+wps/wsrp/WSRPServiceDescriptionService_v2/*
+wps/wsrp/WsrpProxyPortlet
+wps_semanticTag
+wsgwsoaphttp1
+wsgwsoaphttp2
+wsrp
+wsrp*

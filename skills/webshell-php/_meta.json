@@ -1,0 +1,36 @@
+{
+  "name": "webshell-php",
+  "version": "1.0.0",
+  "description": "PHP Webshell for remote command execution",
+  "author": "TrustGuard Agent",
+  "category": "WebTesting/Exploit",
+  "tags": ["webshell", "php", "remote-execution", "file-upload", "command-execution"],
+  "dependencies": ["python3", "curl"],
+  "supported_platforms": ["linux"],
+  "supported_architectures": ["amd64", "arm64"],
+  "license": "MIT",
+  "repository": "local",
+  "homepage": "",
+  "documentation": "SKILL.md",
+  "maintainer": "trustguard-agent",
+  "created": "2026-03-17",
+  "updated": "2026-03-17",
+  "features": [
+    "Remote command execution",
+    "File upload/download",
+    "Interactive shell",
+    "No reverse shell setup required"
+  ],
+  "limitations": [
+    "Requires PHP webshell on target",
+    "HTTP requests can be detected by IDS",
+    "Limited by PHP configuration",
+    "May not work on all servers"
+  ],
+  "test_scenarios": [
+    "Command execution on vulnerable server",
+    "File upload to web directory",
+    "File download from server",
+    "Interactive shell session"
+  ]
+}
