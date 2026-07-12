@@ -475,11 +475,26 @@ async def run_status(task_id: str) -> dict[str, Any]:
 @app.get("/api/v1/tasks/{task_id}/events")
 async def task_events(task_id: str, limit: int = 500) -> dict[str, Any]:
     try:
-        data = await _evidence("GET", f"/internal/tasks/{task_id}/events", params={"limit": _limit(limit, 500)})
+        raw = await _evidence("GET", f"/internal/tasks/{task_id}/events", params={"limit": _limit(limit, 500)})
+        data = [
+            {
+                "eventId": e.get("event_id"),
+                "taskId": e.get("task_id"),
+                "timestamp": e.get("timestamp"),
+                "eventType": e.get("event_type"),
+                "sourceModule": e.get("source_module"),
+                "payload": e.get("payload"),
+                "runStartedAt": e.get("run_started_at"),
+                "runFinishedAt": e.get("run_finished_at"),
+                "runDurationMs": e.get("run_duration_ms"),
+            }
+            for e in (raw or [])
+        ]
     except Exception:
         rows = _query(
             """
-            SELECT event_id, task_id, ts, event_type, source_module, payload
+            SELECT event_id, task_id, ts, event_type, source_module, payload,
+                   run_started_at, run_finished_at, run_duration_ms
             FROM tg_trace_events
             WHERE task_id = %s
             ORDER BY ts ASC, id ASC
@@ -489,12 +504,15 @@ async def task_events(task_id: str, limit: int = 500) -> dict[str, Any]:
         )
         data = [
             {
-                "event_id": r.get("event_id"),
-                "task_id": r.get("task_id"),
+                "eventId": r.get("event_id"),
+                "taskId": r.get("task_id"),
                 "timestamp": _dt_iso(r.get("ts")),
-                "event_type": r.get("event_type"),
-                "source_module": r.get("source_module"),
+                "eventType": r.get("event_type"),
+                "sourceModule": r.get("source_module"),
                 "payload": _json_loads(r.get("payload")),
+                "runStartedAt": r.get("run_started_at") or "",
+                "runFinishedAt": r.get("run_finished_at") or "",
+                "runDurationMs": r.get("run_duration_ms") or 0,
             }
             for r in rows
         ]
