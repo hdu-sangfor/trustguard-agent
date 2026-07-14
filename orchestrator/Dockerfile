@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1.7
 ARG DOCKERHUB_REGISTRY=docker.io
 ARG UV_INDEX_URL
 ARG UV_EXTRA_INDEX_URL
