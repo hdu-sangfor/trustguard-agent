@@ -979,6 +979,18 @@ class SkillExecutor:
                             continue
                         fact = f"[Scanner_Unverified] {tid} detected on: {', '.join(urls_list)}"
                         add_tier1_fact(state, fact)
+                        # ── FP 追踪：同步创建 FPRecord ──
+                        try:
+                            from app.core.fp_tracker import ensure_fp_record, emit_finding_registered_events
+                            for url in urls_list:
+                                ensure_fp_record(
+                                    state, template_id=tid, url=url, severity=sev,
+                                    source_skill_id="nuclei",
+                                    source_phase=state.current_phase.value if state.current_phase else "",
+                                )
+                            await emit_finding_registered_events(state, tid, urls_list)
+                        except Exception:
+                            pass
             except Exception:
                 # 升级失败不应影响主流程
                 pass

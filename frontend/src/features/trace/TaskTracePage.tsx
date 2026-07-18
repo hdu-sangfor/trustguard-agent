@@ -14,10 +14,32 @@ import { useAppSession } from "@/shared/context/AppSessionContext";
 import {
   getTask, getTaskEvents, runTask, stopTask, resumeTask,
   getTaskTrace, getTracePlan, getTaskObservation,
+  getTaskFPFindings, submitFPFeedback,
   TRUSTGUARD_PHASES,
   type ApiTask, type ApiEvent, type ApiTraceExecution, type ApiObservation,
+  type ApiFPFindingsResponse, type ApiFPFinding,
 } from "@/shared/lib/api";
 import { readStoredOrbitTasks } from "@/shared/constants/orbitTasksStorage";
+
+// ─── FP 工具 ────────────────────────────────────────────────────────────────
+function _verdictLabel(v: string): string {
+  const map: Record<string, string> = {
+    FALSE_POSITIVE: "误报",
+    TRUE_POSITIVE: "确认漏洞",
+    INCONCLUSIVE: "不确定",
+    UNVERIFIED: "待验证",
+  };
+  return map[v] ?? v;
+}
+function _verdictColor(v: string): string {
+  const map: Record<string, string> = {
+    FALSE_POSITIVE: "#34d399",
+    TRUE_POSITIVE: "#f87171",
+    INCONCLUSIVE: "#9ca3af",
+    UNVERIFIED: "#fbbf24",
+  };
+  return map[v] ?? "#9ca3af";
+}
 
 // ─── Phase config ─────────────────────────────────────────────────────────────
 const PHASE_LABELS: Record<string, string> = {
@@ -462,13 +484,16 @@ export default function TaskTracePage() {
   const [loading, setLoading] = useState(true);
   const [demoMode, setDemoMode] = useState(false);
   const [actionPending, setActionPending] = useState(false);
-  const [activeTab, setActiveTab] = useState<"events" | "ai_trace" | "observation">("events");
+  const [activeTab, setActiveTab] = useState<"events" | "ai_trace" | "observation" | "fp_review">("events");
   const [traceExecs, setTraceExecs] = useState<ApiTraceExecution[] | null>(null);
   const [traceLoading, setTraceLoading] = useState(false);
   const [tracePlanSummary, setTracePlanSummary] = useState<string | null>(null);
   const [traceError, setTraceError] = useState<string | null>(null);
   const [observation, setObservation] = useState<ApiObservation | null>(null);
   const [observationLoading, setObservationLoading] = useState(false);
+  const [fpData, setFpData] = useState<ApiFPFindingsResponse | null>(null);
+  const [fpLoading, setFpLoading] = useState(false);
+  const [fpFeedbackSubmitting, setFpFeedbackSubmitting] = useState<string | null>(null); // fpId being submitted
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const isDemo = !taskId || /^\d+$/.test(taskId);
@@ -581,6 +606,41 @@ export default function TaskTracePage() {
   useEffect(() => {
     if (activeTab === "observation") void loadObservation();
   }, [activeTab, loadObservation]);
+
+  // ── FP 审核面板数据加载 ──
+  const loadFP = useCallback(async () => {
+    if (!taskId || fpData !== null) return;
+    if (isDemo) return;
+    setFpLoading(true);
+    try {
+      const data = await getTaskFPFindings(taskId);
+      setFpData(data);
+    } catch {
+      // backend may not have fp data yet
+    } finally {
+      setFpLoading(false);
+    }
+  }, [taskId, isDemo, fpData]);
+
+  useEffect(() => {
+    if (activeTab === "fp_review") void loadFP();
+  }, [activeTab, loadFP]);
+
+  async function handleFPFeedback(fpId: string, verdict: string, fb?: string) {
+    if (!taskId) return;
+    setFpFeedbackSubmitting(fpId);
+    try {
+      await submitFPFeedback(taskId, fpId, verdict, fb);
+      toast.success(`已标记为 ${_verdictLabel(verdict)}`);
+      // 刷新 FP 数据
+      setFpData(null);
+      void loadFP();
+    } catch (e: unknown) {
+      toast.error(`提交失败: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setFpFeedbackSubmitting(null);
+    }
+  }
 
   // Auto-refresh when RUNNING
   useEffect(() => {
@@ -782,9 +842,9 @@ export default function TaskTracePage() {
 
             {/* ── Tab strip ── */}
             <div style={{ display: "flex", gap: 2, marginBottom: 0 }}>
-              {(["events", "ai_trace", "observation"] as const).map((tab) => {
-                const labels: Record<string, string> = { events: "执行事件流", ai_trace: "AI 编排轨迹", observation: "上下文" };
-                const accentColors: Record<string, string> = { events: "#22d3ee", ai_trace: "#22d3ee", observation: "#34d399" };
+              {(["events", "ai_trace", "observation", "fp_review"] as const).map((tab) => {
+                const labels: Record<string, string> = { events: "执行事件流", ai_trace: "AI 编排轨迹", observation: "上下文", fp_review: "误报审核" };
+                const accentColors: Record<string, string> = { events: "#22d3ee", ai_trace: "#22d3ee", observation: "#34d399", fp_review: "#f59e0b" };
                 const isActive = activeTab === tab;
                 const accent = accentColors[tab];
                 return (
@@ -817,6 +877,11 @@ export default function TaskTracePage() {
                         {Array.isArray((observation.context as Record<string, unknown>)?.confirmed_vulnerabilities)
                           ? `${((observation.context as Record<string, unknown>).confirmed_vulnerabilities as unknown[]).length} 漏洞`
                           : "已更新"}
+                      </span>
+                    )}
+                    {tab === "fp_review" && fpData && (
+                      <span style={{ marginLeft: 6, fontSize: 10, color: isActive ? "rgba(245,158,11,0.8)" : "rgba(245,158,11,0.5)" }}>
+                        {fpData.total} 条 · FP {fpData.falsePositives}
                       </span>
                     )}
                   </button>
@@ -1103,6 +1168,151 @@ export default function TaskTracePage() {
                         </div>
                       </div>
                     )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ── FP Review tab ── */}
+            {activeTab === "fp_review" && (
+              <div style={{
+                background: TRACE_SURFACE, border: `1px solid ${TRACE_BORDER}`,
+                borderRadius: "0 8px 8px 8px", overflow: "hidden",
+              }}>
+                {fpLoading ? (
+                  <div style={{ padding: "48px 20px", textAlign: "center", color: TRACE_FAINT, fontSize: 12, fontFamily: "monospace" }}>
+                    正在加载误报审核数据…
+                  </div>
+                ) : !fpData ? (
+                  <div style={{ padding: "48px 20px", textAlign: "center", color: TRACE_FAINT, fontSize: 12 }}>
+                    {isDemo ? "演示模式下无 FP 数据" : "暂无 FP 数据（任务尚未执行扫描或 LLM 尚未输出判定）"}
+                    <div style={{ marginTop: 10 }}>
+                      <button type="button" onClick={() => { setFpData(null); void loadFP(); }}
+                        style={{ background: "none", border: "none", color: "#f59e0b", cursor: "pointer", fontSize: 12 }}>
+                        点击重试
+                      </button>
+                    </div>
+                  </div>
+                ) : fpData.total === 0 ? (
+                  <div style={{ padding: "48px 20px", textAlign: "center", color: TRACE_FAINT, fontSize: 12, fontFamily: "monospace" }}>
+                    暂无扫描发现（任务尚未执行漏洞扫描阶段）
+                  </div>
+                ) : (
+                  <div style={{ padding: "0 0 16px" }}>
+                    {/* Header summary */}
+                    <div style={{
+                      padding: "10px 16px", borderBottom: `1px solid ${TRACE_BORDER}`,
+                      background: "rgba(245,158,11,0.05)",
+                      display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap",
+                    }}>
+                      <span style={{ fontSize: 11, fontFamily: "monospace", color: "#f59e0b", fontWeight: 700 }}>误报审核</span>
+                      <span style={{ fontSize: 10, fontFamily: "monospace", color: TRACE_MUTED }}>
+                        总计 {fpData.total}
+                      </span>
+                      <span style={{ fontSize: 10, fontFamily: "monospace", color: "#fbbf24" }}>
+                        ⚠ 未验证 {fpData.unverified}
+                      </span>
+                      <span style={{ fontSize: 10, fontFamily: "monospace", color: "#34d399" }}>
+                        ✓ 误报 {fpData.falsePositives}
+                      </span>
+                      <span style={{ fontSize: 10, fontFamily: "monospace", color: "#f87171" }}>
+                        ✗ 确认 {fpData.truePositives}
+                      </span>
+                      <span style={{ fontSize: 10, fontFamily: "monospace", color: TRACE_FAINT }}>
+                        误报率 {(fpData.falsePositiveRate * 100).toFixed(1)}%
+                      </span>
+                    </div>
+
+                    {/* FP list */}
+                    <div style={{ maxHeight: 500, overflowY: "auto" }}>
+                      {fpData.findings.map((fp, i) => {
+                        const vColor = fp.currentVerdict === "FALSE_POSITIVE" ? "#34d399"
+                          : fp.currentVerdict === "TRUE_POSITIVE" ? "#f87171"
+                          : fp.currentVerdict === "INCONCLUSIVE" ? "#9ca3af"
+                          : "#fbbf24"; // UNVERIFIED
+                        const vLabel = fp.currentVerdict === "FALSE_POSITIVE" ? "✓ 误报"
+                          : fp.currentVerdict === "TRUE_POSITIVE" ? "✗ 确认漏洞"
+                          : fp.currentVerdict === "INCONCLUSIVE" ? "? 不确定"
+                          : "⚠ 待验证";
+                        const vBg = `${vColor}15`;
+                        return (
+                          <div key={fp.fpId || i} style={{
+                            padding: "10px 16px", borderBottom: `1px solid ${TRACE_BORDER}`,
+                            display: "flex", flexDirection: "column", gap: 6,
+                            background: i % 2 === 0 ? TRACE_SURFACE : TRACE_SURFACE_MUTED,
+                          }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                              <span style={{
+                                fontSize: 10, padding: "1px 7px", borderRadius: 3,
+                                background: vBg, border: `1px solid ${vColor}50`,
+                                color: vColor, fontFamily: "monospace", fontWeight: 700,
+                              }}>
+                                {vLabel}
+                              </span>
+                              <span style={{ fontSize: 10, fontFamily: "monospace", color: TRACE_MUTED }}>
+                                [{fp.sourceSkillId || "scanner"}]
+                              </span>
+                              <span style={{ fontSize: 11, fontFamily: "monospace", color: TRACE_TEXT, fontWeight: 600 }}>
+                                {fp.templateId || fp.title}
+                              </span>
+                              <span style={{
+                                fontSize: 10, padding: "1px 6px", borderRadius: 3,
+                                background: fp.severity === "critical" ? "rgba(248,113,113,0.15)" : "rgba(251,191,36,0.1)",
+                                color: fp.severity === "critical" ? "#f87171" : "#fbbf24",
+                                fontFamily: "monospace",
+                              }}>
+                                {fp.severity}
+                              </span>
+                            </div>
+                            <div style={{ fontSize: 10, fontFamily: "monospace", color: TRACE_MUTED, wordBreak: "break-all" }}>
+                              {fp.url}
+                            </div>
+                            {fp.verificationReasoning && (
+                              <div style={{
+                                fontSize: 10, fontFamily: "monospace", color: TRACE_FAINT,
+                                padding: "4px 10px", background: "rgba(255,255,255,0.03)", borderRadius: 4,
+                                borderLeft: `2px solid ${vColor}40`,
+                              }}>
+                                {fp.verificationReasoning.length > 200
+                                  ? fp.verificationReasoning.slice(0, 200) + "…"
+                                  : fp.verificationReasoning}
+                              </div>
+                            )}
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 9, fontFamily: "monospace", color: TRACE_FAINT }}>
+                              <span>发现: {fp.detectedAt ? new Date(fp.detectedAt).toLocaleString("zh-CN") : "-"}</span>
+                              {fp.verifiedAt && <span>判定: {new Date(fp.verifiedAt).toLocaleString("zh-CN")}</span>}
+                              {fp.verificationSource && <span style={{ color: "#818cf8" }}>来源: {fp.verificationSource}</span>}
+
+                              {/* Action buttons for UNVERIFIED items */}
+                              {fp.currentVerdict === "UNVERIFIED" && !isDemo && (
+                                <div style={{ marginLeft: "auto", display: "flex", gap: 4 }}>
+                                  <button type="button"
+                                    disabled={fpFeedbackSubmitting === fp.fpId}
+                                    onClick={() => handleFPFeedback(fp.fpId, "FALSE_POSITIVE")}
+                                    style={{
+                                      fontSize: 10, padding: "2px 10px", borderRadius: 4, cursor: "pointer",
+                                      border: "1px solid rgba(52,211,153,0.4)", background: "rgba(52,211,153,0.1)",
+                                      color: "#34d399", fontFamily: "monospace", opacity: fpFeedbackSubmitting === fp.fpId ? 0.5 : 1,
+                                    }}>
+                                    ✓ 标记为误报
+                                  </button>
+                                  <button type="button"
+                                    disabled={fpFeedbackSubmitting === fp.fpId}
+                                    onClick={() => handleFPFeedback(fp.fpId, "TRUE_POSITIVE")}
+                                    style={{
+                                      fontSize: 10, padding: "2px 10px", borderRadius: 4, cursor: "pointer",
+                                      border: "1px solid rgba(248,113,113,0.4)", background: "rgba(248,113,113,0.1)",
+                                      color: "#f87171", fontFamily: "monospace", opacity: fpFeedbackSubmitting === fp.fpId ? 0.5 : 1,
+                                    }}>
+                                    ✗ 确认漏洞
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 )}
               </div>

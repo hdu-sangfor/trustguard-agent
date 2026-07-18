@@ -1221,6 +1221,12 @@ async def _apply_decision_memory_updates(
                 payload={"phase": state.current_phase.value, "facts": added[:20]},
             )
         )
+        # ── FP 专用 trace event ──
+        try:
+            from app.core.fp_tracker import emit_fp_trace_events
+            await emit_fp_trace_events(state, added)
+        except Exception:
+            pass
     if removed:
         await _emit(
             TraceEvent(

@@ -430,6 +430,14 @@ def apply_fact_updates(state: TaskState, facts_to_add: list[str], facts_to_remov
         existing.append(s)
         added.append(s)
     state.confirmed_facts = existing[-120:]
+
+    # ── FP 追踪：扫描新增/变更的事实，更新 FPRecord ──
+    try:
+        from app.core.fp_tracker import scan_facts_for_fp
+        scan_facts_for_fp(state)
+    except Exception:
+        pass  # FP 追踪失败不影响主流程
+
     return added, removed
 
 

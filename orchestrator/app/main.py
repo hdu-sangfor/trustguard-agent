@@ -21,6 +21,8 @@ from pydantic import BaseModel
 
 from app.models import (
     CreateTaskPayload,
+    FPFeedbackRequest,
+    FPFindingsResponse,
     OrchestratorTaskStateResponse,
     Phase,
     TaskState,
@@ -1384,6 +1386,97 @@ async def resume_task(task_id: str) -> OrchestratorTaskStateResponse:
     await _TASK_STORE.update_task(state.to_task_record())
     await _emit_task_resumed(state, reason="用户请求续跑，已从 checkpoint 恢复并重置阶段计时。")
     return state.to_response()
+
+
+# ── 误报追踪 API ────────────────────────────────────────
+
+@app.get("/v1/orchestrator/tasks/{task_id}/fp-findings")
+async def get_fp_findings(task_id: str) -> dict[str, Any]:
+    """获取任务的 FP 判定汇总，供前端「误报审核」面板使用。"""
+    state = _TASKS.get(task_id)
+    if state is None:
+        return {
+            "taskId": task_id,
+            "total": 0,
+            "unverified": 0,
+            "falsePositives": 0,
+            "truePositives": 0,
+            "inconclusive": 0,
+            "falsePositiveRate": 0.0,
+            "findings": [],
+        }
+    try:
+        from app.core.fp_tracker import get_fp_summary
+        return get_fp_summary(state)
+    except Exception:
+        return {
+            "taskId": task_id,
+            "total": 0,
+            "unverified": 0,
+            "falsePositives": 0,
+            "truePositives": 0,
+            "inconclusive": 0,
+            "falsePositiveRate": 0.0,
+            "findings": [],
+        }
+
+
+@app.post("/v1/orchestrator/tasks/{task_id}/fp-feedback")
+async def submit_fp_feedback(task_id: str, req: FPFeedbackRequest) -> dict[str, Any]:
+    """提交人工 FP 判定反馈。"""
+    state = _TASKS.get(task_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="task not found")
+
+    ctx = state.target_context or {}
+    records = ctx.get("_fp_records")
+    if not isinstance(records, list):
+        raise HTTPException(status_code=404, detail="no fp records for this task")
+
+    matched = None
+    for r in records:
+        if r.get("fp_id") == req.fpId:
+            matched = r
+            break
+    if matched is None:
+        raise HTTPException(status_code=404, detail=f"fp record {req.fpId} not found")
+
+    old_verdict = matched.get("current_verdict")
+    matched["current_verdict"] = req.humanVerdict
+    matched["verification_source"] = "HUMAN"
+    if req.feedback:
+        matched["verification_reasoning"] = req.feedback
+    from datetime import datetime, timezone
+    matched["verified_at"] = datetime.now(timezone.utc).isoformat()
+
+    # 写入 confirmed_facts 作为人类校正记录
+    fact = f"[HumanCorrected_{req.humanVerdict}] {req.fpId}: {matched.get('template_id')} on {matched.get('url')}"
+    if req.feedback:
+        fact += f" — {req.feedback}"
+    existing = [str(x).strip() for x in (state.confirmed_facts or []) if isinstance(x, str) and x.strip()]
+    if fact not in existing:
+        existing.append(fact)
+        state.confirmed_facts = existing[-120:]
+
+    # 发射 trace event
+    try:
+        await _emit_trace(TraceEvent(
+            task_id=task_id,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            event_type="FP_HUMAN_FEEDBACK",
+            source_module="fp_tracker",
+            payload={
+                "fp_id": req.fpId,
+                "old_verdict": old_verdict,
+                "new_verdict": req.humanVerdict,
+                "feedback": req.feedback or "",
+            },
+        ))
+    except Exception:
+        pass
+
+    logger.info("fp_feedback: %s %s → %s (human)", req.fpId, old_verdict, req.humanVerdict)
+    return {"fpId": req.fpId, "accepted": True, "verdict": req.humanVerdict}
 
 
 @app.get("/health")

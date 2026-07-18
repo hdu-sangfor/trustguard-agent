@@ -1078,3 +1078,49 @@ export async function getMe(): Promise<ApiUser> {
   }
   return normalizeUser(json.data);
 }
+
+// ── 误报追踪 API ──────────────────────────────────────────
+
+export interface ApiFPFinding {
+  fpId: string;
+  taskId: string;
+  templateId: string;
+  url: string;
+  title: string;
+  severity: string;
+  sourceSkillId: string;
+  sourcePhase: string;
+  currentVerdict: 'UNVERIFIED' | 'FALSE_POSITIVE' | 'TRUE_POSITIVE' | 'INCONCLUSIVE';
+  verificationSource: string | null;
+  verificationReasoning: string | null;
+  detectedAt: string;
+  verifiedAt: string | null;
+}
+
+export interface ApiFPFindingsResponse {
+  taskId: string;
+  total: number;
+  unverified: number;
+  falsePositives: number;
+  truePositives: number;
+  inconclusive: number;
+  falsePositiveRate: number;
+  findings: ApiFPFinding[];
+}
+
+export async function getTaskFPFindings(taskId: string): Promise<ApiFPFindingsResponse> {
+  return apiFetch<ApiFPFindingsResponse>(`/api/v1/tasks/${taskId}/fp-findings`);
+}
+
+export async function submitFPFeedback(
+  taskId: string,
+  fpId: string,
+  humanVerdict: string,
+  feedback?: string,
+): Promise<{ fpId: string; accepted: boolean; verdict: string }> {
+  return apiFetch(`/api/v1/tasks/${taskId}/fp-feedback`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fpId, humanVerdict, feedback }),
+  } as RequestInit);
+}
