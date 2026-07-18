@@ -14,7 +14,7 @@ import { useAppSession } from "@/shared/context/AppSessionContext";
 import {
   getTask, getTaskEvents, runTask, stopTask, resumeTask,
   getTaskTrace, getTracePlan, getTaskObservation,
-  getTaskFPFindings, submitFPFeedback,
+  getTaskFPFindings, submitFPFeedback, triggerFPDeepAudit,
   TRUSTGUARD_PHASES,
   type ApiTask, type ApiEvent, type ApiTraceExecution, type ApiObservation,
   type ApiFPFindingsResponse, type ApiFPFinding,
@@ -24,10 +24,11 @@ import { readStoredOrbitTasks } from "@/shared/constants/orbitTasksStorage";
 // ─── FP 工具 ────────────────────────────────────────────────────────────────
 function _verdictLabel(v: string): string {
   const map: Record<string, string> = {
-    FALSE_POSITIVE: "误报",
-    TRUE_POSITIVE: "确认漏洞",
-    INCONCLUSIVE: "不确定",
-    UNVERIFIED: "待验证",
+    FALSE_POSITIVE: "✓ 误报",
+    TRUE_POSITIVE: "✗ 确认漏洞",
+    INCONCLUSIVE: "? 不确定",
+    SUSPICIOUS: "🔍 可疑",
+    UNVERIFIED: "⚠ 待验证",
   };
   return map[v] ?? v;
 }
@@ -36,6 +37,7 @@ function _verdictColor(v: string): string {
     FALSE_POSITIVE: "#34d399",
     TRUE_POSITIVE: "#f87171",
     INCONCLUSIVE: "#9ca3af",
+    SUSPICIOUS: "#fb923c",
     UNVERIFIED: "#fbbf24",
   };
   return map[v] ?? "#9ca3af";
@@ -493,7 +495,9 @@ export default function TaskTracePage() {
   const [observationLoading, setObservationLoading] = useState(false);
   const [fpData, setFpData] = useState<ApiFPFindingsResponse | null>(null);
   const [fpLoading, setFpLoading] = useState(false);
-  const [fpFeedbackSubmitting, setFpFeedbackSubmitting] = useState<string | null>(null); // fpId being submitted
+  const [fpFeedbackSubmitting, setFpFeedbackSubmitting] = useState<string | null>(null);
+  const [fpFilter, setFpFilter] = useState<string>("ALL");
+  const [fpExpanded, setFpExpanded] = useState<Set<string>>(new Set());
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const isDemo = !taskId || /^\d+$/.test(taskId);
@@ -669,7 +673,10 @@ export default function TaskTracePage() {
 
   const elapsed = (() => {
     if (!task?.createdAt) return null;
-    const secs = Math.floor((Date.now() - new Date(task.createdAt).getTime()) / 1000);
+    const end = (task.status === "DONE" || task.status === "FAILED" || task.status === "CANCELLED")
+      ? new Date(task.updatedAt || task.createdAt).getTime()
+      : Date.now();
+    const secs = Math.floor((end - new Date(task.createdAt).getTime()) / 1000);
     if (secs < 0) return null;
     if (secs < 60) return `${secs}s`;
     const mins = Math.floor(secs / 60);
@@ -1212,6 +1219,11 @@ export default function TaskTracePage() {
                       <span style={{ fontSize: 10, fontFamily: "monospace", color: "#fbbf24" }}>
                         ⚠ 未验证 {fpData.unverified}
                       </span>
+                      {fpData.suspicious > 0 && (
+                        <span style={{ fontSize: 10, fontFamily: "monospace", color: "#fb923c" }}>
+                          🔍 可疑 {fpData.suspicious}
+                        </span>
+                      )}
                       <span style={{ fontSize: 10, fontFamily: "monospace", color: "#34d399" }}>
                         ✓ 误报 {fpData.falsePositives}
                       </span>
@@ -1221,11 +1233,55 @@ export default function TaskTracePage() {
                       <span style={{ fontSize: 10, fontFamily: "monospace", color: TRACE_FAINT }}>
                         误报率 {(fpData.falsePositiveRate * 100).toFixed(1)}%
                       </span>
+                      {fpData.inconclusive > 0 && !isDemo && (
+                        <button type="button"
+                          onClick={async () => {
+                            if (!taskId) return;
+                            setFpLoading(true);
+                            try {
+                              const r = await triggerFPDeepAudit(taskId);
+                              toast.success(`T2 审计完成: ${r.resolved}/${r.audited} 条已判定`);
+                              setFpData(null);
+                              void loadFP();
+                            } catch (e: unknown) {
+                              toast.error(`T2 审计失败: ${e instanceof Error ? e.message : String(e)}`);
+                            } finally {
+                              setFpLoading(false);
+                            }
+                          }}
+                          style={{
+                            fontSize: 10, padding: "3px 12px", borderRadius: 4, cursor: "pointer",
+                            border: "1px solid rgba(168,85,247,0.4)", background: "rgba(168,85,247,0.1)",
+                            color: "#a78bfa", fontFamily: "monospace", fontWeight: 600, marginLeft: "auto",
+                          }}>
+                          🧠 T2 深度审计 ({fpData.inconclusive})
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Filter bar */}
+                    <div style={{ padding: "8px 16px", borderBottom: `1px solid ${TRACE_BORDER}`, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {(["ALL", "UNVERIFIED", "SUSPICIOUS", "FALSE_POSITIVE", "TRUE_POSITIVE", "INCONCLUSIVE"] as const).map((f) => {
+                        const fLabels: Record<string, string> = { ALL: "全部", UNVERIFIED: "⚠ 待验证", SUSPICIOUS: "🔍 可疑", FALSE_POSITIVE: "✓ 误报", TRUE_POSITIVE: "✗ 确认", INCONCLUSIVE: "? 不确定" };
+                        const isSel = fpFilter === f;
+                        return (
+                          <button key={f} type="button" onClick={() => setFpFilter(f)}
+                            style={{
+                              fontSize: 10, padding: "3px 10px", borderRadius: 4, cursor: "pointer",
+                              border: `1px solid ${isSel ? _verdictColor(f === "ALL" ? "UNVERIFIED" : f) + "60" : TRACE_BORDER}`,
+                              background: isSel ? _verdictColor(f === "ALL" ? "UNVERIFIED" : f) + "15" : "transparent",
+                              color: isSel ? _verdictColor(f === "ALL" ? "UNVERIFIED" : f) : TRACE_MUTED,
+                              fontFamily: "monospace", fontWeight: isSel ? 700 : 400,
+                            }}>
+                            {fLabels[f]}
+                          </button>
+                        );
+                      })}
                     </div>
 
                     {/* FP list */}
                     <div style={{ maxHeight: 500, overflowY: "auto" }}>
-                      {fpData.findings.map((fp, i) => {
+                      {fpData.findings.filter(f => fpFilter === "ALL" || f.currentVerdict === fpFilter).map((fp, i) => {
                         const vColor = fp.currentVerdict === "FALSE_POSITIVE" ? "#34d399"
                           : fp.currentVerdict === "TRUE_POSITIVE" ? "#f87171"
                           : fp.currentVerdict === "INCONCLUSIVE" ? "#9ca3af"
@@ -1268,23 +1324,44 @@ export default function TaskTracePage() {
                               {fp.url}
                             </div>
                             {fp.verificationReasoning && (
-                              <div style={{
-                                fontSize: 10, fontFamily: "monospace", color: TRACE_FAINT,
-                                padding: "4px 10px", background: "rgba(255,255,255,0.03)", borderRadius: 4,
-                                borderLeft: `2px solid ${vColor}40`,
-                              }}>
-                                {fp.verificationReasoning.length > 200
-                                  ? fp.verificationReasoning.slice(0, 200) + "…"
-                                  : fp.verificationReasoning}
+                              <div>
+                                <button type="button" onClick={() => {
+                                  const next = new Set(fpExpanded);
+                                  next.has(fp.fpId) ? next.delete(fp.fpId) : next.add(fp.fpId);
+                                  setFpExpanded(next);
+                                }}
+                                  style={{
+                                    fontSize: 9, padding: "2px 8px", borderRadius: 3, cursor: "pointer",
+                                    border: `1px solid ${vColor}30`, background: "transparent",
+                                    color: vColor, fontFamily: "monospace",
+                                  }}>
+                                  {fpExpanded.has(fp.fpId) ? "▲ 收起原因" : "▼ 展开原因"}
+                                </button>
+                                {fpExpanded.has(fp.fpId) && (
+                                  <div style={{
+                                    fontSize: 10, fontFamily: "monospace", color: TRACE_FAINT,
+                                    padding: "6px 10px", marginTop: 4, background: "rgba(255,255,255,0.03)", borderRadius: 4,
+                                    borderLeft: `2px solid ${vColor}40`, whiteSpace: "pre-wrap", wordBreak: "break-word",
+                                  }}>
+                                    {fp.verificationReasoning}
+                                  </div>
+                                )}
                               </div>
                             )}
                             <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 9, fontFamily: "monospace", color: TRACE_FAINT }}>
                               <span>发现: {fp.detectedAt ? new Date(fp.detectedAt).toLocaleString("zh-CN") : "-"}</span>
                               {fp.verifiedAt && <span>判定: {new Date(fp.verifiedAt).toLocaleString("zh-CN")}</span>}
-                              {fp.verificationSource && <span style={{ color: "#818cf8" }}>来源: {fp.verificationSource}</span>}
+                              {fp.verificationSource && (
+                                <span style={{ color: "#818cf8" }}>
+                                  {fp.verificationSource === "LLM" ? "🤖 LLM" :
+                                   fp.verificationSource === "HEURISTIC" ? "🔍 启发式" :
+                                   fp.verificationSource === "T2_LLM_DEEP" ? "🧠 深度审计" :
+                                   fp.verificationSource === "HUMAN" ? "👤 人工" : fp.verificationSource}
+                                </span>
+                              )}
 
-                              {/* Action buttons for UNVERIFIED items */}
-                              {fp.currentVerdict === "UNVERIFIED" && !isDemo && (
+                              {/* Action buttons for UNVERIFIED / SUSPICIOUS items */}
+                              {(fp.currentVerdict === "UNVERIFIED" || fp.currentVerdict === "SUSPICIOUS") && !isDemo && (
                                 <div style={{ marginLeft: "auto", display: "flex", gap: 4 }}>
                                   <button type="button"
                                     disabled={fpFeedbackSubmitting === fp.fpId}

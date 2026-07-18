@@ -107,6 +107,7 @@ export default function VulnsPage() {
   const [isDemo, setIsDemo] = useState(false);
   const [filterSev, setFilterSev] = useState<Sev | "all">("all");
   const [filterTask, setFilterTask] = useState<string>("all");
+  const [filterFp, setFilterFp] = useState<string>("all");
   const [search, setSearch] = useState("");
   const [expandedTask, setExpandedTask] = useState<string | null>(null);
 
@@ -149,6 +150,7 @@ export default function VulnsPage() {
   const filtered = allVulns.filter((v) => {
     if (filterSev !== "all" && normSev(v.severity) !== filterSev) return false;
     if (filterTask !== "all" && v._taskId !== filterTask) return false;
+    if (filterFp !== "all" && (v as Record<string,unknown>).fpVerdict !== filterFp) return false;
     if (search) {
       const q = search.toLowerCase();
       return (
@@ -248,10 +250,22 @@ export default function VulnsPage() {
               <option key={r.task_id} value={r.task_id}>{r.task_name.slice(0, 30)}</option>
             ))}
           </select>
-          {(filterSev !== "all" || filterTask !== "all" || search) && (
+          <select value={filterFp} onChange={(e) => setFilterFp(e.target.value)}
+            style={{
+              padding: "7px 12px", borderRadius: 6,
+              background: "rgba(15,23,42,0.6)", border: "1px solid rgba(51,65,85,0.5)",
+              color: "#f59e0b", fontSize: 12, fontFamily: "monospace", minWidth: 120,
+            }}>
+            <option value="all">全部判定</option>
+            <option value="TRUE_POSITIVE">✗ 确认漏洞</option>
+            <option value="FALSE_POSITIVE">✓ 误报</option>
+            <option value="SUSPICIOUS">🔍 可疑</option>
+            <option value="UNVERIFIED">⚠ 待验证</option>
+          </select>
+          {(filterSev !== "all" || filterTask !== "all" || filterFp !== "all" || search) && (
             <button
               type="button"
-              onClick={() => { setFilterSev("all"); setFilterTask("all"); setSearch(""); }}
+              onClick={() => { setFilterSev("all"); setFilterTask("all"); setFilterFp("all"); setSearch(""); }}
               style={{
                 padding: "7px 14px",
                 background: "rgba(51,65,85,0.4)", border: "1px solid rgba(71,85,105,0.5)",

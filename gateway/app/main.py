@@ -551,6 +551,7 @@ async def task_observation(task_id: str, artifactsSummaryLimit: int = 500) -> di
         data["fp_summary"] = {
             "total": fp.get("total", 0),
             "unverified": fp.get("unverified", 0),
+            "suspicious": fp.get("suspicious", 0),
             "false_positives": fp.get("falsePositives", 0),
             "true_positives": fp.get("truePositives", 0),
             "inconclusive": fp.get("inconclusive", 0),
@@ -618,6 +619,16 @@ async def task_fp_feedback(
                             timeout=5.0)
     except Exception as exc:
         return fail(f"反馈提交失败: {exc}", code="ORCHESTRATOR_ERROR")
+    return ok(result)
+
+
+@app.post("/api/v1/tasks/{task_id}/fp-findings/deep-audit", response_model=None)
+async def task_fp_deep_audit(task_id: str) -> dict[str, Any] | JSONResponse:
+    """触发 T2 深度离线审计，代理到 orchestrator。"""
+    try:
+        result = await _orch("POST", f"/v1/orchestrator/tasks/{task_id}/fp-findings:deep-audit", timeout=60.0)
+    except Exception as exc:
+        return fail(f"深度审计失败: {exc}", code="ORCHESTRATOR_ERROR")
     return ok(result)
 
 
@@ -824,38 +835,57 @@ async def task_report(task_id: str) -> dict[str, Any] | JSONResponse:
     except Exception:
         pass
 
-    # 为 findings 注入 fpVerdict
+    # 为 findings 注入 fpVerdict（三级 fallback 匹配）
     if fp_data:
         fp_map: dict[str, str] = {}  # url → verdict
-        for fpr in fp_data.get("findings", []):
+        fp_records = fp_data.get("findings", [])
+        for fpr in fp_records:
             url = (fpr.get("url") or "").strip()
             verdict = (fpr.get("currentVerdict") or "").strip()
             if url and verdict:
                 fp_map[url.lower()] = verdict
         for finding in findings:
+            # Level 1: 字符串 evidence 精确匹配
             raw = finding.get("evidence") or finding.get("url") or ""
             if isinstance(raw, list):
                 raw = raw[0] if raw else ""
             evidence = str(raw).strip().lower()
-            matched_verdict = fp_map.get(evidence) or fp_map.get(finding.get("title", "").strip().lower(), "")
+            matched_verdict = fp_map.get(evidence)
+
+            # Level 2: URL 子串 + title 匹配
             if not matched_verdict:
-                # fallback: 遍历所有 fp records 用 url 子串匹配
-                for fpr in fp_data.get("findings", []):
-                    fp_url = (fpr.get("url") or "").strip().lower()
-                    if fp_url and (fp_url in evidence or evidence in fp_url):
+                title = (finding.get("title") or "").lower()
+                for fp_url, fp_verdict in fp_map.items():
+                    if fp_url in evidence or evidence in fp_url or fp_url in title:
+                        matched_verdict = fp_verdict
+                        break
+
+            # Level 3: template_id 模糊匹配
+            if not matched_verdict:
+                title = (finding.get("title") or "").lower()
+                for fpr in fp_records:
+                    tid = (fpr.get("templateId") or "").lower()
+                    if tid and len(tid) > 10 and tid in title:
                         matched_verdict = fpr.get("currentVerdict", "")
                         break
+
             finding["fpVerdict"] = matched_verdict or None
 
     fp_summary = None
     if fp_data:
+        from collections import Counter
+        vc = Counter(f.get("fpVerdict") for f in findings)
+        fp_c = vc.get("FALSE_POSITIVE", 0)
+        tp_c = vc.get("TRUE_POSITIVE", 0)
+        r = fp_c + tp_c
         fp_summary = {
             "totalFindings": len(findings),
-            "unverified": fp_data.get("unverified", 0),
-            "falsePositives": fp_data.get("falsePositives", 0),
-            "truePositives": fp_data.get("truePositives", 0),
-            "inconclusive": fp_data.get("inconclusive", 0),
-            "falsePositiveRate": fp_data.get("falsePositiveRate", 0.0),
+            "unverified": vc.get("UNVERIFIED", 0),
+            "suspicious": vc.get("SUSPICIOUS", 0),
+            "falsePositives": fp_c,
+            "truePositives": tp_c,
+            "inconclusive": vc.get("INCONCLUSIVE", 0),
+            "falsePositiveRate": round(fp_c / r, 4) if r > 0 else 0.0,
         }
 
     report = {

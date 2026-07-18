@@ -52,6 +52,7 @@ export interface ApiReportFinding {
   evidence?: string | null;
   phase?: string | null;
   skill?: string | null;
+  fpVerdict?: string | null;
 }
 
 export interface ApiReportRecommendation {
@@ -88,6 +89,7 @@ export interface ApiReport {
   severityHistogram?: Record<string, number>;
   riskLevel?: 'critical' | 'high' | 'medium' | 'low' | 'none';
   executions?: ApiReportExecution[];
+  fpSummary?: Record<string, number> | null;
 }
 
 export interface ApiObservation {
@@ -1090,7 +1092,7 @@ export interface ApiFPFinding {
   severity: string;
   sourceSkillId: string;
   sourcePhase: string;
-  currentVerdict: 'UNVERIFIED' | 'FALSE_POSITIVE' | 'TRUE_POSITIVE' | 'INCONCLUSIVE';
+  currentVerdict: 'UNVERIFIED' | 'SUSPICIOUS' | 'FALSE_POSITIVE' | 'TRUE_POSITIVE' | 'INCONCLUSIVE';
   verificationSource: string | null;
   verificationReasoning: string | null;
   detectedAt: string;
@@ -1101,6 +1103,7 @@ export interface ApiFPFindingsResponse {
   taskId: string;
   total: number;
   unverified: number;
+  suspicious: number;
   falsePositives: number;
   truePositives: number;
   inconclusive: number;
@@ -1122,5 +1125,11 @@ export async function submitFPFeedback(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ fpId, humanVerdict, feedback }),
+  } as RequestInit);
+}
+
+export async function triggerFPDeepAudit(taskId: string): Promise<{ audited: number; resolved: number; message?: string }> {
+  return apiFetch(`/api/v1/tasks/${taskId}/fp-findings/deep-audit`, {
+    method: 'POST',
   } as RequestInit);
 }

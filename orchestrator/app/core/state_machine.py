@@ -692,6 +692,15 @@ async def _maybe_enforce_phase_plan_round_cap(state: TaskState) -> None:
     )
 
 
+async def _try_t2_deep_audit(state: TaskState) -> None:
+    """T2 自动触发：对 INCONCLUSIVE 记录做深度审计（fire-and-forget）。"""
+    try:
+        from app.core.fp_tracker import call_fp_t2_deep_audit
+        await call_fp_t2_deep_audit(state)
+    except Exception:
+        pass
+
+
 def _accumulate_finops_from_exec(
     state: TaskState,
     exec_result: Any,
@@ -1662,6 +1671,18 @@ async def _run_actions_and_merge_results(
                     state.recent_summary_chunks = state.recent_summary_chunks[-20:]
         except Exception:
             pass
+        # ── T1: VULN_SCAN 阶段扫描器完成后触发 FP 轻量判定 ──
+        if state.current_phase == Phase.VULN_SCAN:
+            try:
+                import logging
+                _t1log = logging.getLogger(__name__)
+                _t1log.info("T1: attempting mini-judge for task %s phase %s", state.task_id, state.current_phase.value)
+                from app.core.fp_tracker import call_fp_t1_mini_judge
+                result = await call_fp_t1_mini_judge(state)
+                _t1log.info("T1: mini-judge result=%s", result)
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning("T1: mini-judge failed: %s", e)
         loop_signature = "|".join(
             [
                 str(ctx.skill_id or ""),
@@ -1902,6 +1923,12 @@ async def tick(state: TaskState, *, enable_executor: bool) -> None:
         await put_context(state.task_id, state.target_context)
         try:
             write_task_context(state.task_id, state.target_context)
+        except Exception:
+            pass
+        # ── T2 自动触发: 对 INCONCLUSIVE 记录做深度审计 ──
+        try:
+            from app.core.fp_tracker import call_fp_t2_deep_audit
+            asyncio.ensure_future(_try_t2_deep_audit(state))
         except Exception:
             pass
         coverage_overview = getattr(state, "coverage_attempted", None) or []

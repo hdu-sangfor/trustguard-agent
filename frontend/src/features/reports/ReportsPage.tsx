@@ -353,25 +353,32 @@ const ReportsPage = () => {
     setPageLoading(true);
     try {
       const tasks = await listCompletedTasks(100);
+      const buildEntries = (taskList: ApiTask[]) => {
+        const taskMap = new Map(taskList.map((t) => [t.taskId, t]));
+        setEntries((prev) => {
+          // 保留已展开的 entry 和已加载的数据
+          const prevMap = new Map(prev.map((e) => [e.task.taskId, e]));
+          return taskList.map((t) => {
+            const old = prevMap.get(t.taskId);
+            if (old && old.expanded) {
+              return { ...old, task: t };
+            }
+            return { task: t, report: null, execs: null, observation: null, loading: false, expanded: false };
+          });
+        });
+      };
       if (tasks.length > 0) {
-        setEntries(tasks.map((t) => ({ task: t, report: null, execs: null, observation: null, loading: false, expanded: false })));
+        buildEntries(tasks);
       } else {
-        // Backend online but no completed tasks — check if we have local finished tasks as demo data
         const { readStoredOrbitTasks } = await import("@/shared/constants/orbitTasksStorage");
         const local = readStoredOrbitTasks().filter((t) => t.status === "finished");
         if (local.length > 0) {
           const demoTasks: ApiTask[] = local.map((t) => ({
-            id: 0,
-            taskId: t.id,
-            name: t.name,
-            target: t.url,
-            description: t.desc,
-            status: "DONE" as const,
-            currentPhase: t.currentPhase ?? "DONE",
-            createdAt: new Date(t.createdAt).toISOString(),
-            updatedAt: new Date(t.updatedAt ?? t.createdAt).toISOString(),
+            id: 0, taskId: t.id, name: t.name, target: t.url, description: t.desc,
+            status: "DONE" as const, currentPhase: t.currentPhase ?? "DONE",
+            createdAt: new Date(t.createdAt).toISOString(), updatedAt: new Date(t.updatedAt ?? t.createdAt).toISOString(),
           }));
-          setEntries(demoTasks.map((t) => ({ task: t, report: null, execs: null, observation: null, loading: false, expanded: false })));
+          buildEntries(demoTasks);
         } else {
           setEntries([]);
         }
@@ -384,17 +391,18 @@ const ReportsPage = () => {
         const local = readStoredOrbitTasks().filter((t) => t.status === "finished");
         if (local.length > 0) {
           const demoTasks: ApiTask[] = local.map((t) => ({
-            id: 0,
-            taskId: t.id,
-            name: t.name,
-            target: t.url,
-            description: t.desc,
-            status: "DONE" as const,
-            currentPhase: t.currentPhase ?? "DONE",
-            createdAt: new Date(t.createdAt).toISOString(),
-            updatedAt: new Date(t.updatedAt ?? t.createdAt).toISOString(),
+            id: 0, taskId: t.id, name: t.name, target: t.url, description: t.desc,
+            status: "DONE" as const, currentPhase: t.currentPhase ?? "DONE",
+            createdAt: new Date(t.createdAt).toISOString(), updatedAt: new Date(t.updatedAt ?? t.createdAt).toISOString(),
           }));
-          setEntries(demoTasks.map((t) => ({ task: t, report: null, execs: null, observation: null, loading: false, expanded: false })));
+          setEntries((prev) => {
+            const prevMap = new Map(prev.map((e) => [e.task.taskId, e]));
+            return demoTasks.map((t) => {
+              const old = prevMap.get(t.taskId);
+              if (old && old.expanded) return { ...old, task: t };
+              return { task: t, report: null, execs: null, observation: null, loading: false, expanded: false };
+            });
+          });
           setLastRefresh(new Date());
         }
       } catch { /* ignore */ }
@@ -1247,21 +1255,63 @@ const ReportsPage = () => {
                                   </div>
                                 )}
 
-                                {findings.length > 0 && (
-                                  <div style={{ marginBottom: artifacts.length > 0 ? 10 : 0 }}>
-                                    <div style={{ color: "#475569", fontSize: 9, marginBottom: 3 }}>确认漏洞 ({findings.length})</div>
+                                {/* FP Summary card */}
+                                {(entry.report.fpSummary && entry.report.fpSummary.totalFindings > 0) && (
+                                  <div style={{
+                                    marginBottom: 10, padding: "8px 12px", borderRadius: 6,
+                                    background: "rgba(245,158,11,0.05)", border: "1px solid rgba(245,158,11,0.2)",
+                                    display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center",
+                                  }}>
+                                    <span style={{ fontSize: 9, color: "#f59e0b", fontWeight: 700, fontFamily: "monospace" }}>误报审核</span>
+                                    <span style={{ fontSize: 9, color: "#94a3b8", fontFamily: "monospace" }}>
+                                      总计 {entry.report.fpSummary.totalFindings}
+                                    </span>
+                                    <span style={{ fontSize: 9, color: "#f87171", fontFamily: "monospace" }}>
+                                      ✗ {entry.report.fpSummary.truePositives} 确认
+                                    </span>
+                                    <span style={{ fontSize: 9, color: "#34d399", fontFamily: "monospace" }}>
+                                      ✓ {entry.report.fpSummary.falsePositives} 误报
+                                    </span>
+                                    {(entry.report.fpSummary.suspicious ?? 0) > 0 && (
+                                      <span style={{ fontSize: 9, color: "#fb923c", fontFamily: "monospace" }}>
+                                        🔍 {entry.report.fpSummary.suspicious} 可疑
+                                      </span>
+                                    )}
+                                    <span style={{ fontSize: 9, color: "#fbbf24", fontFamily: "monospace" }}>
+                                      ⚠ {entry.report.fpSummary.unverified} 待验证
+                                    </span>
+                                    <span style={{ fontSize: 9, color: "#94a3b8", fontFamily: "monospace" }}>
+                                      误报率 {(entry.report.fpSummary.falsePositiveRate * 100).toFixed(1)}%
+                                    </span>
+                                  </div>
+                                )}
+
+                                {/* TP findings */}
+                                {findings.filter(f => !f.fpVerdict || f.fpVerdict === "TRUE_POSITIVE" || f.fpVerdict === "UNVERIFIED" || f.fpVerdict === "SUSPICIOUS").length > 0 && (
+                                  <div style={{ marginBottom: 10 }}>
+                                    <div style={{ color: "#f87171", fontSize: 9, marginBottom: 3 }}>
+                                      ✗ 已确认漏洞 / 待验证 ({findings.filter(f => !f.fpVerdict || f.fpVerdict === "TRUE_POSITIVE" || f.fpVerdict === "UNVERIFIED" || f.fpVerdict === "SUSPICIOUS").length})
+                                    </div>
                                     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                                      {findings.map((f, vi) => {
+                                      {findings.filter(f => !f.fpVerdict || f.fpVerdict === "TRUE_POSITIVE" || f.fpVerdict === "UNVERIFIED" || f.fpVerdict === "SUSPICIOUS").map((f, vi) => {
                                         const col = findingSevColor[f.severity] ?? "#fca5a5";
+                                        const fpColor = f.fpVerdict === "SUSPICIOUS" ? "#fb923c" : f.fpVerdict === "UNVERIFIED" ? "#fbbf24" : col;
                                         return (
                                           <div key={vi} style={{ padding: "4px 0", borderBottom: "1px dashed rgba(71,85,105,0.15)", fontFamily: "monospace", fontSize: 10 }}>
                                             <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-                                              <span style={{ color: col, minWidth: 10 }}>!</span>
+                                              <span style={{ color: fpColor, minWidth: 10 }}>!</span>
                                               <span style={{
                                                 padding: "0 5px", borderRadius: 3, fontSize: 8, fontWeight: 700,
                                                 background: `${col}15`, border: `1px solid ${col}40`, color: col,
                                               }}>{(f.severity ?? "medium").toUpperCase()}</span>
                                               <span style={{ color: "#fca5a5" }}>{f.title}</span>
+                                              {f.fpVerdict && f.fpVerdict !== "TRUE_POSITIVE" && (
+                                                <span style={{ padding: "0 5px", borderRadius: 3, fontSize: 8,
+                                                  background: fpColor === "#fbbf24" ? "rgba(251,191,36,0.1)" : "rgba(251,146,60,0.1)",
+                                                  border: `1px solid ${fpColor}40`, color: fpColor, fontWeight: 600 }}>
+                                                  {f.fpVerdict === "SUSPICIOUS" ? "🔍 可疑" : "⚠ 待验证"}
+                                                </span>
+                                              )}
                                               {f.cve && (
                                                 <span style={{ padding: "0 5px", borderRadius: 3, fontSize: 8, background: "rgba(129,140,248,0.1)", border: "1px solid rgba(129,140,248,0.3)", color: "#a5b4fc" }}>{f.cve}</span>
                                               )}
@@ -1272,6 +1322,47 @@ const ReportsPage = () => {
                                                 证据：{f.evidence}
                                               </div>
                                             )}
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* FP findings (collapsed by default) */}
+                                {findings.filter(f => f.fpVerdict === "FALSE_POSITIVE").length > 0 && (
+                                  <details style={{ marginBottom: 10 }}>
+                                    <summary style={{ color: "#34d399", fontSize: 9, cursor: "pointer", fontFamily: "monospace", marginBottom: 3 }}>
+                                      ✓ 已排除误报 ({findings.filter(f => f.fpVerdict === "FALSE_POSITIVE").length}) — 点击展开
+                                    </summary>
+                                    <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 4, opacity: 0.7 }}>
+                                      {findings.filter(f => f.fpVerdict === "FALSE_POSITIVE").map((f, vi) => {
+                                        const col = "#34d399";
+                                        return (
+                                          <div key={vi} style={{ padding: "4px 0", borderBottom: "1px dashed rgba(52,211,153,0.15)", fontFamily: "monospace", fontSize: 10 }}>
+                                            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                                              <span style={{ color: col }}>✓</span>
+                                              <span style={{ color: "#6b7280" }}>{f.title}</span>
+                                              {f.cve && <span style={{ color: "#64748b", fontSize: 9 }}>{f.cve}</span>}
+                                            </div>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  </details>
+                                )}
+
+                                {/* INCONCLUSIVE findings */}
+                                {findings.filter(f => f.fpVerdict === "INCONCLUSIVE").length > 0 && (
+                                  <div style={{ marginBottom: 10 }}>
+                                    <div style={{ color: "#9ca3af", fontSize: 9, marginBottom: 3 }}>
+                                      ? 待深度审计 ({findings.filter(f => f.fpVerdict === "INCONCLUSIVE").length})
+                                    </div>
+                                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                                      {findings.filter(f => f.fpVerdict === "INCONCLUSIVE").map((f, vi) => {
+                                        return (
+                                          <div key={vi} style={{ padding: "4px 0", borderBottom: "1px dashed rgba(156,163,175,0.15)", fontFamily: "monospace", fontSize: 10 }}>
+                                            <span style={{ color: "#9ca3af" }}>? {f.title}</span>
                                           </div>
                                         );
                                       })}
