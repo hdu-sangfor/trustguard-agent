@@ -64,6 +64,7 @@ const VulnsPage = lazy(reloadOnChunkError(() => import("@/features/vulns/VulnsPa
 const BatchPage = lazy(reloadOnChunkError(() => import("@/features/batch/BatchPage")));
 const DashboardPage = lazy(reloadOnChunkError(() => import("@/features/dashboard/DashboardPage")));
 const AuditPage = lazy(reloadOnChunkError(() => import("@/features/audit/AuditPage")));
+const KnowledgePage = lazy(reloadOnChunkError(() => import("@/features/knowledge/KnowledgePage")));
 import { AppSessionProvider } from "@/shared/context/AppSessionContext";
 import { SENTINEL_ORBIT_TASKS_KEY, ORBIT_TASKS_UPDATED_EVENT, type StoredOrbitTask } from "@/shared/constants/orbitTasksStorage";
 
@@ -197,6 +198,7 @@ const App = () => {
                 <Route path="/batch" element={<BatchPage />} />
                 <Route path="/dashboard" element={<DashboardPage />} />
                 <Route path="/audit" element={<AuditPage />} />
+                <Route path="/knowledge" element={<KnowledgePage />} />
                 <Route path="/testbench" element={<Navigate to="/tasks" replace />} />
                 <Route path="*" element={<NotFound />} />
               </Routes>

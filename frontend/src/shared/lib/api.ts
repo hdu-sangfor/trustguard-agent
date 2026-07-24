@@ -935,6 +935,191 @@ export async function getRuntimeConfig(): Promise<ApiRuntimeConfig> {
   return apiFetch<ApiRuntimeConfig>('/api/v1/admin/config/runtime');
 }
 
+// ─── RAG knowledge center ───────────────────────────────────────────────────
+
+export interface ApiRagDependency {
+  status: string;
+  latency_ms?: number | null;
+  detail?: string | null;
+}
+
+export interface ApiRagHealth {
+  status: string;
+  service?: string;
+  version?: string;
+  env?: string;
+  dependencies?: Record<string, ApiRagDependency>;
+}
+
+export interface ApiKnowledgeBase {
+  id: string;
+  name: string;
+  description?: string | null;
+  embedding_profile: string;
+  embedding_provider: string;
+  embedding_api_driver?: string | null;
+  embedding_model: string;
+  embedding_dim: number;
+  content_revision: number;
+  is_default: boolean;
+  is_system: boolean;
+  document_count: number;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface ApiKnowledgeBaseList {
+  items: ApiKnowledgeBase[];
+  total: number;
+}
+
+export interface ApiKnowledgeDocument {
+  id: string;
+  knowledge_base_id?: string | null;
+  source_type: string;
+  source_uri: string;
+  content_hash: string;
+  status: string;
+  title?: string | null;
+  mime_type?: string | null;
+  original_filename?: string | null;
+  doc_version: number;
+  metadata?: Record<string, unknown> | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface ApiKnowledgeDocumentList {
+  items: ApiKnowledgeDocument[];
+  total: number;
+  offset: number;
+  limit: number;
+}
+
+export interface ApiKnowledgeChunk {
+  id: string;
+  chunk_index: number;
+  text: string;
+  token_count: number;
+  page_no?: number | null;
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface ApiKnowledgeSearchSource {
+  document_id: string;
+  source_uri: string;
+  original_filename?: string | null;
+  chunk_index: number;
+  page_no?: number | null;
+}
+
+export interface ApiKnowledgeSearchHit {
+  chunk_id: string;
+  text: string;
+  score: number;
+  vector_score?: number | null;
+  keyword_score?: number | null;
+  rerank_score?: number | null;
+  title?: string | null;
+  entity_id?: string | null;
+  entity_type?: string | null;
+  exact_entity_match?: string | null;
+  source: ApiKnowledgeSearchSource;
+  metadata?: Record<string, unknown> | null;
+  expanded: boolean;
+}
+
+export interface ApiKnowledgeSearchResponse {
+  schema_version: string;
+  request_id: string;
+  query: string;
+  knowledge_base_id: string;
+  content_revision: number;
+  search_status: string;
+  effective_mode: string;
+  results: ApiKnowledgeSearchHit[];
+  total: number;
+  fusion_method: string;
+  retrieval_time_ms: number;
+  components: Record<string, number>;
+  degraded_components: string[];
+  query_entities: string[];
+  abstained: boolean;
+  abstention_reason?: string | null;
+  query_plan?: Record<string, unknown>;
+  coverage?: { status?: string; warning?: string | null };
+  coverage_warning?: string | null;
+}
+
+export async function getRagHealth(): Promise<ApiRagHealth> {
+  return apiFetch<ApiRagHealth>('/api/v1/knowledge/health');
+}
+
+export async function listKnowledgeBases(): Promise<ApiKnowledgeBaseList> {
+  return apiFetch<ApiKnowledgeBaseList>('/api/v1/knowledge/bases');
+}
+
+export async function listKnowledgeDocuments(params: {
+  knowledgeBaseId: string;
+  offset?: number;
+  limit?: number;
+  status?: string;
+  query?: string;
+}): Promise<ApiKnowledgeDocumentList> {
+  const search = new URLSearchParams({
+    knowledge_base_id: params.knowledgeBaseId,
+    offset: String(params.offset ?? 0),
+    limit: String(params.limit ?? 20),
+  });
+  if (params.status) search.set('status', params.status);
+  if (params.query?.trim()) search.set('query', params.query.trim());
+  return apiFetch<ApiKnowledgeDocumentList>(`/api/v1/knowledge/documents?${search.toString()}`);
+}
+
+export async function getKnowledgeDocument(
+  documentId: string,
+  knowledgeBaseId: string,
+): Promise<ApiKnowledgeDocument> {
+  return apiFetch<ApiKnowledgeDocument>(
+    `/api/v1/knowledge/documents/${encodeURIComponent(documentId)}?knowledge_base_id=${encodeURIComponent(knowledgeBaseId)}`,
+  );
+}
+
+export async function getKnowledgeDocumentChunks(
+  documentId: string,
+  knowledgeBaseId: string,
+): Promise<ApiKnowledgeChunk[]> {
+  return apiFetch<ApiKnowledgeChunk[]>(
+    `/api/v1/knowledge/documents/${encodeURIComponent(documentId)}/chunks?knowledge_base_id=${encodeURIComponent(knowledgeBaseId)}`,
+  );
+}
+
+export async function searchKnowledge(params: {
+  query: string;
+  knowledgeBaseId: string;
+  topK?: number;
+  retrievalMode?: 'auto' | 'focused' | 'comprehensive' | 'enumeration';
+  enableQueryRewrite?: boolean;
+  enableVector?: boolean;
+  enableKeyword?: boolean;
+  enableRerank?: boolean;
+}): Promise<ApiKnowledgeSearchResponse> {
+  return apiFetch<ApiKnowledgeSearchResponse>('/api/v1/knowledge/search', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      query: params.query,
+      knowledge_base_id: params.knowledgeBaseId,
+      top_k: params.topK ?? 8,
+      retrieval_mode: params.retrievalMode ?? 'auto',
+      enable_query_rewrite: params.enableQueryRewrite ?? false,
+      enable_vector: params.enableVector ?? true,
+      enable_keyword: params.enableKeyword ?? true,
+      enable_rerank: params.enableRerank ?? true,
+    }),
+  });
+}
+
 export async function getConfigOverrides(): Promise<Record<string, string>> {
   return apiFetch<Record<string, string>>('/api/v1/admin/config/overrides');
 }

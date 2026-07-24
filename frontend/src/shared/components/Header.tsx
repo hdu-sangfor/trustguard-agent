@@ -123,7 +123,7 @@ const Header = ({ currentPhase = 0 }: HeaderProps) => {
     window.scrollTo({ top: 0 });
   };
 
-  const requireLogin = (path: "/logs" | "/tasks" | "/admin" | "/reports" | "/system" | "/monitor" | "/config" | "/stats" | "/vulns" | "/batch" | "/dashboard" | "/audit") => {
+  const requireLogin = (path: "/logs" | "/tasks" | "/admin" | "/reports" | "/system" | "/monitor" | "/config" | "/stats" | "/vulns" | "/batch" | "/dashboard" | "/audit" | "/knowledge") => {
     if (!loggedIn) {
       toast.error("请先登录");
       localStorage.setItem("sentinel_login_redirect", path);
@@ -140,6 +140,7 @@ const Header = ({ currentPhase = 0 }: HeaderProps) => {
     { label: "任务管理", onClick: () => requireLogin("/tasks"),     badge: runningCount, path: "/tasks" },
     { label: "报告中心", onClick: () => requireLogin("/reports"),   badge: 0,          path: "/reports" },
     { label: "技能库",   onClick: () => navigate("/skills"),        badge: 0,          path: "/skills" },
+    { label: "知识中心", onClick: () => requireLogin("/knowledge"), badge: 0,          path: "/knowledge" },
     { label: "监控大屏", onClick: () => requireLogin("/monitor"),   badge: 0,          path: "/monitor" },
     { label: "统计分析", onClick: () => requireLogin("/stats"),     badge: 0,          path: "/stats" },
     { label: "漏洞库",   onClick: () => requireLogin("/vulns"),     badge: 0,          path: "/vulns" },

@@ -1,0 +1,12 @@
+.knowledge-search-layout {
+  display: grid;
+  grid-template-columns: minmax(300px, 390px) minmax(0, 1fr);
+  gap: 18px;
+  margin-top: 18px;
+}
+
+@media (max-width: 900px) {
+  .knowledge-search-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

@@ -11,8 +11,8 @@ import sys
 import uuid
 from collections import Counter, OrderedDict
 from datetime import datetime, timezone
-from typing import Any
-from urllib.parse import urlparse
+from typing import Any, Literal
+from urllib.parse import quote, urlparse
 
 import httpx
 import bcrypt
@@ -35,6 +35,7 @@ EVIDENCE_BASE_URL = os.getenv("EVIDENCE_BASE_URL", "http://localhost:18103").rst
 EXECUTOR_BASE_URL = os.getenv("EXECUTOR_BASE_URL", "http://localhost:18102").rstrip("/")
 MQ_BROKER_URL = os.getenv("MQ_BROKER_URL", "amqp://guest:guest@localhost:5672/")
 KB_QDRANT_URL = os.getenv("KB_QDRANT_URL", "http://localhost:6333").rstrip("/")
+RAG_SERVICE_BASE_URL = os.getenv("RAG_SERVICE_BASE_URL", "http://localhost:18200").rstrip("/")
 
 START_TIME = datetime.now(timezone.utc)
 PHASE_ORDER = ["RECON", "THREAT_MODEL", "VULN_SCAN", "EXPLOIT", "REPORT", "DONE"]
@@ -193,6 +194,52 @@ async def _evidence(method: str, path: str, *, json_body: Any = None, params: di
         return resp.json()
 
 
+async def _rag(
+    method: str,
+    path: str,
+    *,
+    json_body: Any = None,
+    params: dict[str, Any] | None = None,
+    timeout: float = 20.0,
+) -> Any:
+    """Call a fixed TrustGuard RAG path and translate upstream failures at the gateway boundary."""
+    try:
+        async with httpx.AsyncClient(
+            timeout=timeout,
+            follow_redirects=False,
+            trust_env=False,
+        ) as client:
+            resp = await client.request(
+                method,
+                f"{RAG_SERVICE_BASE_URL}{path}",
+                json=json_body,
+                params=params,
+            )
+    except httpx.TimeoutException as exc:
+        raise HTTPException(status_code=504, detail="RAG 服务请求超时") from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=503, detail="RAG 服务不可用") from exc
+
+    if resp.status_code >= 400:
+        detail = f"RAG 服务返回 HTTP {resp.status_code}"
+        try:
+            payload = resp.json()
+            if isinstance(payload, dict):
+                candidate = payload.get("message") or payload.get("detail")
+                if isinstance(candidate, str) and candidate.strip():
+                    detail = candidate.strip()
+        except ValueError:
+            pass
+        mapped_status = resp.status_code if resp.status_code < 500 else 503
+        raise HTTPException(status_code=mapped_status, detail=detail)
+    if not resp.content:
+        return None
+    try:
+        return resp.json()
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail="RAG 服务返回了无效 JSON") from exc
+
+
 async def _restore_task(row: dict[str, Any]) -> dict[str, Any] | None:
     task_id = row.get("task_id")
     payload = {
@@ -322,6 +369,21 @@ class UserCreateRequest(BaseModel):
     password: str | None = None
 
 
+class RagSearchRequest(BaseModel):
+    """Read-only search options exposed by the Agent knowledge-center BFF."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    query: str = Field(min_length=1, max_length=2000)
+    knowledge_base_id: str = Field(min_length=1, max_length=36)
+    top_k: int = Field(default=8, ge=1, le=20)
+    retrieval_mode: Literal["auto", "focused", "comprehensive", "enumeration"] = "auto"
+    enable_query_rewrite: bool = False
+    enable_vector: bool = True
+    enable_keyword: bool = True
+    enable_rerank: bool = True
+
+
 @app.get("/health")
 def health() -> dict[str, Any]:
     db_ok = True
@@ -330,6 +392,90 @@ def health() -> dict[str, Any]:
     except Exception:
         db_ok = False
     return {"status": "ok" if db_ok else "degraded", "service": "gateway", "database": "up" if db_ok else "down"}
+
+
+@app.get("/api/v1/knowledge/health")
+async def knowledge_health() -> dict[str, Any]:
+    """Return RAG health through the Agent gateway without exposing its origin to browsers."""
+    return ok(await _rag("GET", "/health", timeout=6.0))
+
+
+@app.get("/api/v1/knowledge/bases")
+async def knowledge_bases() -> dict[str, Any]:
+    """List RAG knowledge bases for the read-only knowledge-center page."""
+    return ok(await _rag("GET", "/v1/knowledge-bases", timeout=10.0))
+
+
+@app.get("/api/v1/knowledge/documents")
+async def knowledge_documents(
+    knowledge_base_id: str = Query(min_length=1, max_length=36),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=20, ge=1, le=100),
+    status: str | None = Query(default=None, max_length=32),
+    query: str | None = Query(default=None, max_length=512),
+) -> dict[str, Any]:
+    """List documents from one explicitly selected knowledge base."""
+    params: dict[str, Any] = {
+        "knowledge_base_id": knowledge_base_id,
+        "offset": offset,
+        "limit": limit,
+    }
+    if status:
+        params["status"] = status
+    if query and query.strip():
+        params["q"] = query.strip()
+    return ok(await _rag("GET", "/v1/documents", params=params, timeout=10.0))
+
+
+@app.get("/api/v1/knowledge/documents/{document_id}")
+async def knowledge_document(
+    document_id: str,
+    knowledge_base_id: str = Query(min_length=1, max_length=36),
+) -> dict[str, Any]:
+    """Read one RAG document after verifying it belongs to the selected knowledge base."""
+    document = await _rag(
+        "GET",
+        f"/v1/documents/{quote(document_id, safe='')}",
+        timeout=10.0,
+    )
+    if not isinstance(document, dict) or document.get("knowledge_base_id") != knowledge_base_id:
+        raise HTTPException(status_code=404, detail="文档不属于当前知识库")
+    return ok(document)
+
+
+@app.get("/api/v1/knowledge/documents/{document_id}/chunks")
+async def knowledge_document_chunks(
+    document_id: str,
+    knowledge_base_id: str = Query(min_length=1, max_length=36),
+) -> dict[str, Any]:
+    """Read chunks only after verifying the document belongs to the selected knowledge base."""
+    await knowledge_document(document_id, knowledge_base_id)
+    return ok(
+        await _rag(
+            "GET",
+            f"/v1/documents/{quote(document_id, safe='')}/chunks",
+            timeout=15.0,
+        )
+    )
+
+
+@app.post("/api/v1/knowledge/search")
+async def knowledge_search(req: RagSearchRequest) -> dict[str, Any]:
+    """Run a bounded read-only RAG search for the knowledge-center page."""
+    if not req.enable_vector and not req.enable_keyword:
+        raise HTTPException(status_code=422, detail="至少启用一种检索方式")
+    return ok(
+        await _rag(
+            "POST",
+            "/v1/search",
+            json_body={
+                **req.model_dump(),
+                "enable_abstention": True,
+                "require_exact_entity_match": True,
+            },
+            timeout=30.0,
+        )
+    )
 
 
 @app.exception_handler(HTTPException)
