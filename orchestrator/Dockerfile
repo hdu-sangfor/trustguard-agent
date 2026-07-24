@@ -21,6 +21,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
+    PYTHONPATH="/srv/orchestrator/app" \
     UV_PYTHON_DOWNLOADS=never \
     PATH="/srv/orchestrator/.venv/bin:$PATH"
 

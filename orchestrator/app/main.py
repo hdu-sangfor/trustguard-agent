@@ -35,6 +35,7 @@ from app.clients.checkpoint_client import (
     load_checkpoint as load_checkpoint_remote,
 )
 from app.trustguard_agent.graph import run_agent as run_langgraph_agent
+from app.alert_triage.graph_core import run_alert_triage
 from app.trustguard_agent.models import AgentRunRequest, AgentRunResponse
 from app.core.state_machine import (
     tick as state_machine_tick,
@@ -2011,3 +2012,70 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run("app.main:app", host="127.0.0.1", port=18081, reload=True)
+
+
+# Alert Triage in-memory store
+_alert_triage_results: dict[str, dict[str, Any]] = {}
+
+
+# ── Alert Triage Routes ──────────────────────────────────────────────
+
+class _AlertTriageCreatePayload(BaseModel):
+    task_id: str
+    alert_uuid: str
+    scenario_id: str | None = None
+    enable_rag: bool = True
+    strategy_params: dict[str, Any] | None = None
+    caller_notes: str | None = None
+
+
+@app.post("/v1/orchestrator/alert-triage/tasks")
+async def alert_triage_create_task(payload: _AlertTriageCreatePayload) -> dict[str, Any]:
+    task_id = payload.task_id
+    _alert_triage_results[task_id] = {
+        "task_id": task_id,
+        "alert_uuid": payload.alert_uuid,
+        "scenario_id": payload.scenario_id,
+        "enable_rag": payload.enable_rag,
+        "strategy_params": payload.strategy_params,
+        "caller_notes": payload.caller_notes,
+        "status": "PENDING",
+        "created_at": datetime.now().isoformat(),
+    }
+    logger.info("alert triage task created task_id=%s alert_uuid=%s", task_id, payload.alert_uuid)
+    return {"task_id": task_id, "alert_uuid": payload.alert_uuid, "status": "PENDING"}
+
+
+@app.get("/v1/orchestrator/alert-triage/tasks/{task_id}")
+async def alert_triage_get_task(task_id: str) -> dict[str, Any]:
+    data = _alert_triage_results.get(task_id)
+    if data is None:
+        raise HTTPException(status_code=404, detail=f"alert triage task not found: {task_id}")
+    return data
+
+
+@app.post("/v1/orchestrator/alert-triage/tasks/{task_id}/run")
+async def alert_triage_run_task(task_id: str) -> dict[str, Any]:
+    if task_id not in _alert_triage_results:
+        raise HTTPException(status_code=404, detail=f"alert triage task not found: {task_id}")
+
+    task_data = _alert_triage_results[task_id]
+    task_data["status"] = "RUNNING"
+
+    try:
+        import asyncio as _asyncio
+        result = await run_alert_triage(task_data)
+        _alert_triage_results[task_id] = {
+            **task_data,
+            **result,
+            "status": result.get("status", "FAILED"),
+        }
+        return _alert_triage_results[task_id]
+    except Exception as exc:
+        logger.exception("alert triage run failed task_id=%s", task_id)
+        _alert_triage_results[task_id] = {
+            **task_data,
+            "status": "FAILED",
+            "error": str(exc),
+        }
+        return _alert_triage_results[task_id]

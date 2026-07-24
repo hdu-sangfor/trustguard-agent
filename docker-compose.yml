@@ -155,6 +155,13 @@ services:
       KNOWLEDGE_MCP_MAX_RETRIES: ${KNOWLEDGE_MCP_MAX_RETRIES:-1}
       KNOWLEDGE_MCP_WORKSPACE_ID: ${KNOWLEDGE_MCP_WORKSPACE_ID:-default}
       KNOWLEDGE_MCP_WORKFLOW_TYPE: ${KNOWLEDGE_MCP_WORKFLOW_TYPE:-penetration}
+      XDR_BASE_URL: http://host.docker.internal:8443
+      XDR_AK: test_ak_0001
+      XDR_SK: test_sk_0001_secret
+      LLM_PROVIDER: ${LLM_PROVIDER:-openai_compat}
+      LLM_BASE_URL: ${LLM_BASE_URL:-http://localhost:11434/v1}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL_ID: ${LLM_MODEL_ID:-gpt-4o-mini}
     env_file: *optional-env-files
     extra_hosts:
       - "host.docker.internal:host-gateway"

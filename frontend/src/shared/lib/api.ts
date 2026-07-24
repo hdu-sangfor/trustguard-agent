@@ -1745,3 +1745,83 @@ export async function getMe(): Promise<ApiUser> {
   }
   return normalizeUser(json.data);
 }
+
+// ── XDR Proxy — Alert Triage ──────────────────────────────────────────────────
+
+export interface ApiTriageTask {
+  taskId: string;
+  alertUuid: string;
+  status: 'PENDING' | 'RUNNING' | 'DONE' | 'FAILED';
+  verdict: 'true_positive' | 'false_positive' | 'suspicious' | 'insufficient_evidence' | null;
+  confidence: number | null;
+  severity: number | null;
+  summary: string;
+  reasoning: string;
+  ragEnabled: boolean;
+  createdAt: string;
+  finishedAt: string | null;
+  alertSummary?: {
+    name: string;
+    uuId: string;
+    severity: number | null;
+    threatDefine: unknown;
+    direction: unknown;
+    proofType: unknown;
+    proofSummary: string;
+  };
+  matchedWhitelists?: Array<Record<string, unknown>>;
+  relatedIncidents?: Array<{ uuId: string; name: string; severity: number | null }>;
+  recommendedActions?: Array<{ action: string; label: string; category: string; description?: string }>;
+  warnings?: string[];
+  missingEvidence?: string[];
+  ragCitations?: unknown[];
+  ragDegraded?: boolean;
+  ragNote?: string;
+  errors?: string[];
+}
+
+export async function createTriageTask(alertUuid: string, ragEnabled = false): Promise<ApiTriageTask> {
+  const resp = await fetch('/api/v1/alert-triage/tasks', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ alertUuid, ragEnabled }),
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  const json = await resp.json() as { code: string; message: string; data: ApiTriageTask };
+  if (json.code !== '0') throw new Error('triage creation failed');
+  return json.data;
+}
+
+export async function listTriageTasks(): Promise<ApiTriageTask[]> {
+  const resp = await fetch('/api/v1/alert-triage/tasks', { signal: AbortSignal.timeout(10000) });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  const json = await resp.json() as { code: string; message: string; data: ApiTriageTask[] };
+  if (json.code !== '0') throw new Error('triage list failed');
+  return json.data;
+}
+
+export async function getTriageTask(taskId: string): Promise<ApiTriageTask> {
+  const resp = await fetch(`/api/v1/alert-triage/tasks/${taskId}`, { signal: AbortSignal.timeout(10000) });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  const json = await resp.json() as { code: string; message: string; data: ApiTriageTask };
+  if (json.code !== '0') throw new Error('triage fetch failed');
+  return json.data;
+}
+
+export async function getXdrProxyHealth(): Promise<{ status: string; xdrMockStatus: string }> {
+  const resp = await fetch('/health', { signal: AbortSignal.timeout(5000) });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  return resp.json();
+}
+
+export async function runTriageTask(taskId: string): Promise<ApiTriageTask> {
+  const resp = await fetch(`/api/v1/alert-triage/tasks/${taskId}/run`, {
+    method: 'POST',
+    signal: AbortSignal.timeout(120000),
+  });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  const json = await resp.json() as { code: string; message: string; data: ApiTriageTask };
+  if (json.code !== '0') throw new Error('triage run failed');
+  return json.data;
+}

@@ -123,7 +123,7 @@ const Header = ({ currentPhase = 0 }: HeaderProps) => {
     window.scrollTo({ top: 0 });
   };
 
-  const requireLogin = (path: "/logs" | "/tasks" | "/admin" | "/reports" | "/system" | "/monitor" | "/config" | "/stats" | "/vulns" | "/batch" | "/dashboard" | "/audit" | "/knowledge" | "/knowledge/collect") => {
+  const requireLogin = (path: "/logs" | "/tasks" | "/admin" | "/reports" | "/system" | "/monitor" | "/config" | "/stats" | "/vulns" | "/batch" | "/dashboard" | "/audit" | "/triage" | "/knowledge" | "/knowledge/collect") => {
     if (!loggedIn) {
       toast.error("请先登录");
       localStorage.setItem("sentinel_login_redirect", path);
@@ -135,6 +135,7 @@ const Header = ({ currentPhase = 0 }: HeaderProps) => {
 
   const navLinks = [
     { label: "首页",     onClick: goHome,                           badge: 0,          path: "/" },
+    { label: "告警研判", onClick: () => requireLogin("/triage"), badge: 0, path: "/triage" },
     { label: "技术特点", onClick: () => navigate("/features"),      badge: 0,          path: "/features" },
     { label: "运行日志", onClick: () => requireLogin("/logs"),      badge: 0,          path: "/logs" },
     { label: "任务管理", onClick: () => requireLogin("/tasks"),     badge: runningCount, path: "/tasks" },
