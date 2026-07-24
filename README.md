@@ -20,3 +20,11 @@ RAG_UPLOAD_MAX_BYTES=52428800
 生产环境必须替换 `AUTH_TOKEN_SECRET`，并将 RAG 服务限制在内部网络，避免浏览器绕过
 Gateway 直接调用知识库和文档写接口。登录令牌格式已经升级为带 HMAC-SHA256 签名和过期时间
 的令牌，升级后已有浏览器会话需要重新登录。
+
+Gateway 中的知识能力按职责拆分：
+
+- `app/security/auth.py`：登录令牌、当前用户和角色依赖；
+- `app/api/knowledge.py`：知识库、文档、入库和问答路由；
+- `app/clients/rag_client.py`：RAG HTTP 调用、超时和错误映射；
+- `app/schemas/knowledge.py`：知识接口请求模型；
+- `app/db.py`、`app/audit.py`：数据库访问与审计记录。

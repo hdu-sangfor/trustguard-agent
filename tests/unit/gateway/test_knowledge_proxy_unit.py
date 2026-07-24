@@ -5,50 +5,52 @@ import sys
 from tests.paths import REPO_ROOT
 
 
-def _load_gateway_main():
+def _load_gateway_modules():
     gateway_root = str(REPO_ROOT / "gateway")
     for name in list(sys.modules.keys()):
         if name == "app" or name.startswith("app."):
             sys.modules.pop(name, None)
     sys.path.insert(0, gateway_root)
     try:
-        return importlib.import_module("app.main")
+        importlib.import_module("app.main")
+        return (
+            importlib.import_module("app.api.knowledge"),
+            importlib.import_module("app.schemas.knowledge"),
+            importlib.import_module("app.security.auth"),
+        )
     finally:
         if gateway_root in sys.path:
             sys.path.remove(gateway_root)
 
 
-def _allow_authenticated_user(monkeypatch, gateway, role: str = "ADMIN"):
-    monkeypatch.setattr(
-        gateway,
-        "_require_user",
-        lambda _authorization, _allowed_roles=None: {
-            "username": "tester",
-            "user_id": "user-test",
-            "role": role,
-            "status": "ACTIVE",
-        },
+def _user(auth, role: str = "ADMIN"):
+    return auth.CurrentUser(
+        user_id="user-test",
+        username="tester",
+        role=role,
+        status="ACTIVE",
     )
 
 
 def test_knowledge_search_forwards_bounded_read_only_payload(monkeypatch):
-    gateway = _load_gateway_main()
-    _allow_authenticated_user(monkeypatch, gateway)
+    knowledge, schemas, auth = _load_gateway_modules()
     captured = []
 
     async def fake_rag(method, path, **kwargs):
         captured.append((method, path, kwargs))
         return {"schema_version": "trustguard-search-v1", "results": []}
 
-    monkeypatch.setattr(gateway, "_rag", fake_rag)
-    request = gateway.RagSearchRequest(
+    monkeypatch.setattr(knowledge.rag_client, "request", fake_rag)
+    request = schemas.RagSearchRequest(
         query="Apache Shiro RememberMe",
         knowledge_base_id="kb-security",
         top_k=6,
         retrieval_mode="focused",
     )
 
-    response = asyncio.run(gateway.knowledge_search(request, authorization="Bearer test"))
+    response = asyncio.run(
+        knowledge.knowledge_search(request, _user(auth, "VIEWER"))
+    )
 
     assert response["code"] == "0"
     method, path, kwargs = captured[0]
@@ -60,24 +62,23 @@ def test_knowledge_search_forwards_bounded_read_only_payload(monkeypatch):
 
 
 def test_knowledge_documents_keeps_selected_knowledge_base_scope(monkeypatch):
-    gateway = _load_gateway_main()
-    _allow_authenticated_user(monkeypatch, gateway)
+    knowledge, _schemas, auth = _load_gateway_modules()
     captured = []
 
     async def fake_rag(method, path, **kwargs):
         captured.append((method, path, kwargs))
         return {"items": [], "total": 0, "offset": 0, "limit": 20}
 
-    monkeypatch.setattr(gateway, "_rag", fake_rag)
+    monkeypatch.setattr(knowledge.rag_client, "request", fake_rag)
 
     response = asyncio.run(
-        gateway.knowledge_documents(
+        knowledge.knowledge_documents(
+            _user(auth, "VIEWER"),
             knowledge_base_id="kb-security",
             offset=0,
             limit=20,
             status="ready",
             query="shiro",
-            authorization="Bearer test",
         )
     )
 
@@ -94,31 +95,29 @@ def test_knowledge_documents_keeps_selected_knowledge_base_scope(monkeypatch):
 
 
 def test_knowledge_document_rejects_cross_base_result(monkeypatch):
-    gateway = _load_gateway_main()
-    _allow_authenticated_user(monkeypatch, gateway)
+    knowledge, _schemas, auth = _load_gateway_modules()
 
     async def fake_rag(_method, _path, **_kwargs):
         return {"id": "doc-1", "knowledge_base_id": "kb-other"}
 
-    monkeypatch.setattr(gateway, "_rag", fake_rag)
+    monkeypatch.setattr(knowledge.rag_client, "request", fake_rag)
 
     try:
         asyncio.run(
-            gateway.knowledge_document(
-                document_id="doc-1",
+            knowledge.knowledge_document(
+                "doc-1",
+                _user(auth, "VIEWER"),
                 knowledge_base_id="kb-security",
-                authorization="Bearer test",
             )
         )
-    except gateway.HTTPException as exc:
+    except knowledge.HTTPException as exc:
         assert exc.status_code == 404
     else:
         raise AssertionError("cross-base document must be rejected")
 
 
 def test_knowledge_answer_forwards_grounded_generation_options(monkeypatch):
-    gateway = _load_gateway_main()
-    _allow_authenticated_user(monkeypatch, gateway)
+    knowledge, schemas, auth = _load_gateway_modules()
     captured = []
 
     async def fake_rag(method, path, **kwargs):
@@ -129,8 +128,8 @@ def test_knowledge_answer_forwards_grounded_generation_options(monkeypatch):
             "citations": [],
         }
 
-    monkeypatch.setattr(gateway, "_rag", fake_rag)
-    request = gateway.RagAnswerRequest(
+    monkeypatch.setattr(knowledge.rag_client, "request", fake_rag)
+    request = schemas.RagAnswerRequest(
         query="Apache Shiro RememberMe 有哪些风险？",
         knowledge_base_id="kb-security",
         top_k=5,
@@ -138,7 +137,9 @@ def test_knowledge_answer_forwards_grounded_generation_options(monkeypatch):
         enable_query_rewrite=True,
     )
 
-    response = asyncio.run(gateway.knowledge_answer(request, authorization="Bearer test"))
+    response = asyncio.run(
+        knowledge.knowledge_answer(request, _user(auth, "VIEWER"))
+    )
 
     assert response["code"] == "0"
     method, path, kwargs = captured[0]
@@ -150,8 +151,7 @@ def test_knowledge_answer_forwards_grounded_generation_options(monkeypatch):
 
 
 def test_knowledge_base_create_forwards_management_payload(monkeypatch):
-    gateway = _load_gateway_main()
-    _allow_authenticated_user(monkeypatch, gateway)
+    knowledge, schemas, auth = _load_gateway_modules()
     captured = []
 
     async def fake_rag(method, path, **kwargs):
@@ -162,16 +162,20 @@ def test_knowledge_base_create_forwards_management_payload(monkeypatch):
             "embedding_profile": "configured",
         }
 
-    monkeypatch.setattr(gateway, "_rag", fake_rag)
-    monkeypatch.setattr(gateway, "_record_audit", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(knowledge.rag_client, "request", fake_rag)
+    monkeypatch.setattr(
+        knowledge,
+        "record_audit",
+        lambda *_args, **_kwargs: None,
+    )
 
     response = asyncio.run(
-        gateway.create_knowledge_base(
-            gateway.KnowledgeBaseCreateRequest(
+        knowledge.create_knowledge_base(
+            schemas.KnowledgeBaseCreateRequest(
                 name="安全知识",
                 description="单租户共享知识库",
             ),
-            authorization="Bearer test",
+            _user(auth),
         )
     )
 
@@ -186,8 +190,7 @@ def test_knowledge_base_create_forwards_management_payload(monkeypatch):
 
 
 def test_upload_document_wraps_raw_file_as_rag_multipart(monkeypatch):
-    gateway = _load_gateway_main()
-    _allow_authenticated_user(monkeypatch, gateway)
+    knowledge, _schemas, auth = _load_gateway_modules()
     captured = []
 
     class FakeRequest:
@@ -210,15 +213,19 @@ def test_upload_document_wraps_raw_file_as_rag_multipart(monkeypatch):
             "knowledge_base_id": "kb-security",
         }
 
-    monkeypatch.setattr(gateway, "_rag", fake_rag)
-    monkeypatch.setattr(gateway, "_record_audit", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(knowledge.rag_client, "request", fake_rag)
+    monkeypatch.setattr(
+        knowledge,
+        "record_audit",
+        lambda *_args, **_kwargs: None,
+    )
 
     response = asyncio.run(
-        gateway.upload_knowledge_document(
+        knowledge.upload_knowledge_document(
             "kb-security",
             FakeRequest(),
+            _user(auth),
             filename="notes.txt",
-            authorization="Bearer test",
         )
     )
 
@@ -226,35 +233,79 @@ def test_upload_document_wraps_raw_file_as_rag_multipart(monkeypatch):
     method, path, kwargs = captured[1]
     assert (method, path) == ("POST", "/v1/ingest/jobs")
     assert kwargs["data"]["knowledge_base_id"] == "kb-security"
-    assert kwargs["files"]["file"] == ("notes.txt", b"hello world", "text/plain")
+    assert kwargs["files"]["file"] == (
+        "notes.txt",
+        b"hello world",
+        "text/plain",
+    )
 
 
 def test_signed_auth_token_rejects_tampering_and_enforces_role(monkeypatch):
-    gateway = _load_gateway_main()
-    viewer = {
+    _knowledge, _schemas, auth = _load_gateway_modules()
+    viewer_row = {
         "username": "viewer",
         "user_id": "user-viewer",
         "role": "VIEWER",
         "status": "ACTIVE",
     }
-    monkeypatch.setattr(gateway, "_get_user_by_username", lambda username: viewer if username == "viewer" else None)
+    monkeypatch.setattr(
+        auth,
+        "get_user_by_username",
+        lambda username: viewer_row if username == "viewer" else None,
+    )
 
-    token = gateway._token(viewer)
-    assert gateway._require_user(
-        f"Bearer {token}",
-        gateway.KNOWLEDGE_READ_ROLES,
-    )["username"] == "viewer"
+    token = auth.issue_token(viewer_row)
+    viewer = auth.get_current_user(authorization=f"Bearer {token}")
+    assert viewer.username == "viewer"
 
     try:
-        gateway._require_user(f"Bearer {token}x", gateway.KNOWLEDGE_READ_ROLES)
-    except gateway.HTTPException as exc:
+        auth.get_current_user(authorization=f"Bearer {token}x")
+    except auth.HTTPException as exc:
         assert exc.status_code == 401
     else:
         raise AssertionError("tampered token must be rejected")
 
+    manager_dependency = auth.require_roles("ADMIN", "OPERATOR")
     try:
-        gateway._require_user(f"Bearer {token}", gateway.KNOWLEDGE_WRITE_ROLES)
-    except gateway.HTTPException as exc:
+        manager_dependency(user=viewer)
+    except auth.HTTPException as exc:
         assert exc.status_code == 403
     else:
-        raise AssertionError("viewer must not receive knowledge management permission")
+        raise AssertionError(
+            "viewer must not receive knowledge management permission"
+        )
+
+
+def test_knowledge_router_rejects_missing_login_header():
+    _knowledge, _schemas, _auth = _load_gateway_modules()
+    gateway = sys.modules["app.main"]
+    from fastapi.testclient import TestClient
+
+    response = TestClient(gateway.app).get("/api/v1/knowledge/bases")
+
+    assert response.status_code == 401
+    assert response.json()["message"] == "缺少、过期或无效的登录凭证"
+
+
+def test_knowledge_router_dependency_rejects_viewer_write():
+    _knowledge, _schemas, auth = _load_gateway_modules()
+    gateway = sys.modules["app.main"]
+    from fastapi.testclient import TestClient
+
+    gateway.app.dependency_overrides[auth.get_current_user] = lambda: _user(
+        auth,
+        "VIEWER",
+    )
+    try:
+        response = TestClient(gateway.app).post(
+            "/api/v1/knowledge/bases",
+            json={
+                "name": "forbidden",
+                "embedding_profile": "configured",
+            },
+        )
+    finally:
+        gateway.app.dependency_overrides.clear()
+
+    assert response.status_code == 403
+    assert response.json()["message"] == "当前角色没有执行此操作的权限"

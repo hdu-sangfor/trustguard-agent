@@ -1,9 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
-import hashlib
-import hmac
 import json
 import logging
 import os
@@ -13,75 +10,44 @@ import sys
 import uuid
 from collections import Counter, OrderedDict
 from datetime import datetime, timezone
-from typing import Any, Literal
-from urllib.parse import quote, urlparse
+from typing import Any
+from urllib.parse import urlparse
 
-import bcrypt
 import httpx
-import pymysql
-from fastapi import FastAPI, Header, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
-from pymysql.cursors import DictCursor
+
+from app.api.knowledge import router as knowledge_router
+from app.audit import record_audit as _record_audit
+from app.db import execute as _execute
+from app.db import query as _query
+from app.responses import fail, ok
+from app.security.auth import (
+    AUTH_TOKEN_TTL_SECONDS,
+    CurrentUser,
+    get_current_user,
+    get_user_by_id,
+    get_user_by_username,
+    hash_password,
+    issue_token,
+    verify_password,
+)
 
 log = logging.getLogger("trustguard.gateway")
 
-MYSQL_HOST = os.getenv("MYSQL_HOST", "127.0.0.1")
-MYSQL_PORT = int(os.getenv("MYSQL_PORT", "3306"))
-MYSQL_USER = os.getenv("MYSQL_USER", "trustguard")
-MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "trustguard")
-MYSQL_DATABASE = os.getenv("MYSQL_DATABASE", "trustguard_agent")
 ORCHESTRATOR_BASE_URL = os.getenv("ORCHESTRATOR_BASE_URL", "http://localhost:18081").rstrip("/")
 EVIDENCE_BASE_URL = os.getenv("EVIDENCE_BASE_URL", "http://localhost:18103").rstrip("/")
 EXECUTOR_BASE_URL = os.getenv("EXECUTOR_BASE_URL", "http://localhost:18102").rstrip("/")
 MQ_BROKER_URL = os.getenv("MQ_BROKER_URL", "amqp://guest:guest@localhost:5672/")
 KB_QDRANT_URL = os.getenv("KB_QDRANT_URL", "http://localhost:6333").rstrip("/")
-RAG_SERVICE_BASE_URL = os.getenv("RAG_SERVICE_BASE_URL", "http://localhost:18200").rstrip("/")
-AUTH_TOKEN_SECRET = os.getenv("AUTH_TOKEN_SECRET", "trustguard-agent-dev-secret").encode("utf-8")
-AUTH_TOKEN_TTL_SECONDS = max(300, int(os.getenv("AUTH_TOKEN_TTL_SECONDS", "86400")))
-RAG_UPLOAD_MAX_BYTES = max(1, int(os.getenv("RAG_UPLOAD_MAX_BYTES", "52428800")))
 
 START_TIME = datetime.now(timezone.utc)
 PHASE_ORDER = ["RECON", "THREAT_MODEL", "VULN_SCAN", "EXPLOIT", "REPORT", "DONE"]
 STATUS_VALUES = ["PENDING", "RUNNING", "PAUSED", "DONE", "FAILED", "CANCELLED"]
-KNOWLEDGE_READ_ROLES = frozenset({"ADMIN", "OPERATOR", "VIEWER"})
-KNOWLEDGE_WRITE_ROLES = frozenset({"ADMIN", "OPERATOR"})
 
 app = FastAPI(title="TrustGuard Gateway", version="1.0.0")
-
-
-def ok(data: Any = None, message: str = "success") -> dict[str, Any]:
-    return {"code": "0", "message": message, "data": data}
-
-
-def fail(message: str, code: str = "BAD_REQUEST", data: Any = None, status_code: int = 200) -> JSONResponse:
-    return JSONResponse(status_code=status_code, content={"code": code, "message": message, "data": data})
-
-
-def _conn():
-    return pymysql.connect(
-        host=MYSQL_HOST,
-        port=MYSQL_PORT,
-        user=MYSQL_USER,
-        password=MYSQL_PASSWORD,
-        database=MYSQL_DATABASE,
-        charset="utf8mb4",
-        autocommit=True,
-        cursorclass=DictCursor,
-    )
-
-
-def _query(sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
-    with _conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(sql, params)
-            return list(cur.fetchall() or [])
-
-
-def _execute(sql: str, params: tuple[Any, ...] = ()) -> int:
-    with _conn() as conn:
-        with conn.cursor() as cur:
-            return int(cur.execute(sql, params))
+app.include_router(knowledge_router)
 
 
 def _scalar(sql: str, params: tuple[Any, ...] = ()) -> Any:
@@ -200,56 +166,6 @@ async def _evidence(method: str, path: str, *, json_body: Any = None, params: di
         return resp.json()
 
 
-async def _rag(
-    method: str,
-    path: str,
-    *,
-    json_body: Any = None,
-    params: dict[str, Any] | None = None,
-    data: dict[str, str] | None = None,
-    files: dict[str, tuple[str, bytes, str]] | None = None,
-    timeout: float = 20.0,
-) -> Any:
-    """Call a fixed TrustGuard RAG path and translate upstream failures at the gateway boundary."""
-    try:
-        async with httpx.AsyncClient(
-            timeout=timeout,
-            follow_redirects=False,
-            trust_env=False,
-        ) as client:
-            resp = await client.request(
-                method,
-                f"{RAG_SERVICE_BASE_URL}{path}",
-                json=json_body,
-                params=params,
-                data=data,
-                files=files,
-            )
-    except httpx.TimeoutException as exc:
-        raise HTTPException(status_code=504, detail="RAG 服务请求超时") from exc
-    except httpx.HTTPError as exc:
-        raise HTTPException(status_code=503, detail="RAG 服务不可用") from exc
-
-    if resp.status_code >= 400:
-        detail = f"RAG 服务返回 HTTP {resp.status_code}"
-        try:
-            payload = resp.json()
-            if isinstance(payload, dict):
-                candidate = payload.get("message") or payload.get("detail")
-                if isinstance(candidate, str) and candidate.strip():
-                    detail = candidate.strip()
-        except ValueError:
-            pass
-        mapped_status = resp.status_code if resp.status_code < 500 else 503
-        raise HTTPException(status_code=mapped_status, detail=detail)
-    if not resp.content:
-        return None
-    try:
-        return resp.json()
-    except ValueError as exc:
-        raise HTTPException(status_code=502, detail="RAG 服务返回了无效 JSON") from exc
-
-
 async def _restore_task(row: dict[str, Any]) -> dict[str, Any] | None:
     task_id = row.get("task_id")
     payload = {
@@ -271,48 +187,6 @@ async def _best_effort_restore(row: dict[str, Any]) -> None:
         log.warning("orchestrator restore failed task_id=%s: %s", row.get("task_id"), exc)
 
 
-def _b64url_encode(value: bytes) -> str:
-    return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
-
-
-def _b64url_decode(value: str) -> bytes:
-    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
-
-
-def _extract_token_payload(auth_header: str | None) -> dict[str, Any] | None:
-    if not isinstance(auth_header, str) or not auth_header.startswith("Bearer "):
-        return None
-    token = auth_header[7:].strip()
-    try:
-        encoded_payload, encoded_signature = token.split(".", 1)
-        expected = hmac.new(
-            AUTH_TOKEN_SECRET,
-            encoded_payload.encode("ascii"),
-            hashlib.sha256,
-        ).digest()
-        actual = _b64url_decode(encoded_signature)
-        if not hmac.compare_digest(expected, actual):
-            return None
-        payload = json.loads(_b64url_decode(encoded_payload).decode("utf-8"))
-    except (TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError):
-        return None
-    if not isinstance(payload, dict):
-        return None
-    try:
-        expires_at = int(payload.get("exp") or 0)
-    except (TypeError, ValueError):
-        return None
-    if expires_at <= int(datetime.now(timezone.utc).timestamp()):
-        return None
-    return payload
-
-
-def _extract_username(auth_header: str | None) -> str | None:
-    payload = _extract_token_payload(auth_header)
-    username = str(payload.get("sub") or "").strip() if payload else ""
-    return username or None
-
-
 def _user_to_api(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": int(row.get("id") or 0),
@@ -326,102 +200,6 @@ def _user_to_api(row: dict[str, Any]) -> dict[str, Any]:
         "createdAt": _dt_iso(row.get("created_at")) or "",
         "updatedAt": _dt_iso(row.get("updated_at")) or "",
     }
-
-
-def _get_user_by_username(username: str) -> dict[str, Any] | None:
-    rows = _query("SELECT * FROM tg_user WHERE username = %s", (username,))
-    return rows[0] if rows else None
-
-
-def _get_user_by_id(user_id: str) -> dict[str, Any] | None:
-    rows = _query("SELECT * FROM tg_user WHERE user_id = %s", (user_id,))
-    return rows[0] if rows else None
-
-
-def _verify_password(row: dict[str, Any], password: str) -> bool:
-    hashed = row.get("password_hash")
-    if isinstance(hashed, str) and hashed:
-        try:
-            return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
-        except Exception:
-            log.warning("password hash verification failed for username=%s", row.get("username"))
-    return False
-
-
-def _hash_password(password: str) -> str:
-    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt(rounds=12)).decode("utf-8")
-
-
-def _token(user: dict[str, Any]) -> str:
-    now = int(datetime.now(timezone.utc).timestamp())
-    payload = {
-        "sub": str(user.get("username") or ""),
-        "uid": str(user.get("user_id") or ""),
-        "role": str(user.get("role") or "VIEWER").upper(),
-        "iat": now,
-        "exp": now + AUTH_TOKEN_TTL_SECONDS,
-        "jti": uuid.uuid4().hex,
-    }
-    encoded_payload = _b64url_encode(
-        json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True).encode("utf-8")
-    )
-    signature = hmac.new(
-        AUTH_TOKEN_SECRET,
-        encoded_payload.encode("ascii"),
-        hashlib.sha256,
-    ).digest()
-    return f"{encoded_payload}.{_b64url_encode(signature)}"
-
-
-def _require_user(
-    authorization: str | None,
-    allowed_roles: frozenset[str] | None = None,
-) -> dict[str, Any]:
-    username = _extract_username(authorization)
-    if not username:
-        raise HTTPException(status_code=401, detail="缺少、过期或无效的登录凭证")
-    row = _get_user_by_username(username)
-    if not row or row.get("status") != "ACTIVE":
-        raise HTTPException(status_code=401, detail="用户不存在或已禁用")
-    role = str(row.get("role") or "VIEWER").upper()
-    if allowed_roles is not None and role not in allowed_roles:
-        raise HTTPException(status_code=403, detail="当前角色没有执行此操作的权限")
-    return row
-
-
-def _safe_upload_filename(filename: str) -> str:
-    normalized = filename.strip()
-    if (
-        not normalized
-        or normalized in {".", ".."}
-        or "/" in normalized
-        or "\\" in normalized
-        or "\x00" in normalized
-    ):
-        raise HTTPException(status_code=422, detail="文件名无效")
-    return normalized
-
-
-def _record_audit(event_type: str, actor: str, target: str = "", detail: str = "") -> None:
-    # The current schema does not include an audit table. Recent audit endpoints derive from trace events.
-    try:
-        _execute(
-            """
-            INSERT INTO tg_trace_events
-              (task_id, event_id, ts, event_type, source_module, payload, created_at)
-            VALUES (%s, %s, %s, %s, %s, %s, NOW())
-            """,
-            (
-                target or "platform",
-                "evt-" + uuid.uuid4().hex[:12],
-                _now_iso(),
-                event_type,
-                "gateway",
-                json.dumps({"actor": actor, "target": target, "detail": detail}, ensure_ascii=False),
-            ),
-        )
-    except Exception:
-        log.debug("audit record skipped", exc_info=True)
 
 
 class CreateTaskRequest(BaseModel):
@@ -454,54 +232,6 @@ class UserCreateRequest(BaseModel):
     password: str | None = None
 
 
-class RagSearchRequest(BaseModel):
-    """Read-only search options exposed by the Agent knowledge-center BFF."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    query: str = Field(min_length=1, max_length=2000)
-    knowledge_base_id: str = Field(min_length=1, max_length=36)
-    top_k: int = Field(default=8, ge=1, le=20)
-    retrieval_mode: Literal["auto", "focused", "comprehensive", "enumeration"] = "auto"
-    enable_query_rewrite: bool = False
-    enable_vector: bool = True
-    enable_keyword: bool = True
-    enable_rerank: bool = True
-
-
-class RagAnswerRequest(RagSearchRequest):
-    """Single-turn grounded answer options exposed by the Agent knowledge-center BFF."""
-
-
-class KnowledgeBaseCreateRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    name: str = Field(min_length=1, max_length=128)
-    description: str | None = Field(default=None, max_length=1024)
-    embedding_profile: str = Field(default="configured", min_length=1, max_length=64)
-
-
-class KnowledgeBaseUpdateRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    name: str | None = Field(default=None, min_length=1, max_length=128)
-    description: str | None = Field(default=None, max_length=1024)
-
-
-class KnowledgeDocumentUpdateRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    title: str | None = Field(default=None, max_length=512)
-    original_filename: str | None = Field(default=None, max_length=512)
-    metadata: dict[str, Any] | None = None
-
-
-class IngestConflictResolveRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    keep_document_id: str = Field(min_length=1, max_length=36)
-
-
 @app.get("/health")
 def health() -> dict[str, Any]:
     db_ok = True
@@ -510,324 +240,6 @@ def health() -> dict[str, Any]:
     except Exception:
         db_ok = False
     return {"status": "ok" if db_ok else "degraded", "service": "gateway", "database": "up" if db_ok else "down"}
-
-
-@app.get("/api/v1/knowledge/health")
-async def knowledge_health(
-    authorization: str | None = Header(default=None),
-) -> dict[str, Any]:
-    """Return RAG health through the Agent gateway without exposing its origin to browsers."""
-    _require_user(authorization, KNOWLEDGE_READ_ROLES)
-    return ok(await _rag("GET", "/health", timeout=6.0))
-
-
-@app.get("/api/v1/knowledge/bases")
-async def knowledge_bases(
-    authorization: str | None = Header(default=None),
-) -> dict[str, Any]:
-    """List RAG knowledge bases for the read-only knowledge-center page."""
-    _require_user(authorization, KNOWLEDGE_READ_ROLES)
-    return ok(await _rag("GET", "/v1/knowledge-bases", timeout=10.0))
-
-
-@app.post("/api/v1/knowledge/bases")
-async def create_knowledge_base(
-    req: KnowledgeBaseCreateRequest,
-    authorization: str | None = Header(default=None),
-) -> dict[str, Any]:
-    actor = _require_user(authorization, KNOWLEDGE_WRITE_ROLES)
-    result = await _rag(
-        "POST",
-        "/v1/knowledge-bases",
-        json_body=req.model_dump(),
-        timeout=15.0,
-    )
-    knowledge_base_id = str(result.get("id") or "") if isinstance(result, dict) else ""
-    _record_audit("KNOWLEDGE_BASE_CREATED", actor["username"], knowledge_base_id, req.name)
-    return ok(result)
-
-
-@app.patch("/api/v1/knowledge/bases/{knowledge_base_id}")
-async def update_knowledge_base(
-    knowledge_base_id: str,
-    req: KnowledgeBaseUpdateRequest,
-    authorization: str | None = Header(default=None),
-) -> dict[str, Any]:
-    actor = _require_user(authorization, KNOWLEDGE_WRITE_ROLES)
-    if not req.model_fields_set:
-        raise HTTPException(status_code=422, detail="至少提供一个可更新字段")
-    result = await _rag(
-        "PATCH",
-        f"/v1/knowledge-bases/{quote(knowledge_base_id, safe='')}",
-        json_body=req.model_dump(exclude_unset=True),
-        timeout=15.0,
-    )
-    _record_audit("KNOWLEDGE_BASE_UPDATED", actor["username"], knowledge_base_id, "")
-    return ok(result)
-
-
-@app.delete("/api/v1/knowledge/bases/{knowledge_base_id}")
-async def delete_knowledge_base(
-    knowledge_base_id: str,
-    authorization: str | None = Header(default=None),
-) -> dict[str, Any]:
-    actor = _require_user(authorization, KNOWLEDGE_WRITE_ROLES)
-    await _rag(
-        "DELETE",
-        f"/v1/knowledge-bases/{quote(knowledge_base_id, safe='')}",
-        timeout=15.0,
-    )
-    _record_audit("KNOWLEDGE_BASE_DELETED", actor["username"], knowledge_base_id, "")
-    return ok({"knowledgeBaseId": knowledge_base_id, "deleted": True})
-
-
-@app.get("/api/v1/knowledge/capabilities")
-async def knowledge_capabilities(
-    authorization: str | None = Header(default=None),
-) -> dict[str, Any]:
-    _require_user(authorization, KNOWLEDGE_READ_ROLES)
-    result = await _rag("GET", "/v1/sources/capabilities", timeout=10.0)
-    if isinstance(result, dict):
-        result = dict(result)
-        result["gateway"] = {"max_upload_bytes": RAG_UPLOAD_MAX_BYTES}
-        sources = result.get("sources")
-        if isinstance(sources, list):
-            normalized_sources: list[Any] = []
-            for source in sources:
-                if not isinstance(source, dict):
-                    normalized_sources.append(source)
-                    continue
-                normalized = dict(source)
-                upstream_max = normalized.get("max_bytes")
-                if isinstance(upstream_max, int) and upstream_max > 0:
-                    normalized["max_bytes"] = min(upstream_max, RAG_UPLOAD_MAX_BYTES)
-                else:
-                    normalized["max_bytes"] = RAG_UPLOAD_MAX_BYTES
-                normalized_sources.append(normalized)
-            result["sources"] = normalized_sources
-    return ok(result)
-
-
-@app.get("/api/v1/knowledge/documents")
-async def knowledge_documents(
-    knowledge_base_id: str = Query(min_length=1, max_length=36),
-    offset: int = Query(default=0, ge=0),
-    limit: int = Query(default=20, ge=1, le=100),
-    status: str | None = Query(default=None, max_length=32),
-    query: str | None = Query(default=None, max_length=512),
-    authorization: str | None = Header(default=None),
-) -> dict[str, Any]:
-    """List documents from one explicitly selected knowledge base."""
-    _require_user(authorization, KNOWLEDGE_READ_ROLES)
-    params: dict[str, Any] = {
-        "knowledge_base_id": knowledge_base_id,
-        "offset": offset,
-        "limit": limit,
-    }
-    if status:
-        params["status"] = status
-    if query and query.strip():
-        params["q"] = query.strip()
-    return ok(await _rag("GET", "/v1/documents", params=params, timeout=10.0))
-
-
-@app.get("/api/v1/knowledge/documents/{document_id}")
-async def knowledge_document(
-    document_id: str,
-    knowledge_base_id: str = Query(min_length=1, max_length=36),
-    authorization: str | None = Header(default=None),
-) -> dict[str, Any]:
-    """Read one RAG document after verifying it belongs to the selected knowledge base."""
-    _require_user(authorization, KNOWLEDGE_READ_ROLES)
-    document = await _rag(
-        "GET",
-        f"/v1/documents/{quote(document_id, safe='')}",
-        timeout=10.0,
-    )
-    if not isinstance(document, dict) or document.get("knowledge_base_id") != knowledge_base_id:
-        raise HTTPException(status_code=404, detail="文档不属于当前知识库")
-    return ok(document)
-
-
-@app.get("/api/v1/knowledge/documents/{document_id}/chunks")
-async def knowledge_document_chunks(
-    document_id: str,
-    knowledge_base_id: str = Query(min_length=1, max_length=36),
-    authorization: str | None = Header(default=None),
-) -> dict[str, Any]:
-    """Read chunks only after verifying the document belongs to the selected knowledge base."""
-    await knowledge_document(document_id, knowledge_base_id, authorization)
-    return ok(
-        await _rag(
-            "GET",
-            f"/v1/documents/{quote(document_id, safe='')}/chunks",
-            timeout=15.0,
-        )
-    )
-
-
-@app.patch("/api/v1/knowledge/documents/{document_id}")
-async def update_knowledge_document(
-    document_id: str,
-    req: KnowledgeDocumentUpdateRequest,
-    knowledge_base_id: str = Query(min_length=1, max_length=36),
-    authorization: str | None = Header(default=None),
-) -> dict[str, Any]:
-    actor = _require_user(authorization, KNOWLEDGE_WRITE_ROLES)
-    await knowledge_document(document_id, knowledge_base_id, authorization)
-    if not req.model_fields_set:
-        raise HTTPException(status_code=422, detail="至少提供一个可更新字段")
-    document = await _rag(
-        "PATCH",
-        f"/v1/documents/{quote(document_id, safe='')}",
-        json_body=req.model_dump(exclude_unset=True),
-        timeout=15.0,
-    )
-    if not isinstance(document, dict) or document.get("knowledge_base_id") != knowledge_base_id:
-        raise HTTPException(status_code=404, detail="文档不属于当前知识库")
-    _record_audit("KNOWLEDGE_DOCUMENT_UPDATED", actor["username"], document_id, knowledge_base_id)
-    return ok(document)
-
-
-@app.delete("/api/v1/knowledge/documents/{document_id}")
-async def delete_knowledge_document(
-    document_id: str,
-    knowledge_base_id: str = Query(min_length=1, max_length=36),
-    authorization: str | None = Header(default=None),
-) -> dict[str, Any]:
-    actor = _require_user(authorization, KNOWLEDGE_WRITE_ROLES)
-    await knowledge_document(document_id, knowledge_base_id, authorization)
-    await _rag(
-        "DELETE",
-        f"/v1/documents/{quote(document_id, safe='')}",
-        timeout=20.0,
-    )
-    _record_audit("KNOWLEDGE_DOCUMENT_DELETED", actor["username"], document_id, knowledge_base_id)
-    return ok({"documentId": document_id, "deleted": True})
-
-
-@app.post("/api/v1/knowledge/bases/{knowledge_base_id}/documents")
-async def upload_knowledge_document(
-    knowledge_base_id: str,
-    request: Request,
-    filename: str = Query(min_length=1, max_length=512),
-    authorization: str | None = Header(default=None),
-) -> dict[str, Any]:
-    actor = _require_user(authorization, KNOWLEDGE_WRITE_ROLES)
-    safe_filename = _safe_upload_filename(filename)
-    content_length = request.headers.get("content-length")
-    if content_length:
-        try:
-            if int(content_length) > RAG_UPLOAD_MAX_BYTES:
-                raise HTTPException(status_code=413, detail="上传文件超过 Agent 允许的大小")
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Content-Length 无效")
-    body = await request.body()
-    if not body:
-        raise HTTPException(status_code=422, detail="上传文件不能为空")
-    if len(body) > RAG_UPLOAD_MAX_BYTES:
-        raise HTTPException(status_code=413, detail="上传文件超过 Agent 允许的大小")
-
-    await _rag(
-        "GET",
-        f"/v1/knowledge-bases/{quote(knowledge_base_id, safe='')}",
-        timeout=10.0,
-    )
-    mime_type = (request.headers.get("content-type") or "application/octet-stream").split(";", 1)[0].strip()
-    result = await _rag(
-        "POST",
-        "/v1/ingest/jobs",
-        data={"source_type": "file", "knowledge_base_id": knowledge_base_id},
-        files={"file": (safe_filename, body, mime_type or "application/octet-stream")},
-        timeout=120.0,
-    )
-    job_id = str(result.get("job_id") or "") if isinstance(result, dict) else ""
-    _record_audit("KNOWLEDGE_DOCUMENT_UPLOADED", actor["username"], job_id, f"{knowledge_base_id}:{safe_filename}")
-    return ok(result)
-
-
-@app.get("/api/v1/knowledge/bases/{knowledge_base_id}/ingest/jobs/{job_id}")
-async def get_knowledge_ingest_job(
-    knowledge_base_id: str,
-    job_id: str,
-    authorization: str | None = Header(default=None),
-) -> dict[str, Any]:
-    _require_user(authorization, KNOWLEDGE_READ_ROLES)
-    job = await _rag(
-        "GET",
-        f"/v1/ingest/jobs/{quote(job_id, safe='')}",
-        timeout=10.0,
-    )
-    if not isinstance(job, dict) or job.get("knowledge_base_id") != knowledge_base_id:
-        raise HTTPException(status_code=404, detail="入库任务不属于当前知识库")
-    return ok(job)
-
-
-@app.post("/api/v1/knowledge/bases/{knowledge_base_id}/ingest/jobs/{job_id}/resolve")
-async def resolve_knowledge_ingest_conflict(
-    knowledge_base_id: str,
-    job_id: str,
-    req: IngestConflictResolveRequest,
-    authorization: str | None = Header(default=None),
-) -> dict[str, Any]:
-    actor = _require_user(authorization, KNOWLEDGE_WRITE_ROLES)
-    await get_knowledge_ingest_job(knowledge_base_id, job_id, authorization)
-    job = await _rag(
-        "POST",
-        f"/v1/ingest/jobs/{quote(job_id, safe='')}/resolve",
-        json_body=req.model_dump(),
-        timeout=60.0,
-    )
-    if not isinstance(job, dict) or job.get("knowledge_base_id") != knowledge_base_id:
-        raise HTTPException(status_code=404, detail="入库任务不属于当前知识库")
-    _record_audit("KNOWLEDGE_INGEST_CONFLICT_RESOLVED", actor["username"], job_id, req.keep_document_id)
-    return ok(job)
-
-
-@app.post("/api/v1/knowledge/search")
-async def knowledge_search(
-    req: RagSearchRequest,
-    authorization: str | None = Header(default=None),
-) -> dict[str, Any]:
-    """Run a bounded read-only RAG search for the knowledge-center page."""
-    _require_user(authorization, KNOWLEDGE_READ_ROLES)
-    if not req.enable_vector and not req.enable_keyword:
-        raise HTTPException(status_code=422, detail="至少启用一种检索方式")
-    return ok(
-        await _rag(
-            "POST",
-            "/v1/search",
-            json_body={
-                **req.model_dump(),
-                "enable_abstention": True,
-                "require_exact_entity_match": True,
-            },
-            timeout=30.0,
-        )
-    )
-
-
-@app.post("/api/v1/knowledge/answer")
-async def knowledge_answer(
-    req: RagAnswerRequest,
-    authorization: str | None = Header(default=None),
-) -> dict[str, Any]:
-    """Generate one grounded answer while preserving RAG abstention and citations."""
-    _require_user(authorization, KNOWLEDGE_READ_ROLES)
-    if not req.enable_vector and not req.enable_keyword:
-        raise HTTPException(status_code=422, detail="至少启用一种检索方式")
-    return ok(
-        await _rag(
-            "POST",
-            "/v1/answer",
-            json_body={
-                **req.model_dump(),
-                "enable_abstention": True,
-                "require_exact_entity_match": True,
-            },
-            timeout=90.0,
-        )
-    )
 
 
 @app.exception_handler(HTTPException)
@@ -1362,24 +774,24 @@ def _trace_headers(request: Request) -> dict[str, str]:
 
 @app.post("/api/v1/auth/login", response_model=None)
 def login(req: LoginRequest) -> dict[str, Any] | JSONResponse:
-    row = _get_user_by_username(req.username.strip())
-    if not row or row.get("status") != "ACTIVE" or not _verify_password(row, req.password):
+    row = get_user_by_username(req.username.strip())
+    if not row or row.get("status") != "ACTIVE" or not verify_password(row, req.password):
         _record_audit("LOGIN_FAILED", req.username, "", "登录失败")
         return fail("用户名或密码错误", code="UNAUTHORIZED")
     _execute("UPDATE tg_user SET last_login_at = NOW(), updated_at = NOW() WHERE user_id = %s", (row["user_id"],))
-    row = _get_user_by_username(req.username.strip()) or row
+    row = get_user_by_username(req.username.strip()) or row
     _record_audit("LOGIN_SUCCESS", row["username"], row["user_id"], f"角色: {row.get('role')}")
-    return ok({"token": _token(row), "user": _user_to_api(row), "expiresIn": AUTH_TOKEN_TTL_SECONDS})
+    return ok({"token": issue_token(row), "user": _user_to_api(row), "expiresIn": AUTH_TOKEN_TTL_SECONDS})
 
 
 @app.post("/api/v1/auth/register", response_model=None)
 def register(req: RegisterRequest) -> dict[str, Any] | JSONResponse:
     if len(req.password) < 6:
         return fail("密码长度至少为6位", code="BAD_REQUEST")
-    if _get_user_by_username(req.username.strip()):
+    if get_user_by_username(req.username.strip()):
         return fail("用户名已存在", code="BAD_REQUEST")
     user_id = "user-" + uuid.uuid4().hex[:12]
-    hashed = _hash_password(req.password)
+    hashed = hash_password(req.password)
     _execute(
         """
         INSERT INTO tg_user (user_id, username, display_name, email, role, status, password_hash, created_at, updated_at)
@@ -1387,9 +799,9 @@ def register(req: RegisterRequest) -> dict[str, Any] | JSONResponse:
         """,
         (user_id, req.username.strip(), req.displayName or req.username.strip(), req.email, hashed),
     )
-    row = _get_user_by_id(user_id)
+    row = get_user_by_id(user_id)
     _record_audit("REGISTER", req.username, user_id, "角色: VIEWER")
-    return ok({"token": _token(row or {}), "user": _user_to_api(row or {}), "expiresIn": AUTH_TOKEN_TTL_SECONDS})
+    return ok({"token": issue_token(row or {}), "user": _user_to_api(row or {}), "expiresIn": AUTH_TOKEN_TTL_SECONDS})
 
 
 @app.post("/api/v1/auth/logout")
@@ -1398,46 +810,45 @@ def logout() -> dict[str, Any]:
 
 
 @app.get("/api/v1/auth/me", response_model=None)
-def me(authorization: str | None = Header(default=None)) -> dict[str, Any] | JSONResponse:
-    username = _extract_username(authorization)
-    if not username:
-        return fail("缺少或无效的 Authorization 请求头", code="UNAUTHORIZED")
-    row = _get_user_by_username(username)
-    if not row or row.get("status") != "ACTIVE":
-        return fail("用户不存在或已禁用", code="UNAUTHORIZED")
+def me(
+    user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any] | JSONResponse:
+    row = get_user_by_id(user.user_id)
+    if not row:
+        raise HTTPException(status_code=401, detail="用户不存在或已禁用")
     return ok(_user_to_api(row))
 
 
 @app.put("/api/v1/auth/me", response_model=None)
-async def update_me(request: Request, authorization: str | None = Header(default=None)) -> dict[str, Any] | JSONResponse:
-    username = _extract_username(authorization)
-    if not username:
-        return fail("未登录", code="UNAUTHORIZED")
-    row = _get_user_by_username(username)
+async def update_me(
+    request: Request,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any] | JSONResponse:
+    row = get_user_by_id(user.user_id)
     if not row:
-        return fail("用户不存在", code="UNAUTHORIZED")
+        raise HTTPException(status_code=401, detail="用户不存在或已禁用")
     body = await request.json()
     _execute(
         "UPDATE tg_user SET display_name = COALESCE(%s, display_name), email = COALESCE(%s, email), updated_at = NOW() WHERE user_id = %s",
         (body.get("displayName"), body.get("email"), row["user_id"]),
     )
-    return ok(_user_to_api(_get_user_by_id(row["user_id"]) or row))
+    return ok(_user_to_api(get_user_by_id(row["user_id"]) or row))
 
 
 @app.put("/api/v1/auth/me/password", response_model=None)
-async def change_my_password(request: Request, authorization: str | None = Header(default=None)) -> dict[str, Any] | JSONResponse:
-    username = _extract_username(authorization)
-    if not username:
-        return fail("未登录", code="UNAUTHORIZED")
-    row = _get_user_by_username(username)
+async def change_my_password(
+    request: Request,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any] | JSONResponse:
+    row = get_user_by_id(user.user_id)
     body = await request.json()
     old_password = body.get("oldPassword") or ""
     new_password = body.get("newPassword") or ""
-    if not row or not _verify_password(row, old_password):
+    if not row or not verify_password(row, old_password):
         return fail("当前密码不正确", code="BAD_REQUEST")
     if len(new_password) < 6:
         return fail("新密码长度至少为 6 位", code="BAD_REQUEST")
-    _execute("UPDATE tg_user SET password_hash = %s, updated_at = NOW() WHERE user_id = %s", (_hash_password(new_password), row["user_id"]))
+    _execute("UPDATE tg_user SET password_hash = %s, updated_at = NOW() WHERE user_id = %s", (hash_password(new_password), row["user_id"]))
     return ok({"updated": True, "userId": row["user_id"]})
 
 
@@ -1449,7 +860,7 @@ def list_users() -> dict[str, Any]:
 
 @app.get("/api/v1/admin/users/{user_id}", response_model=None)
 def get_user(user_id: str) -> dict[str, Any] | JSONResponse:
-    row = _get_user_by_id(user_id)
+    row = get_user_by_id(user_id)
     if not row:
         return fail("用户不存在", code="NOT_FOUND")
     return ok(_user_to_api(row))
@@ -1458,13 +869,13 @@ def get_user(user_id: str) -> dict[str, Any] | JSONResponse:
 @app.post("/api/v1/admin/users", response_model=None)
 def create_user(req: UserCreateRequest) -> dict[str, Any] | JSONResponse:
     username = req.username.strip()
-    if _get_user_by_username(username):
+    if get_user_by_username(username):
         return fail("用户名已存在", code="BAD_REQUEST")
     role = (req.role or "VIEWER").upper()
     if role not in ("ADMIN", "OPERATOR", "VIEWER"):
         role = "VIEWER"
     user_id = "user-" + uuid.uuid4().hex[:12]
-    hashed = _hash_password(req.password or f"{username}123")
+    hashed = hash_password(req.password or f"{username}123")
     _execute(
         """
         INSERT INTO tg_user (user_id, username, display_name, email, role, status, password_hash, created_at, updated_at)
@@ -1472,14 +883,14 @@ def create_user(req: UserCreateRequest) -> dict[str, Any] | JSONResponse:
         """,
         (user_id, username, req.displayName or username, req.email, role, hashed),
     )
-    row = _get_user_by_id(user_id)
+    row = get_user_by_id(user_id)
     _record_audit("USER_CREATED", "admin", user_id, f"username={username} role={role}")
     return ok(_user_to_api(row or {}))
 
 
 @app.put("/api/v1/admin/users/{user_id}", response_model=None)
 async def update_user(user_id: str, request: Request) -> dict[str, Any] | JSONResponse:
-    row = _get_user_by_id(user_id)
+    row = get_user_by_id(user_id)
     if not row:
         return fail("用户不存在", code="NOT_FOUND")
     body = await request.json()
@@ -1502,7 +913,7 @@ async def update_user(user_id: str, request: Request) -> dict[str, Any] | JSONRe
         (body.get("displayName"), body.get("email"), role, status, user_id),
     )
     _record_audit("USER_UPDATED", "admin", user_id, "")
-    return ok(_user_to_api(_get_user_by_id(user_id) or row))
+    return ok(_user_to_api(get_user_by_id(user_id) or row))
 
 
 @app.delete("/api/v1/admin/users/{user_id}", response_model=None)
@@ -1516,14 +927,14 @@ def delete_user(user_id: str) -> dict[str, Any] | JSONResponse:
 
 @app.put("/api/v1/admin/users/{user_id}/password", response_model=None)
 async def set_user_password(user_id: str, request: Request) -> dict[str, Any] | JSONResponse:
-    row = _get_user_by_id(user_id)
+    row = get_user_by_id(user_id)
     if not row:
         return fail("用户不存在", code="NOT_FOUND")
     body = await request.json()
     password = body.get("password") or body.get("newPassword") or ""
     if len(password) < 6:
         return fail("密码长度至少为 6 位", code="BAD_REQUEST")
-    _execute("UPDATE tg_user SET password_hash = %s, updated_at = NOW() WHERE user_id = %s", (_hash_password(password), user_id))
+    _execute("UPDATE tg_user SET password_hash = %s, updated_at = NOW() WHERE user_id = %s", (hash_password(password), user_id))
     return ok({"updated": True, "userId": user_id})
 
 
