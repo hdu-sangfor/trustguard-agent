@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
+import hmac
 import json
 import logging
 import os
@@ -14,14 +16,13 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 from urllib.parse import quote, urlparse
 
-import httpx
 import bcrypt
+import httpx
 import pymysql
 from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 from pymysql.cursors import DictCursor
-
 
 log = logging.getLogger("trustguard.gateway")
 
@@ -36,10 +37,15 @@ EXECUTOR_BASE_URL = os.getenv("EXECUTOR_BASE_URL", "http://localhost:18102").rst
 MQ_BROKER_URL = os.getenv("MQ_BROKER_URL", "amqp://guest:guest@localhost:5672/")
 KB_QDRANT_URL = os.getenv("KB_QDRANT_URL", "http://localhost:6333").rstrip("/")
 RAG_SERVICE_BASE_URL = os.getenv("RAG_SERVICE_BASE_URL", "http://localhost:18200").rstrip("/")
+AUTH_TOKEN_SECRET = os.getenv("AUTH_TOKEN_SECRET", "trustguard-agent-dev-secret").encode("utf-8")
+AUTH_TOKEN_TTL_SECONDS = max(300, int(os.getenv("AUTH_TOKEN_TTL_SECONDS", "86400")))
+RAG_UPLOAD_MAX_BYTES = max(1, int(os.getenv("RAG_UPLOAD_MAX_BYTES", "52428800")))
 
 START_TIME = datetime.now(timezone.utc)
 PHASE_ORDER = ["RECON", "THREAT_MODEL", "VULN_SCAN", "EXPLOIT", "REPORT", "DONE"]
 STATUS_VALUES = ["PENDING", "RUNNING", "PAUSED", "DONE", "FAILED", "CANCELLED"]
+KNOWLEDGE_READ_ROLES = frozenset({"ADMIN", "OPERATOR", "VIEWER"})
+KNOWLEDGE_WRITE_ROLES = frozenset({"ADMIN", "OPERATOR"})
 
 app = FastAPI(title="TrustGuard Gateway", version="1.0.0")
 
@@ -200,6 +206,8 @@ async def _rag(
     *,
     json_body: Any = None,
     params: dict[str, Any] | None = None,
+    data: dict[str, str] | None = None,
+    files: dict[str, tuple[str, bytes, str]] | None = None,
     timeout: float = 20.0,
 ) -> Any:
     """Call a fixed TrustGuard RAG path and translate upstream failures at the gateway boundary."""
@@ -214,6 +222,8 @@ async def _rag(
                 f"{RAG_SERVICE_BASE_URL}{path}",
                 json=json_body,
                 params=params,
+                data=data,
+                files=files,
             )
     except httpx.TimeoutException as exc:
         raise HTTPException(status_code=504, detail="RAG 服务请求超时") from exc
@@ -261,15 +271,45 @@ async def _best_effort_restore(row: dict[str, Any]) -> None:
         log.warning("orchestrator restore failed task_id=%s: %s", row.get("task_id"), exc)
 
 
-def _extract_username(auth_header: str | None) -> str | None:
-    if not auth_header or not auth_header.startswith("Bearer "):
+def _b64url_encode(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
+
+
+def _b64url_decode(value: str) -> bytes:
+    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+
+
+def _extract_token_payload(auth_header: str | None) -> dict[str, Any] | None:
+    if not isinstance(auth_header, str) or not auth_header.startswith("Bearer "):
         return None
     token = auth_header[7:].strip()
     try:
-        raw = base64.b64decode(token + "=" * (-len(token) % 4), validate=False).decode("utf-8", errors="ignore")
-    except Exception:
+        encoded_payload, encoded_signature = token.split(".", 1)
+        expected = hmac.new(
+            AUTH_TOKEN_SECRET,
+            encoded_payload.encode("ascii"),
+            hashlib.sha256,
+        ).digest()
+        actual = _b64url_decode(encoded_signature)
+        if not hmac.compare_digest(expected, actual):
+            return None
+        payload = json.loads(_b64url_decode(encoded_payload).decode("utf-8"))
+    except (TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError):
         return None
-    username = raw.split(":", 1)[0].strip()
+    if not isinstance(payload, dict):
+        return None
+    try:
+        expires_at = int(payload.get("exp") or 0)
+    except (TypeError, ValueError):
+        return None
+    if expires_at <= int(datetime.now(timezone.utc).timestamp()):
+        return None
+    return payload
+
+
+def _extract_username(auth_header: str | None) -> str | None:
+    payload = _extract_token_payload(auth_header)
+    username = str(payload.get("sub") or "").strip() if payload else ""
     return username or None
 
 
@@ -312,9 +352,54 @@ def _hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt(rounds=12)).decode("utf-8")
 
 
-def _token(username: str) -> str:
-    raw = f"{username}:{uuid.uuid4().hex}"
-    return base64.b64encode(raw.encode("utf-8")).decode("ascii")
+def _token(user: dict[str, Any]) -> str:
+    now = int(datetime.now(timezone.utc).timestamp())
+    payload = {
+        "sub": str(user.get("username") or ""),
+        "uid": str(user.get("user_id") or ""),
+        "role": str(user.get("role") or "VIEWER").upper(),
+        "iat": now,
+        "exp": now + AUTH_TOKEN_TTL_SECONDS,
+        "jti": uuid.uuid4().hex,
+    }
+    encoded_payload = _b64url_encode(
+        json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    )
+    signature = hmac.new(
+        AUTH_TOKEN_SECRET,
+        encoded_payload.encode("ascii"),
+        hashlib.sha256,
+    ).digest()
+    return f"{encoded_payload}.{_b64url_encode(signature)}"
+
+
+def _require_user(
+    authorization: str | None,
+    allowed_roles: frozenset[str] | None = None,
+) -> dict[str, Any]:
+    username = _extract_username(authorization)
+    if not username:
+        raise HTTPException(status_code=401, detail="缺少、过期或无效的登录凭证")
+    row = _get_user_by_username(username)
+    if not row or row.get("status") != "ACTIVE":
+        raise HTTPException(status_code=401, detail="用户不存在或已禁用")
+    role = str(row.get("role") or "VIEWER").upper()
+    if allowed_roles is not None and role not in allowed_roles:
+        raise HTTPException(status_code=403, detail="当前角色没有执行此操作的权限")
+    return row
+
+
+def _safe_upload_filename(filename: str) -> str:
+    normalized = filename.strip()
+    if (
+        not normalized
+        or normalized in {".", ".."}
+        or "/" in normalized
+        or "\\" in normalized
+        or "\x00" in normalized
+    ):
+        raise HTTPException(status_code=422, detail="文件名无效")
+    return normalized
 
 
 def _record_audit(event_type: str, actor: str, target: str = "", detail: str = "") -> None:
@@ -388,6 +473,35 @@ class RagAnswerRequest(RagSearchRequest):
     """Single-turn grounded answer options exposed by the Agent knowledge-center BFF."""
 
 
+class KnowledgeBaseCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=128)
+    description: str | None = Field(default=None, max_length=1024)
+    embedding_profile: str = Field(default="configured", min_length=1, max_length=64)
+
+
+class KnowledgeBaseUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    description: str | None = Field(default=None, max_length=1024)
+
+
+class KnowledgeDocumentUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = Field(default=None, max_length=512)
+    original_filename: str | None = Field(default=None, max_length=512)
+    metadata: dict[str, Any] | None = None
+
+
+class IngestConflictResolveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    keep_document_id: str = Field(min_length=1, max_length=36)
+
+
 @app.get("/health")
 def health() -> dict[str, Any]:
     db_ok = True
@@ -399,15 +513,99 @@ def health() -> dict[str, Any]:
 
 
 @app.get("/api/v1/knowledge/health")
-async def knowledge_health() -> dict[str, Any]:
+async def knowledge_health(
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
     """Return RAG health through the Agent gateway without exposing its origin to browsers."""
+    _require_user(authorization, KNOWLEDGE_READ_ROLES)
     return ok(await _rag("GET", "/health", timeout=6.0))
 
 
 @app.get("/api/v1/knowledge/bases")
-async def knowledge_bases() -> dict[str, Any]:
+async def knowledge_bases(
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
     """List RAG knowledge bases for the read-only knowledge-center page."""
+    _require_user(authorization, KNOWLEDGE_READ_ROLES)
     return ok(await _rag("GET", "/v1/knowledge-bases", timeout=10.0))
+
+
+@app.post("/api/v1/knowledge/bases")
+async def create_knowledge_base(
+    req: KnowledgeBaseCreateRequest,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    actor = _require_user(authorization, KNOWLEDGE_WRITE_ROLES)
+    result = await _rag(
+        "POST",
+        "/v1/knowledge-bases",
+        json_body=req.model_dump(),
+        timeout=15.0,
+    )
+    knowledge_base_id = str(result.get("id") or "") if isinstance(result, dict) else ""
+    _record_audit("KNOWLEDGE_BASE_CREATED", actor["username"], knowledge_base_id, req.name)
+    return ok(result)
+
+
+@app.patch("/api/v1/knowledge/bases/{knowledge_base_id}")
+async def update_knowledge_base(
+    knowledge_base_id: str,
+    req: KnowledgeBaseUpdateRequest,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    actor = _require_user(authorization, KNOWLEDGE_WRITE_ROLES)
+    if not req.model_fields_set:
+        raise HTTPException(status_code=422, detail="至少提供一个可更新字段")
+    result = await _rag(
+        "PATCH",
+        f"/v1/knowledge-bases/{quote(knowledge_base_id, safe='')}",
+        json_body=req.model_dump(exclude_unset=True),
+        timeout=15.0,
+    )
+    _record_audit("KNOWLEDGE_BASE_UPDATED", actor["username"], knowledge_base_id, "")
+    return ok(result)
+
+
+@app.delete("/api/v1/knowledge/bases/{knowledge_base_id}")
+async def delete_knowledge_base(
+    knowledge_base_id: str,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    actor = _require_user(authorization, KNOWLEDGE_WRITE_ROLES)
+    await _rag(
+        "DELETE",
+        f"/v1/knowledge-bases/{quote(knowledge_base_id, safe='')}",
+        timeout=15.0,
+    )
+    _record_audit("KNOWLEDGE_BASE_DELETED", actor["username"], knowledge_base_id, "")
+    return ok({"knowledgeBaseId": knowledge_base_id, "deleted": True})
+
+
+@app.get("/api/v1/knowledge/capabilities")
+async def knowledge_capabilities(
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    _require_user(authorization, KNOWLEDGE_READ_ROLES)
+    result = await _rag("GET", "/v1/sources/capabilities", timeout=10.0)
+    if isinstance(result, dict):
+        result = dict(result)
+        result["gateway"] = {"max_upload_bytes": RAG_UPLOAD_MAX_BYTES}
+        sources = result.get("sources")
+        if isinstance(sources, list):
+            normalized_sources: list[Any] = []
+            for source in sources:
+                if not isinstance(source, dict):
+                    normalized_sources.append(source)
+                    continue
+                normalized = dict(source)
+                upstream_max = normalized.get("max_bytes")
+                if isinstance(upstream_max, int) and upstream_max > 0:
+                    normalized["max_bytes"] = min(upstream_max, RAG_UPLOAD_MAX_BYTES)
+                else:
+                    normalized["max_bytes"] = RAG_UPLOAD_MAX_BYTES
+                normalized_sources.append(normalized)
+            result["sources"] = normalized_sources
+    return ok(result)
 
 
 @app.get("/api/v1/knowledge/documents")
@@ -417,8 +615,10 @@ async def knowledge_documents(
     limit: int = Query(default=20, ge=1, le=100),
     status: str | None = Query(default=None, max_length=32),
     query: str | None = Query(default=None, max_length=512),
+    authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
     """List documents from one explicitly selected knowledge base."""
+    _require_user(authorization, KNOWLEDGE_READ_ROLES)
     params: dict[str, Any] = {
         "knowledge_base_id": knowledge_base_id,
         "offset": offset,
@@ -435,8 +635,10 @@ async def knowledge_documents(
 async def knowledge_document(
     document_id: str,
     knowledge_base_id: str = Query(min_length=1, max_length=36),
+    authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
     """Read one RAG document after verifying it belongs to the selected knowledge base."""
+    _require_user(authorization, KNOWLEDGE_READ_ROLES)
     document = await _rag(
         "GET",
         f"/v1/documents/{quote(document_id, safe='')}",
@@ -451,9 +653,10 @@ async def knowledge_document(
 async def knowledge_document_chunks(
     document_id: str,
     knowledge_base_id: str = Query(min_length=1, max_length=36),
+    authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
     """Read chunks only after verifying the document belongs to the selected knowledge base."""
-    await knowledge_document(document_id, knowledge_base_id)
+    await knowledge_document(document_id, knowledge_base_id, authorization)
     return ok(
         await _rag(
             "GET",
@@ -463,9 +666,131 @@ async def knowledge_document_chunks(
     )
 
 
+@app.patch("/api/v1/knowledge/documents/{document_id}")
+async def update_knowledge_document(
+    document_id: str,
+    req: KnowledgeDocumentUpdateRequest,
+    knowledge_base_id: str = Query(min_length=1, max_length=36),
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    actor = _require_user(authorization, KNOWLEDGE_WRITE_ROLES)
+    await knowledge_document(document_id, knowledge_base_id, authorization)
+    if not req.model_fields_set:
+        raise HTTPException(status_code=422, detail="至少提供一个可更新字段")
+    document = await _rag(
+        "PATCH",
+        f"/v1/documents/{quote(document_id, safe='')}",
+        json_body=req.model_dump(exclude_unset=True),
+        timeout=15.0,
+    )
+    if not isinstance(document, dict) or document.get("knowledge_base_id") != knowledge_base_id:
+        raise HTTPException(status_code=404, detail="文档不属于当前知识库")
+    _record_audit("KNOWLEDGE_DOCUMENT_UPDATED", actor["username"], document_id, knowledge_base_id)
+    return ok(document)
+
+
+@app.delete("/api/v1/knowledge/documents/{document_id}")
+async def delete_knowledge_document(
+    document_id: str,
+    knowledge_base_id: str = Query(min_length=1, max_length=36),
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    actor = _require_user(authorization, KNOWLEDGE_WRITE_ROLES)
+    await knowledge_document(document_id, knowledge_base_id, authorization)
+    await _rag(
+        "DELETE",
+        f"/v1/documents/{quote(document_id, safe='')}",
+        timeout=20.0,
+    )
+    _record_audit("KNOWLEDGE_DOCUMENT_DELETED", actor["username"], document_id, knowledge_base_id)
+    return ok({"documentId": document_id, "deleted": True})
+
+
+@app.post("/api/v1/knowledge/bases/{knowledge_base_id}/documents")
+async def upload_knowledge_document(
+    knowledge_base_id: str,
+    request: Request,
+    filename: str = Query(min_length=1, max_length=512),
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    actor = _require_user(authorization, KNOWLEDGE_WRITE_ROLES)
+    safe_filename = _safe_upload_filename(filename)
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > RAG_UPLOAD_MAX_BYTES:
+                raise HTTPException(status_code=413, detail="上传文件超过 Agent 允许的大小")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Content-Length 无效")
+    body = await request.body()
+    if not body:
+        raise HTTPException(status_code=422, detail="上传文件不能为空")
+    if len(body) > RAG_UPLOAD_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="上传文件超过 Agent 允许的大小")
+
+    await _rag(
+        "GET",
+        f"/v1/knowledge-bases/{quote(knowledge_base_id, safe='')}",
+        timeout=10.0,
+    )
+    mime_type = (request.headers.get("content-type") or "application/octet-stream").split(";", 1)[0].strip()
+    result = await _rag(
+        "POST",
+        "/v1/ingest/jobs",
+        data={"source_type": "file", "knowledge_base_id": knowledge_base_id},
+        files={"file": (safe_filename, body, mime_type or "application/octet-stream")},
+        timeout=120.0,
+    )
+    job_id = str(result.get("job_id") or "") if isinstance(result, dict) else ""
+    _record_audit("KNOWLEDGE_DOCUMENT_UPLOADED", actor["username"], job_id, f"{knowledge_base_id}:{safe_filename}")
+    return ok(result)
+
+
+@app.get("/api/v1/knowledge/bases/{knowledge_base_id}/ingest/jobs/{job_id}")
+async def get_knowledge_ingest_job(
+    knowledge_base_id: str,
+    job_id: str,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    _require_user(authorization, KNOWLEDGE_READ_ROLES)
+    job = await _rag(
+        "GET",
+        f"/v1/ingest/jobs/{quote(job_id, safe='')}",
+        timeout=10.0,
+    )
+    if not isinstance(job, dict) or job.get("knowledge_base_id") != knowledge_base_id:
+        raise HTTPException(status_code=404, detail="入库任务不属于当前知识库")
+    return ok(job)
+
+
+@app.post("/api/v1/knowledge/bases/{knowledge_base_id}/ingest/jobs/{job_id}/resolve")
+async def resolve_knowledge_ingest_conflict(
+    knowledge_base_id: str,
+    job_id: str,
+    req: IngestConflictResolveRequest,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    actor = _require_user(authorization, KNOWLEDGE_WRITE_ROLES)
+    await get_knowledge_ingest_job(knowledge_base_id, job_id, authorization)
+    job = await _rag(
+        "POST",
+        f"/v1/ingest/jobs/{quote(job_id, safe='')}/resolve",
+        json_body=req.model_dump(),
+        timeout=60.0,
+    )
+    if not isinstance(job, dict) or job.get("knowledge_base_id") != knowledge_base_id:
+        raise HTTPException(status_code=404, detail="入库任务不属于当前知识库")
+    _record_audit("KNOWLEDGE_INGEST_CONFLICT_RESOLVED", actor["username"], job_id, req.keep_document_id)
+    return ok(job)
+
+
 @app.post("/api/v1/knowledge/search")
-async def knowledge_search(req: RagSearchRequest) -> dict[str, Any]:
+async def knowledge_search(
+    req: RagSearchRequest,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
     """Run a bounded read-only RAG search for the knowledge-center page."""
+    _require_user(authorization, KNOWLEDGE_READ_ROLES)
     if not req.enable_vector and not req.enable_keyword:
         raise HTTPException(status_code=422, detail="至少启用一种检索方式")
     return ok(
@@ -483,8 +808,12 @@ async def knowledge_search(req: RagSearchRequest) -> dict[str, Any]:
 
 
 @app.post("/api/v1/knowledge/answer")
-async def knowledge_answer(req: RagAnswerRequest) -> dict[str, Any]:
+async def knowledge_answer(
+    req: RagAnswerRequest,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
     """Generate one grounded answer while preserving RAG abstention and citations."""
+    _require_user(authorization, KNOWLEDGE_READ_ROLES)
     if not req.enable_vector and not req.enable_keyword:
         raise HTTPException(status_code=422, detail="至少启用一种检索方式")
     return ok(
@@ -1040,7 +1369,7 @@ def login(req: LoginRequest) -> dict[str, Any] | JSONResponse:
     _execute("UPDATE tg_user SET last_login_at = NOW(), updated_at = NOW() WHERE user_id = %s", (row["user_id"],))
     row = _get_user_by_username(req.username.strip()) or row
     _record_audit("LOGIN_SUCCESS", row["username"], row["user_id"], f"角色: {row.get('role')}")
-    return ok({"token": _token(row["username"]), "user": _user_to_api(row), "expiresIn": 86400})
+    return ok({"token": _token(row), "user": _user_to_api(row), "expiresIn": AUTH_TOKEN_TTL_SECONDS})
 
 
 @app.post("/api/v1/auth/register", response_model=None)
@@ -1060,7 +1389,7 @@ def register(req: RegisterRequest) -> dict[str, Any] | JSONResponse:
     )
     row = _get_user_by_id(user_id)
     _record_audit("REGISTER", req.username, user_id, "角色: VIEWER")
-    return ok({"token": _token(req.username.strip()), "user": _user_to_api(row or {}), "expiresIn": 86400})
+    return ok({"token": _token(row or {}), "user": _user_to_api(row or {}), "expiresIn": AUTH_TOKEN_TTL_SECONDS})
 
 
 @app.post("/api/v1/auth/logout")

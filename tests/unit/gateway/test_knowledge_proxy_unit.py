@@ -18,8 +18,22 @@ def _load_gateway_main():
             sys.path.remove(gateway_root)
 
 
+def _allow_authenticated_user(monkeypatch, gateway, role: str = "ADMIN"):
+    monkeypatch.setattr(
+        gateway,
+        "_require_user",
+        lambda _authorization, _allowed_roles=None: {
+            "username": "tester",
+            "user_id": "user-test",
+            "role": role,
+            "status": "ACTIVE",
+        },
+    )
+
+
 def test_knowledge_search_forwards_bounded_read_only_payload(monkeypatch):
     gateway = _load_gateway_main()
+    _allow_authenticated_user(monkeypatch, gateway)
     captured = []
 
     async def fake_rag(method, path, **kwargs):
@@ -34,7 +48,7 @@ def test_knowledge_search_forwards_bounded_read_only_payload(monkeypatch):
         retrieval_mode="focused",
     )
 
-    response = asyncio.run(gateway.knowledge_search(request))
+    response = asyncio.run(gateway.knowledge_search(request, authorization="Bearer test"))
 
     assert response["code"] == "0"
     method, path, kwargs = captured[0]
@@ -47,6 +61,7 @@ def test_knowledge_search_forwards_bounded_read_only_payload(monkeypatch):
 
 def test_knowledge_documents_keeps_selected_knowledge_base_scope(monkeypatch):
     gateway = _load_gateway_main()
+    _allow_authenticated_user(monkeypatch, gateway)
     captured = []
 
     async def fake_rag(method, path, **kwargs):
@@ -62,6 +77,7 @@ def test_knowledge_documents_keeps_selected_knowledge_base_scope(monkeypatch):
             limit=20,
             status="ready",
             query="shiro",
+            authorization="Bearer test",
         )
     )
 
@@ -79,6 +95,7 @@ def test_knowledge_documents_keeps_selected_knowledge_base_scope(monkeypatch):
 
 def test_knowledge_document_rejects_cross_base_result(monkeypatch):
     gateway = _load_gateway_main()
+    _allow_authenticated_user(monkeypatch, gateway)
 
     async def fake_rag(_method, _path, **_kwargs):
         return {"id": "doc-1", "knowledge_base_id": "kb-other"}
@@ -90,6 +107,7 @@ def test_knowledge_document_rejects_cross_base_result(monkeypatch):
             gateway.knowledge_document(
                 document_id="doc-1",
                 knowledge_base_id="kb-security",
+                authorization="Bearer test",
             )
         )
     except gateway.HTTPException as exc:
@@ -100,6 +118,7 @@ def test_knowledge_document_rejects_cross_base_result(monkeypatch):
 
 def test_knowledge_answer_forwards_grounded_generation_options(monkeypatch):
     gateway = _load_gateway_main()
+    _allow_authenticated_user(monkeypatch, gateway)
     captured = []
 
     async def fake_rag(method, path, **kwargs):
@@ -119,7 +138,7 @@ def test_knowledge_answer_forwards_grounded_generation_options(monkeypatch):
         enable_query_rewrite=True,
     )
 
-    response = asyncio.run(gateway.knowledge_answer(request))
+    response = asyncio.run(gateway.knowledge_answer(request, authorization="Bearer test"))
 
     assert response["code"] == "0"
     method, path, kwargs = captured[0]
@@ -128,3 +147,114 @@ def test_knowledge_answer_forwards_grounded_generation_options(monkeypatch):
     assert kwargs["json_body"]["enable_query_rewrite"] is True
     assert kwargs["json_body"]["enable_abstention"] is True
     assert kwargs["json_body"]["require_exact_entity_match"] is True
+
+
+def test_knowledge_base_create_forwards_management_payload(monkeypatch):
+    gateway = _load_gateway_main()
+    _allow_authenticated_user(monkeypatch, gateway)
+    captured = []
+
+    async def fake_rag(method, path, **kwargs):
+        captured.append((method, path, kwargs))
+        return {
+            "id": "kb-new",
+            "name": "安全知识",
+            "embedding_profile": "configured",
+        }
+
+    monkeypatch.setattr(gateway, "_rag", fake_rag)
+    monkeypatch.setattr(gateway, "_record_audit", lambda *_args, **_kwargs: None)
+
+    response = asyncio.run(
+        gateway.create_knowledge_base(
+            gateway.KnowledgeBaseCreateRequest(
+                name="安全知识",
+                description="单租户共享知识库",
+            ),
+            authorization="Bearer test",
+        )
+    )
+
+    assert response["data"]["id"] == "kb-new"
+    method, path, kwargs = captured[0]
+    assert (method, path) == ("POST", "/v1/knowledge-bases")
+    assert kwargs["json_body"] == {
+        "name": "安全知识",
+        "description": "单租户共享知识库",
+        "embedding_profile": "configured",
+    }
+
+
+def test_upload_document_wraps_raw_file_as_rag_multipart(monkeypatch):
+    gateway = _load_gateway_main()
+    _allow_authenticated_user(monkeypatch, gateway)
+    captured = []
+
+    class FakeRequest:
+        def __init__(self):
+            self.headers = {
+                "content-length": "11",
+                "content-type": "text/plain",
+            }
+
+        async def body(self):
+            return b"hello world"
+
+    async def fake_rag(method, path, **kwargs):
+        captured.append((method, path, kwargs))
+        if method == "GET":
+            return {"id": "kb-security"}
+        return {
+            "job_id": "job-1",
+            "status": "queued",
+            "knowledge_base_id": "kb-security",
+        }
+
+    monkeypatch.setattr(gateway, "_rag", fake_rag)
+    monkeypatch.setattr(gateway, "_record_audit", lambda *_args, **_kwargs: None)
+
+    response = asyncio.run(
+        gateway.upload_knowledge_document(
+            "kb-security",
+            FakeRequest(),
+            filename="notes.txt",
+            authorization="Bearer test",
+        )
+    )
+
+    assert response["data"]["job_id"] == "job-1"
+    method, path, kwargs = captured[1]
+    assert (method, path) == ("POST", "/v1/ingest/jobs")
+    assert kwargs["data"]["knowledge_base_id"] == "kb-security"
+    assert kwargs["files"]["file"] == ("notes.txt", b"hello world", "text/plain")
+
+
+def test_signed_auth_token_rejects_tampering_and_enforces_role(monkeypatch):
+    gateway = _load_gateway_main()
+    viewer = {
+        "username": "viewer",
+        "user_id": "user-viewer",
+        "role": "VIEWER",
+        "status": "ACTIVE",
+    }
+    monkeypatch.setattr(gateway, "_get_user_by_username", lambda username: viewer if username == "viewer" else None)
+
+    token = gateway._token(viewer)
+    assert gateway._require_user(
+        f"Bearer {token}",
+        gateway.KNOWLEDGE_READ_ROLES,
+    )["username"] == "viewer"
+
+    try:
+        gateway._require_user(f"Bearer {token}x", gateway.KNOWLEDGE_READ_ROLES)
+    except gateway.HTTPException as exc:
+        assert exc.status_code == 401
+    else:
+        raise AssertionError("tampered token must be rejected")
+
+    try:
+        gateway._require_user(f"Bearer {token}", gateway.KNOWLEDGE_WRITE_ROLES)
+    except gateway.HTTPException as exc:
+        assert exc.status_code == 403
+    else:
+        raise AssertionError("viewer must not receive knowledge management permission")

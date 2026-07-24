@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Activity,
@@ -6,10 +6,15 @@ import {
   ChevronDown,
   ChevronRight,
   Database,
+  Edit3,
   FileText,
   MessageSquareText,
+  Plus,
   RefreshCw,
   Search,
+  ShieldCheck,
+  Trash2,
+  UploadCloud,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -17,15 +22,26 @@ import Header from "@/shared/components/Header";
 import KnowledgeAnswerPanel from "@/features/knowledge/KnowledgeAnswerPanel";
 import { useAppSession } from "@/shared/context/AppSessionContext";
 import {
+  createKnowledgeBase,
+  deleteKnowledgeBase,
+  deleteKnowledgeDocument,
   getKnowledgeDocument,
   getKnowledgeDocumentChunks,
+  getKnowledgeCapabilities,
+  getKnowledgeIngestJob,
   getRagHealth,
   listKnowledgeBases,
   listKnowledgeDocuments,
+  resolveKnowledgeIngestConflict,
   searchKnowledge,
+  updateKnowledgeBase,
+  updateKnowledgeDocument,
+  uploadKnowledgeDocument,
   type ApiKnowledgeBase,
   type ApiKnowledgeChunk,
   type ApiKnowledgeDocument,
+  type ApiKnowledgeIngestJob,
+  type ApiKnowledgeSourceCapabilities,
   type ApiKnowledgeSearchResponse,
   type ApiRagHealth,
 } from "@/shared/lib/api";
@@ -33,6 +49,19 @@ import "./KnowledgePage.css";
 
 type ViewName = "answer" | "search" | "documents";
 type RetrievalMode = "auto" | "focused" | "comprehensive" | "enumeration";
+type TrackedIngestJob = ApiKnowledgeIngestJob & {
+  filename: string;
+  knowledgeBaseId: string;
+};
+
+const TERMINAL_INGEST_STATUSES = new Set([
+  "succeeded",
+  "deduplicated",
+  "failed",
+  "conflict",
+  "cancelled",
+  "discarded",
+]);
 
 const panelStyle = {
   background: "var(--tg-panel-bg)",
@@ -71,9 +100,33 @@ function formatScore(value?: number | null): string {
 function statusColor(status?: string): string {
   const normalized = (status ?? "").toLowerCase();
   if (["ok", "up", "ready", "alive"].includes(normalized)) return "var(--tg-success)";
-  if (["degraded", "processing", "pending"].includes(normalized)) return "var(--tg-warning)";
+  if (["degraded", "processing", "pending", "queued", "running", "resolving", "ingest_retrying", "resolve_retrying"].includes(normalized)) return "var(--tg-warning)";
   if (["failed", "down", "error"].includes(normalized)) return "var(--tg-danger)";
   return "var(--tg-text-muted)";
+}
+
+function currentRole(): string {
+  try {
+    const raw = localStorage.getItem("sentinel_session_v1");
+    if (!raw) return "VIEWER";
+    const session = JSON.parse(raw) as { role?: string };
+    return (session.role || "VIEWER").toUpperCase();
+  } catch {
+    return "VIEWER";
+  }
+}
+
+function toTrackedJob(
+  job: ApiKnowledgeIngestJob,
+  filename: string,
+  knowledgeBaseId: string,
+): TrackedIngestJob {
+  return {
+    ...job,
+    conflict_candidates: job.conflict_candidates ?? [],
+    filename,
+    knowledgeBaseId,
+  };
 }
 
 function MetricCard({
@@ -104,9 +157,12 @@ function MetricCard({
 export default function KnowledgePage() {
   const navigate = useNavigate();
   const { loggedIn } = useAppSession();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const canManage = useMemo(() => ["ADMIN", "OPERATOR"].includes(currentRole()), []);
 
   const [view, setView] = useState<ViewName>("answer");
   const [health, setHealth] = useState<ApiRagHealth | null>(null);
+  const [capabilities, setCapabilities] = useState<ApiKnowledgeSourceCapabilities | null>(null);
   const [bases, setBases] = useState<ApiKnowledgeBase[]>([]);
   const [selectedBaseId, setSelectedBaseId] = useState("");
   const [bootstrapLoading, setBootstrapLoading] = useState(true);
@@ -130,6 +186,13 @@ export default function KnowledgePage() {
   const [documentDetails, setDocumentDetails] = useState<Record<string, ApiKnowledgeDocument>>({});
   const [documentChunks, setDocumentChunks] = useState<Record<string, ApiKnowledgeChunk[]>>({});
   const [documentDetailLoading, setDocumentDetailLoading] = useState<string | null>(null);
+  const [baseEditorOpen, setBaseEditorOpen] = useState(false);
+  const [editingBaseId, setEditingBaseId] = useState<string | null>(null);
+  const [baseName, setBaseName] = useState("");
+  const [baseDescription, setBaseDescription] = useState("");
+  const [savingBase, setSavingBase] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadJobs, setUploadJobs] = useState<TrackedIngestJob[]>([]);
 
   const selectedBase = useMemo(
     () => bases.find((item) => item.id === selectedBaseId) ?? null,
@@ -139,13 +202,16 @@ export default function KnowledgePage() {
   const loadBootstrap = useCallback(async () => {
     setBootstrapLoading(true);
     setBootstrapError(null);
-    const [healthResult, basesResult] = await Promise.allSettled([
+    const [healthResult, basesResult, capabilitiesResult] = await Promise.allSettled([
       getRagHealth(),
       listKnowledgeBases(),
+      getKnowledgeCapabilities(),
     ]);
 
     if (healthResult.status === "fulfilled") setHealth(healthResult.value);
     else setHealth(null);
+    if (capabilitiesResult.status === "fulfilled") setCapabilities(capabilitiesResult.value);
+    else setCapabilities(null);
 
     if (basesResult.status === "fulfilled") {
       const nextBases = basesResult.value.items ?? [];
@@ -256,6 +322,175 @@ export default function KnowledgePage() {
     }
   };
 
+  const openCreateBase = () => {
+    setEditingBaseId(null);
+    setBaseName("");
+    setBaseDescription("");
+    setBaseEditorOpen(true);
+  };
+
+  const openEditBase = () => {
+    if (!selectedBase) return;
+    setEditingBaseId(selectedBase.id);
+    setBaseName(selectedBase.name);
+    setBaseDescription(selectedBase.description ?? "");
+    setBaseEditorOpen(true);
+  };
+
+  const saveKnowledgeBase = async () => {
+    const name = baseName.trim();
+    if (!name) {
+      toast.error("请输入知识库名称");
+      return;
+    }
+    setSavingBase(true);
+    try {
+      const saved = editingBaseId
+        ? await updateKnowledgeBase(editingBaseId, {
+            name,
+            description: baseDescription.trim() || null,
+          })
+        : await createKnowledgeBase({
+            name,
+            description: baseDescription.trim() || undefined,
+          });
+      setBaseEditorOpen(false);
+      await loadBootstrap();
+      setSelectedBaseId(saved.id);
+      toast.success(editingBaseId ? "知识库已更新" : "知识库已创建");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "知识库保存失败");
+    } finally {
+      setSavingBase(false);
+    }
+  };
+
+  const removeSelectedBase = async () => {
+    if (!selectedBase || selectedBase.is_default || selectedBase.is_system) return;
+    if (!window.confirm(`确认删除知识库“${selectedBase.name}”？仅空知识库允许删除。`)) return;
+    try {
+      await deleteKnowledgeBase(selectedBase.id);
+      setSelectedBaseId("");
+      await loadBootstrap();
+      toast.success("知识库已删除");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "知识库删除失败");
+    }
+  };
+
+  const refreshAfterIngest = useCallback(async () => {
+    await Promise.all([loadDocuments(), loadBootstrap()]);
+  }, [loadBootstrap, loadDocuments]);
+
+  const watchIngestJob = useCallback(async (
+    knowledgeBaseId: string,
+    jobId: string,
+    filename: string,
+  ) => {
+    for (let attempt = 0; attempt < 90; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, attempt === 0 ? 300 : 2000));
+      try {
+        const job = await getKnowledgeIngestJob(knowledgeBaseId, jobId);
+        const tracked = toTrackedJob(job, filename, knowledgeBaseId);
+        setUploadJobs((current) => current.map((item) => item.id === jobId ? tracked : item));
+        if (TERMINAL_INGEST_STATUSES.has(job.status)) {
+          if (job.status === "succeeded") toast.success(`${filename} 已完成入库`);
+          else if (job.status === "deduplicated") toast.info(`${filename} 与已有文档重复，已复用现有文档`);
+          else if (job.status === "conflict") toast.warning(`${filename} 与已有同名文档冲突，请选择保留版本`);
+          else toast.error(job.error_message || `${filename} 入库失败`);
+          if (job.status === "succeeded" || job.status === "deduplicated") {
+            await refreshAfterIngest();
+          }
+          return;
+        }
+      } catch (error) {
+        if (attempt >= 2) {
+          toast.error(error instanceof Error ? error.message : "入库任务状态查询失败");
+          return;
+        }
+      }
+    }
+    toast.warning(`${filename} 仍在处理，可稍后刷新文档列表`);
+  }, [refreshAfterIngest]);
+
+  const uploadFiles = async (files: FileList | null) => {
+    if (!files?.length || !selectedBaseId) return;
+    const source = capabilities?.sources?.find((item) => item.source_type === "file");
+    const maxBytes = source?.max_bytes;
+    setUploading(true);
+    try {
+      for (const file of Array.from(files)) {
+        if (maxBytes && file.size > maxBytes) {
+          toast.error(`${file.name} 超过 ${(maxBytes / 1024 / 1024).toFixed(0)} MiB 限制`);
+          continue;
+        }
+        const created = await uploadKnowledgeDocument(selectedBaseId, file);
+        const initial: TrackedIngestJob = {
+          id: created.job_id,
+          source_type: "file",
+          status: created.status,
+          conflict_candidates: [],
+          attempt: 0,
+          max_attempts: 3,
+          knowledge_base_id: created.knowledge_base_id,
+          filename: file.name,
+          knowledgeBaseId: selectedBaseId,
+        };
+        setUploadJobs((current) => [initial, ...current.filter((item) => item.id !== initial.id)].slice(0, 12));
+        toast.success(`${file.name} 已提交入库`);
+        void watchIngestJob(selectedBaseId, created.job_id, file.name);
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "文档上传失败");
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const resolveConflict = async (job: TrackedIngestJob, keepDocumentId: string) => {
+    try {
+      const resolved = await resolveKnowledgeIngestConflict(job.knowledgeBaseId, job.id, keepDocumentId);
+      const tracked = toTrackedJob(resolved, job.filename, job.knowledgeBaseId);
+      setUploadJobs((current) => current.map((item) => item.id === job.id ? tracked : item));
+      if (TERMINAL_INGEST_STATUSES.has(resolved.status) && resolved.status !== "conflict") {
+        toast.success("文档冲突已解决");
+        await refreshAfterIngest();
+      } else {
+        void watchIngestJob(job.knowledgeBaseId, job.id, job.filename);
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "冲突解决失败");
+    }
+  };
+
+  const renameDocument = async (document: ApiKnowledgeDocument) => {
+    const currentTitle = document.title || document.original_filename || "";
+    const nextTitle = window.prompt("请输入新的文档标题", currentTitle)?.trim();
+    if (!nextTitle || nextTitle === currentTitle) return;
+    try {
+      const updated = await updateKnowledgeDocument(document.id, selectedBaseId, { title: nextTitle });
+      setDocuments((current) => current.map((item) => item.id === document.id ? updated : item));
+      setDocumentDetails((current) => ({ ...current, [document.id]: updated }));
+      toast.success("文档标题已更新");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "文档更新失败");
+    }
+  };
+
+  const removeDocument = async (document: ApiKnowledgeDocument) => {
+    const title = document.title || document.original_filename || "未命名文档";
+    if (!window.confirm(`确认删除文档“${title}”？索引清理将异步执行。`)) return;
+    try {
+      await deleteKnowledgeDocument(document.id, selectedBaseId);
+      setExpandedDocumentId(null);
+      await refreshAfterIngest();
+      toast.success("文档已进入删除流程");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "文档删除失败");
+    }
+  };
+
   return (
     <div style={{ minHeight: "100vh", background: "var(--tg-page-gradient)", paddingTop: 82, paddingBottom: 60 }}>
       <Header />
@@ -269,7 +504,7 @@ export default function KnowledgePage() {
               知识中心
             </h1>
             <p style={{ margin: 0, color: "var(--tg-text-muted)", fontSize: 13 }}>
-              通过 Agent Gateway 使用 TrustGuard RAG 的知识问答、检索结果与文档分块能力。
+              单租户共享知识中心：通过 Agent Gateway 完成知识问答、检索、知识库与文档管理。
             </p>
           </div>
           <button
@@ -323,7 +558,7 @@ export default function KnowledgePage() {
           {([
             ["answer", "知识问答", MessageSquareText],
             ["search", "知识检索", Search],
-            ["documents", "文档浏览", FileText],
+            ["documents", canManage ? "知识管理" : "文档浏览", FileText],
           ] as const).map(([name, label, Icon]) => (
             <button
               key={name}
@@ -520,12 +755,21 @@ export default function KnowledgePage() {
           </section>
         ) : (
           <section style={{ marginTop: 18 }}>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              hidden
+              accept={capabilities?.sources?.find((item) => item.source_type === "file")?.mime_types?.join(",")}
+              onChange={(event) => void uploadFiles(event.target.files)}
+            />
             <div style={{ ...panelStyle, padding: 14, display: "flex", gap: 10, flexWrap: "wrap" }}>
               <select
                 value={selectedBaseId}
                 onChange={(event) => setSelectedBaseId(event.target.value)}
                 style={{ ...inputStyle, width: "min(360px, 100%)", padding: "8px 11px" }}
               >
+                {bases.length === 0 && <option value="">没有可用知识库</option>}
                 {bases.map((base) => (
                   <option key={base.id} value={base.id}>{base.name}</option>
                 ))}
@@ -545,7 +789,192 @@ export default function KnowledgePage() {
               >
                 {documentsLoading ? "加载中…" : "刷新文档"}
               </button>
+              {canManage && (
+                <>
+                  <button
+                    type="button"
+                    onClick={openCreateBase}
+                    style={{ ...inputStyle, width: "auto", padding: "8px 13px", color: "var(--tg-success)", cursor: "pointer", display: "flex", gap: 6, alignItems: "center" }}
+                  >
+                    <Plus size={14} />
+                    新建知识库
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={!selectedBaseId || uploading}
+                    style={{
+                      ...inputStyle,
+                      width: "auto",
+                      padding: "8px 13px",
+                      color: "var(--tg-accent)",
+                      cursor: !selectedBaseId || uploading ? "not-allowed" : "pointer",
+                      display: "flex",
+                      gap: 6,
+                      alignItems: "center",
+                      opacity: !selectedBaseId ? 0.55 : 1,
+                    }}
+                  >
+                    <UploadCloud size={14} />
+                    {uploading ? "正在提交…" : "上传文档"}
+                  </button>
+                </>
+              )}
             </div>
+
+            {canManage && selectedBase && (
+              <div className="knowledge-management-grid">
+                <div style={{ ...panelStyle, padding: 17 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 14, alignItems: "flex-start" }}>
+                    <div>
+                      <div style={{ display: "flex", gap: 8, alignItems: "center", color: "var(--tg-accent)", fontSize: 11, fontFamily: "monospace" }}>
+                        <ShieldCheck size={14} />
+                        SINGLE-TENANT SHARED KNOWLEDGE
+                      </div>
+                      <h2 style={{ color: "var(--tg-text)", fontSize: 16, margin: "8px 0 4px" }}>{selectedBase.name}</h2>
+                      <p style={{ color: "var(--tg-text-muted)", fontSize: 12, lineHeight: 1.65, margin: 0 }}>
+                        {selectedBase.description || "暂无知识库描述"}
+                      </p>
+                    </div>
+                    <div style={{ display: "flex", gap: 7, flexShrink: 0 }}>
+                      <button
+                        type="button"
+                        onClick={openEditBase}
+                        className="knowledge-icon-button"
+                        title="编辑知识库"
+                      >
+                        <Edit3 size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void removeSelectedBase()}
+                        disabled={selectedBase.is_default || selectedBase.is_system}
+                        className="knowledge-icon-button knowledge-danger-button"
+                        title={selectedBase.is_default || selectedBase.is_system ? "默认或系统知识库不可删除" : "删除知识库"}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 13, color: "var(--tg-text-faint)", fontSize: 10, fontFamily: "monospace" }}>
+                    <span>{selectedBase.document_count} DOCUMENTS</span>
+                    <span>REVISION {selectedBase.content_revision}</span>
+                    <span>{selectedBase.embedding_profile}</span>
+                    {(selectedBase.is_default || selectedBase.is_system) && <span style={{ color: "var(--tg-warning)" }}>PROTECTED</span>}
+                  </div>
+                </div>
+
+                <div style={{ ...panelStyle, padding: 17 }}>
+                  <div style={{ color: "var(--tg-text)", fontSize: 13, fontWeight: 700 }}>文件入库</div>
+                  <p style={{ color: "var(--tg-text-muted)", fontSize: 11, lineHeight: 1.6, margin: "7px 0 0" }}>
+                    支持 PDF、DOCX、文本、Markdown、CSV、JSON、HTML 与启用 OCR 后的图片。
+                    {capabilities?.sources?.[0]?.max_bytes
+                      ? ` 单文件最大 ${(capabilities.sources[0].max_bytes! / 1024 / 1024).toFixed(0)} MiB。`
+                      : ""}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={uploading}
+                    className="knowledge-upload-zone"
+                  >
+                    <UploadCloud size={22} />
+                    <span>{uploading ? "正在向 RAG 提交文件…" : "选择一个或多个文件入库"}</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {canManage && baseEditorOpen && (
+              <div style={{ ...panelStyle, marginTop: 12, padding: 17, borderColor: "rgba(34,211,238,0.35)" }}>
+                <div style={{ color: "var(--tg-text)", fontSize: 14, fontWeight: 700 }}>
+                  {editingBaseId ? "编辑知识库" : "新建知识库"}
+                </div>
+                <div className="knowledge-base-form">
+                  <input
+                    value={baseName}
+                    onChange={(event) => setBaseName(event.target.value)}
+                    placeholder="知识库名称"
+                    maxLength={128}
+                    style={{ ...inputStyle, padding: "9px 11px" }}
+                  />
+                  <input
+                    value={baseDescription}
+                    onChange={(event) => setBaseDescription(event.target.value)}
+                    placeholder="知识库描述（可选）"
+                    maxLength={1024}
+                    style={{ ...inputStyle, padding: "9px 11px" }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void saveKnowledgeBase()}
+                    disabled={savingBase}
+                    className="knowledge-primary-button"
+                  >
+                    {savingBase ? "保存中…" : "保存"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBaseEditorOpen(false)}
+                    className="knowledge-secondary-button"
+                  >
+                    取消
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {canManage && uploadJobs.length > 0 && (
+              <div style={{ ...panelStyle, marginTop: 12, padding: 17 }}>
+                <div style={{ color: "var(--tg-text)", fontSize: 13, fontWeight: 700 }}>最近入库任务</div>
+                <div style={{ display: "grid", gap: 9, marginTop: 11 }}>
+                  {uploadJobs.map((job) => (
+                    <div key={job.id} className="knowledge-job-row">
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ color: "var(--tg-text)", fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {job.filename}
+                        </div>
+                        <div style={{ color: "var(--tg-text-faint)", fontSize: 10, fontFamily: "monospace", marginTop: 3 }}>
+                          {job.current_step || "queued"} · {job.id}
+                        </div>
+                        {job.error_message && (
+                          <div style={{ color: "var(--tg-danger)", fontSize: 11, marginTop: 5 }}>{job.error_message}</div>
+                        )}
+                      </div>
+                      <span style={{ color: statusColor(job.status), fontSize: 10, fontFamily: "monospace", textTransform: "uppercase" }}>
+                        {job.status}
+                      </span>
+                      {job.status === "conflict" && job.pending_document_id && (
+                        <div className="knowledge-conflict-actions">
+                          <button
+                            type="button"
+                            onClick={() => void resolveConflict(job, job.pending_document_id!)}
+                            className="knowledge-primary-button"
+                          >
+                            使用新版本
+                          </button>
+                          {job.conflict_candidates[0] && (
+                            <button
+                              type="button"
+                              onClick={() => void resolveConflict(job, job.conflict_candidates[0])}
+                              className="knowledge-secondary-button"
+                            >
+                              保留现有
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {!canManage && (
+              <div style={{ ...panelStyle, marginTop: 12, padding: 13, color: "var(--tg-text-muted)", fontSize: 12 }}>
+                当前账号为只读角色。知识库创建、文档上传、编辑和删除仅对 ADMIN/OPERATOR 开放。
+              </div>
+            )}
 
             <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
               {!documentsLoading && documents.length === 0 && (
@@ -602,6 +1031,26 @@ export default function KnowledgePage() {
                               <span>类型 <strong style={{ color: "var(--tg-text)" }}>{detail.mime_type ?? detail.source_type}</strong></span>
                               <span style={{ overflowWrap: "anywhere" }}>ID <strong style={{ color: "var(--tg-text)" }}>{detail.id}</strong></span>
                             </div>
+                            {canManage && (
+                              <div style={{ display: "flex", gap: 8, marginTop: 13 }}>
+                                <button
+                                  type="button"
+                                  onClick={() => void renameDocument(document)}
+                                  className="knowledge-secondary-button"
+                                >
+                                  <Edit3 size={13} />
+                                  编辑标题
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => void removeDocument(document)}
+                                  className="knowledge-secondary-button knowledge-danger-button"
+                                >
+                                  <Trash2 size={13} />
+                                  删除文档
+                                </button>
+                              </div>
+                            )}
                             <div style={{ display: "grid", gap: 9, marginTop: 14 }}>
                               {chunks.map((chunk) => (
                                 <div key={chunk.id} style={{ background: "var(--tg-code-bg)", border: "1px solid var(--tg-panel-border)", borderRadius: 7, padding: 13 }}>
