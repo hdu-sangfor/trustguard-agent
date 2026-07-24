@@ -1051,6 +1051,48 @@ export interface ApiKnowledgeSearchResponse {
   coverage_warning?: string | null;
 }
 
+export interface ApiKnowledgeAnswerCitation {
+  citation_id: number;
+  chunk_id: string;
+  document_id: string;
+  source_uri: string;
+  original_filename?: string | null;
+  chunk_index: number;
+  page_no?: number | null;
+  excerpt: string;
+}
+
+export interface ApiKnowledgeAnswerUsage {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+}
+
+export interface ApiKnowledgeAnswerResponse {
+  query: string;
+  knowledge_base_id: string;
+  status: string;
+  answer: string;
+  citations: ApiKnowledgeAnswerCitation[];
+  search_status: string;
+  effective_mode: string;
+  degraded_components: string[];
+  abstained: boolean;
+  abstention_reason?: string | null;
+  query_entities: string[];
+  retrieved_count: number;
+  context_chunk_count: number;
+  context_token_count: number;
+  retrieval_time_ms: number;
+  generation_time_ms: number;
+  total_time_ms: number;
+  model?: string | null;
+  usage?: ApiKnowledgeAnswerUsage | null;
+  query_plan?: Record<string, unknown> | null;
+  coverage_status: string;
+  coverage_warning?: string | null;
+}
+
 export async function getRagHealth(): Promise<ApiRagHealth> {
   return apiFetch<ApiRagHealth>('/api/v1/knowledge/health');
 }
@@ -1113,6 +1155,32 @@ export async function searchKnowledge(params: {
       top_k: params.topK ?? 8,
       retrieval_mode: params.retrievalMode ?? 'auto',
       enable_query_rewrite: params.enableQueryRewrite ?? false,
+      enable_vector: params.enableVector ?? true,
+      enable_keyword: params.enableKeyword ?? true,
+      enable_rerank: params.enableRerank ?? true,
+    }),
+  });
+}
+
+export async function answerKnowledge(params: {
+  query: string;
+  knowledgeBaseId: string;
+  topK?: number;
+  retrievalMode?: 'auto' | 'focused' | 'comprehensive' | 'enumeration';
+  enableQueryRewrite?: boolean;
+  enableVector?: boolean;
+  enableKeyword?: boolean;
+  enableRerank?: boolean;
+}): Promise<ApiKnowledgeAnswerResponse> {
+  return apiFetch<ApiKnowledgeAnswerResponse>('/api/v1/knowledge/answer', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      query: params.query,
+      knowledge_base_id: params.knowledgeBaseId,
+      top_k: params.topK ?? 8,
+      retrieval_mode: params.retrievalMode ?? 'auto',
+      enable_query_rewrite: params.enableQueryRewrite ?? true,
       enable_vector: params.enableVector ?? true,
       enable_keyword: params.enableKeyword ?? true,
       enable_rerank: params.enableRerank ?? true,

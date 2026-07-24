@@ -7,12 +7,14 @@ import {
   ChevronRight,
   Database,
   FileText,
+  MessageSquareText,
   RefreshCw,
   Search,
 } from "lucide-react";
 import { toast } from "sonner";
 
 import Header from "@/shared/components/Header";
+import KnowledgeAnswerPanel from "@/features/knowledge/KnowledgeAnswerPanel";
 import { useAppSession } from "@/shared/context/AppSessionContext";
 import {
   getKnowledgeDocument,
@@ -29,7 +31,7 @@ import {
 } from "@/shared/lib/api";
 import "./KnowledgePage.css";
 
-type ViewName = "search" | "documents";
+type ViewName = "answer" | "search" | "documents";
 type RetrievalMode = "auto" | "focused" | "comprehensive" | "enumeration";
 
 const panelStyle = {
@@ -103,7 +105,7 @@ export default function KnowledgePage() {
   const navigate = useNavigate();
   const { loggedIn } = useAppSession();
 
-  const [view, setView] = useState<ViewName>("search");
+  const [view, setView] = useState<ViewName>("answer");
   const [health, setHealth] = useState<ApiRagHealth | null>(null);
   const [bases, setBases] = useState<ApiKnowledgeBase[]>([]);
   const [selectedBaseId, setSelectedBaseId] = useState("");
@@ -267,7 +269,7 @@ export default function KnowledgePage() {
               知识中心
             </h1>
             <p style={{ margin: 0, color: "var(--tg-text-muted)", fontSize: 13 }}>
-              通过 Agent Gateway 只读访问 TrustGuard RAG 的知识库、检索结果与文档分块。
+              通过 Agent Gateway 使用 TrustGuard RAG 的知识问答、检索结果与文档分块能力。
             </p>
           </div>
           <button
@@ -319,6 +321,7 @@ export default function KnowledgePage() {
 
         <div style={{ ...panelStyle, marginTop: 18, padding: 6, display: "flex", gap: 6, width: "fit-content" }}>
           {([
+            ["answer", "知识问答", MessageSquareText],
             ["search", "知识检索", Search],
             ["documents", "文档浏览", FileText],
           ] as const).map(([name, label, Icon]) => (
@@ -352,7 +355,16 @@ export default function KnowledgePage() {
           </div>
         )}
 
-        {view === "search" ? (
+        {view === "answer" ? (
+          <KnowledgeAnswerPanel
+            bases={bases}
+            selectedBaseId={selectedBaseId}
+            onSelectedBaseIdChange={(knowledgeBaseId) => {
+              setSelectedBaseId(knowledgeBaseId);
+              setSearchResult(null);
+            }}
+          />
+        ) : view === "search" ? (
           <section className="knowledge-search-layout">
             <div style={{ ...panelStyle, padding: 18, alignSelf: "start" }}>
               <label style={{ display: "block", color: "var(--tg-text-muted)", fontSize: 12, marginBottom: 7 }}>知识库范围</label>

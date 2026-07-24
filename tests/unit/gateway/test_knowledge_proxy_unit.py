@@ -96,3 +96,35 @@ def test_knowledge_document_rejects_cross_base_result(monkeypatch):
         assert exc.status_code == 404
     else:
         raise AssertionError("cross-base document must be rejected")
+
+
+def test_knowledge_answer_forwards_grounded_generation_options(monkeypatch):
+    gateway = _load_gateway_main()
+    captured = []
+
+    async def fake_rag(method, path, **kwargs):
+        captured.append((method, path, kwargs))
+        return {
+            "status": "answered",
+            "answer": "应验证反序列化风险。",
+            "citations": [],
+        }
+
+    monkeypatch.setattr(gateway, "_rag", fake_rag)
+    request = gateway.RagAnswerRequest(
+        query="Apache Shiro RememberMe 有哪些风险？",
+        knowledge_base_id="kb-security",
+        top_k=5,
+        retrieval_mode="comprehensive",
+        enable_query_rewrite=True,
+    )
+
+    response = asyncio.run(gateway.knowledge_answer(request))
+
+    assert response["code"] == "0"
+    method, path, kwargs = captured[0]
+    assert (method, path) == ("POST", "/v1/answer")
+    assert kwargs["timeout"] == 90.0
+    assert kwargs["json_body"]["enable_query_rewrite"] is True
+    assert kwargs["json_body"]["enable_abstention"] is True
+    assert kwargs["json_body"]["require_exact_entity_match"] is True

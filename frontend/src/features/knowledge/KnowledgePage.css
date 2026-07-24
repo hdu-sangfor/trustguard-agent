@@ -5,8 +5,16 @@
   margin-top: 18px;
 }
 
+.knowledge-answer-layout {
+  display: grid;
+  grid-template-columns: minmax(300px, 390px) minmax(0, 1fr);
+  gap: 18px;
+  margin-top: 18px;
+}
+
 @media (max-width: 900px) {
-  .knowledge-search-layout {
+  .knowledge-search-layout,
+  .knowledge-answer-layout {
     grid-template-columns: minmax(0, 1fr);
   }
 }

@@ -384,6 +384,10 @@ class RagSearchRequest(BaseModel):
     enable_rerank: bool = True
 
 
+class RagAnswerRequest(RagSearchRequest):
+    """Single-turn grounded answer options exposed by the Agent knowledge-center BFF."""
+
+
 @app.get("/health")
 def health() -> dict[str, Any]:
     db_ok = True
@@ -474,6 +478,25 @@ async def knowledge_search(req: RagSearchRequest) -> dict[str, Any]:
                 "require_exact_entity_match": True,
             },
             timeout=30.0,
+        )
+    )
+
+
+@app.post("/api/v1/knowledge/answer")
+async def knowledge_answer(req: RagAnswerRequest) -> dict[str, Any]:
+    """Generate one grounded answer while preserving RAG abstention and citations."""
+    if not req.enable_vector and not req.enable_keyword:
+        raise HTTPException(status_code=422, detail="至少启用一种检索方式")
+    return ok(
+        await _rag(
+            "POST",
+            "/v1/answer",
+            json_body={
+                **req.model_dump(),
+                "enable_abstention": True,
+                "require_exact_entity_match": True,
+            },
+            timeout=90.0,
         )
     )
 
