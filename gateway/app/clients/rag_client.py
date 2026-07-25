@@ -8,11 +8,20 @@ from fastapi import HTTPException
 
 
 class RagClient:
-    def __init__(self, base_url: str | None = None) -> None:
+    def __init__(
+        self,
+        base_url: str | None = None,
+        service_token: str | None = None,
+    ) -> None:
         self.base_url = (
             base_url
             or os.getenv("RAG_SERVICE_BASE_URL", "http://localhost:18200")
         ).rstrip("/")
+        self.service_token = (
+            service_token
+            if service_token is not None
+            else os.getenv("RAG_GATEWAY_SERVICE_TOKEN")
+        )
 
     async def request(
         self,
@@ -35,6 +44,7 @@ class RagClient:
                 response = await client.request(
                     method,
                     f"{self.base_url}{path}",
+                    headers=self._service_headers(),
                     json=json_body,
                     params=params,
                     data=data,
@@ -77,6 +87,11 @@ class RagClient:
                 status_code=502,
                 detail="RAG 服务返回了无效 JSON",
             ) from exc
+
+    def _service_headers(self) -> dict[str, str] | None:
+        if not self.service_token:
+            return None
+        return {"Authorization": f"Bearer {self.service_token}"}
 
 
 rag_client = RagClient()

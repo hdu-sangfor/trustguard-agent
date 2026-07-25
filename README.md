@@ -12,14 +12,18 @@
 
 ```dotenv
 RAG_SERVICE_BASE_URL=http://host.docker.internal:18200
+RAG_GATEWAY_SERVICE_TOKEN=replace-with-a-different-long-random-service-token
 AUTH_TOKEN_SECRET=replace-with-a-random-long-secret
 AUTH_TOKEN_TTL_SECONDS=86400
 RAG_UPLOAD_MAX_BYTES=52428800
 ```
 
-生产环境必须替换 `AUTH_TOKEN_SECRET`，并将 RAG 服务限制在内部网络，避免浏览器绕过
-Gateway 直接调用知识库和文档写接口。登录令牌格式已经升级为带 HMAC-SHA256 签名和过期时间
-的令牌，升级后已有浏览器会话需要重新登录。
+`RAG_GATEWAY_SERVICE_TOKEN` 必须与 RAG 仓库中的同名配置一致，并与
+`RAG_INTERNAL_SERVICE_TOKEN` 使用不同随机值。浏览器登录 Token 只在 Agent Gateway 校验，
+不会转发给 RAG；Gateway 会为所有 RAG 请求注入独立服务身份。
+
+生产环境必须替换 `AUTH_TOKEN_SECRET`，并将 RAG 服务限制在内部网络。登录令牌格式已经升级为
+带 HMAC-SHA256 签名和过期时间的令牌，升级后已有浏览器会话需要重新登录。
 
 Gateway 中的知识能力按职责拆分：
 
