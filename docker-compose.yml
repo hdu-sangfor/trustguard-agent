@@ -138,7 +138,21 @@ services:
       ORCH_PHASE_WALL_CLOCK_LIMIT_SEC: "300"
       TRUSTGUARD_AGENT_MODE: deterministic
       TRUSTGUARD_EXECUTOR_MODE: inline
+      KNOWLEDGE_MCP_ENABLED: ${KNOWLEDGE_MCP_ENABLED:-false}
+      KNOWLEDGE_MCP_SHADOW_MODE: ${KNOWLEDGE_MCP_SHADOW_MODE:-true}
+      KNOWLEDGE_MCP_URL: ${KNOWLEDGE_MCP_URL:-http://host.docker.internal:18201/mcp}
+      KNOWLEDGE_MCP_ACCESS_TOKEN: ${KNOWLEDGE_MCP_ACCESS_TOKEN:-}
+      KNOWLEDGE_MCP_SCOPE: ${KNOWLEDGE_MCP_SCOPE:-penetration}
+      KNOWLEDGE_MCP_MODE: ${KNOWLEDGE_MCP_MODE:-comprehensive}
+      KNOWLEDGE_MCP_LIMIT: ${KNOWLEDGE_MCP_LIMIT:-5}
+      KNOWLEDGE_MCP_REWRITE: ${KNOWLEDGE_MCP_REWRITE:-false}
+      KNOWLEDGE_MCP_TIMEOUT_SECONDS: ${KNOWLEDGE_MCP_TIMEOUT_SECONDS:-8}
+      KNOWLEDGE_MCP_MAX_RETRIES: ${KNOWLEDGE_MCP_MAX_RETRIES:-1}
+      KNOWLEDGE_MCP_WORKSPACE_ID: ${KNOWLEDGE_MCP_WORKSPACE_ID:-default}
+      KNOWLEDGE_MCP_WORKFLOW_TYPE: ${KNOWLEDGE_MCP_WORKFLOW_TYPE:-penetration}
     env_file: *optional-env-files
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./skills:/app/skills:ro
       - ./docker/tools_registry.yaml:/app/tools_registry.yaml:ro

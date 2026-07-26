@@ -269,6 +269,9 @@ async def _orchestrator_lifespan(app: FastAPI):
         fed_sync_task.cancel()
         with suppress(asyncio.CancelledError):
             await fed_sync_task
+    from app.knowledge.gateway import close_knowledge_gateway
+
+    await close_knowledge_gateway()
 
 app = FastAPI(
     title="Orchestrator Service",

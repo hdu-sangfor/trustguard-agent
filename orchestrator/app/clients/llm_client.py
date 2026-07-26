@@ -776,8 +776,35 @@ async def _assemble_decision_user_content(
     """KB 注入 + decision_context 压缩 + 用户侧 JSON blob（legacy / PlanList 共用）。"""
     # KB检索与注入：在受限决策上下文抽取前，把 hits 写入 target_context
     from app.clients.kb_client import get_kb_client, get_kb_config
+    from app.knowledge.config import knowledge_mcp_enabled
 
     kb_cfg = get_kb_config()
+    knowledge_shadow_task: asyncio.Task[None] | None = None
+    if knowledge_mcp_enabled():
+        try:
+            shadow_query_text, _, _ = _build_kb_query_and_filters(
+                phase=phase,
+                target_context=target_context,
+                history_summary=history_summary,
+                available_skill_ids=available_skill_ids,
+            )
+            from app.knowledge.shadow import run_penetration_shadow_search
+
+            knowledge_shadow_task = asyncio.create_task(
+                run_penetration_shadow_search(
+                    task_id=task_id,
+                    phase=phase.value,
+                    query_text=shadow_query_text,
+                    target_context=target_context,
+                )
+            )
+        except Exception:
+            logger.warning(
+                "knowledge MCP shadow query setup failed task_id=%s phase=%s",
+                task_id,
+                phase.value,
+                exc_info=True,
+            )
     if kb_cfg.enabled:
         try:
             from app.kb_experience_payload import kb_experience_effectiveness_soft_enabled
@@ -1006,6 +1033,17 @@ async def _assemble_decision_user_content(
                     target_context[_k] = _v  # type: ignore[index]
         except Exception:
             pass
+
+    if knowledge_shadow_task is not None:
+        try:
+            await knowledge_shadow_task
+        except Exception:
+            logger.warning(
+                "knowledge MCP shadow task failed open task_id=%s phase=%s",
+                task_id,
+                phase.value,
+                exc_info=True,
+            )
 
     from app.core.decision_context import build_decision_context
 

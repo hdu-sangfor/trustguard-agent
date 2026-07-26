@@ -32,3 +32,23 @@ Gateway 中的知识能力按职责拆分：
 - `app/clients/rag_client.py`：RAG HTTP 调用、超时和错误映射；
 - `app/schemas/knowledge.py`：知识接口请求模型；
 - `app/db.py`、`app/audit.py`：数据库访问与审计记录。
+
+## RAG MCP Shadow Search
+
+Agent Orchestrator 通过协议无关的 `KnowledgeGateway` 调用 RAG MCP。Phase 3A
+默认关闭，开启后与原 Agent KB 并行检索，只记录 Trace，不把 MCP 命中注入 Plan：
+
+```dotenv
+KNOWLEDGE_MCP_ENABLED=true
+KNOWLEDGE_MCP_SHADOW_MODE=true
+KNOWLEDGE_MCP_URL=http://host.docker.internal:18201/mcp
+KNOWLEDGE_MCP_ACCESS_TOKEN=
+KNOWLEDGE_MCP_SCOPE=penetration
+```
+
+Phase 3A 只支持由部署环境注入 `KNOWLEDGE_MCP_ACCESS_TOKEN`；Client Credentials
+自动取 Token 和刷新尚未接入，因此当前不应直接启用生产流量。该 Token 必须是外部
+身份服务签发的短期 JWT，不能复用 `RAG_GATEWAY_SERVICE_TOKEN` 或
+`RAG_INTERNAL_SERVICE_TOKEN`。Shadow 成功时 Evidence Trace 会出现
+`KNOWLEDGE_TRIGGERED`、`MCP_TOOL_CALLED`；失败时记录 `MCP_TOOL_FAILED` 并
+fail-open，不影响原渗透 Workflow。
