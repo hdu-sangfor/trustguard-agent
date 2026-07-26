@@ -7,6 +7,7 @@ import {
   type StoredOrbitTask,
 } from '../orbitTasksStorage';
 import { getTaskEvents, getTaskTodos, listTasks, toFrontendStatus, formatEventsAsLog, type ApiEvent, type ApiTodo } from '@/shared/lib/api';
+import { LogJsonValue } from './LogJsonValue';
 
 /** Safely format a timestamp — returns HH:MM:SS or raw string on failure */
 function safeTime(ts: unknown): string {
@@ -613,6 +614,62 @@ export function CRTerminal() {
       font-size: 12px;
       line-height: 1.6;
     }
+    .log-json-collection {
+      display: flex;
+      min-width: 0;
+      flex-direction: column;
+    }
+    .log-json-entry {
+      display: grid;
+      grid-template-columns: minmax(96px, auto) minmax(0, 1fr);
+      align-items: start;
+      gap: 12px;
+      min-width: 0;
+      padding: 4px 0;
+    }
+    .log-json-entry + .log-json-entry {
+      border-top: 1px solid color-mix(in srgb, var(--tg-panel-border) 65%, transparent);
+    }
+    .log-json-key {
+      color: var(--log-accent);
+      font-weight: 600;
+      overflow-wrap: anywhere;
+    }
+    .log-json-value {
+      min-width: 0;
+    }
+    .log-json-value > .log-json-collection {
+      border-left: 2px solid var(--tg-panel-border);
+      padding-left: 10px;
+    }
+    .log-json-string {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    .log-json-mixed {
+      display: flex;
+      min-width: 0;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .log-json-embedded {
+      position: relative;
+      min-width: 0;
+      padding: 24px 8px 6px;
+      border: 1px solid var(--tg-panel-border);
+      border-radius: 5px;
+      background: var(--tg-terminal-bg);
+    }
+    .log-json-badge {
+      position: absolute;
+      top: 5px;
+      left: 7px;
+      color: var(--log-accent);
+      font-size: 10px;
+      font-weight: 700;
+      line-height: 14px;
+      letter-spacing: 0.08em;
+    }
     @media (max-width: 720px) {
       .log-event-row {
         grid-template-columns: 64px minmax(0, 1fr) 16px;
@@ -630,6 +687,10 @@ export function CRTerminal() {
       }
       .log-event-json {
         margin-left: 70px;
+      }
+      .log-json-entry {
+        grid-template-columns: minmax(72px, 96px) minmax(0, 1fr);
+        gap: 8px;
       }
     }
     .crt-tab-strip {
@@ -1276,8 +1337,7 @@ export function CRTerminal() {
                               const raw = JSON.stringify(p);
                               detail = raw.length > 80 ? raw.slice(0, 80) + '…' : raw;
                             }
-                            const fullJson = JSON.stringify(p, null, 2);
-                            const hasMore = fullJson.length > 100;
+                            const hasMore = Object.keys(p).length > 0;
                             nodes.push(
                               <div key={key} className="my-0.5">
                                 <button
@@ -1299,12 +1359,7 @@ export function CRTerminal() {
                                 </button>
                                 {expanded && (
                                   <div className="log-event-json mt-1 mb-2 p-2.5 rounded border log-soft-panel font-mono overflow-x-auto max-h-60 overflow-y-auto">
-                                    {Object.entries(p).map(([k, v]) => (
-                                      <div key={k} className="grid grid-cols-[minmax(96px,auto)_minmax(0,1fr)] gap-3 py-1">
-                                        <span className="log-accent-text shrink-0 font-semibold">{k}:</span>
-                                        <span className="break-all whitespace-pre-wrap">{typeof v === 'object' ? JSON.stringify(v, null, 2) : String(v ?? '')}</span>
-                                      </div>
-                                    ))}
+                                    <LogJsonValue value={p} />
                                   </div>
                                 )}
                               </div>
