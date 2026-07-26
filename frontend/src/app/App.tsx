@@ -136,7 +136,7 @@ const GlobalStyles = ({ onThemeChange }: { onThemeChange: (theme: ThemeMode) => 
       document.body.style.padding = "0";
       document.body.style.overflow = "auto";
       document.body.style.background = "var(--tg-page-bg)";
-      document.body.style.fontFamily = "'Inter', 'Courier New', monospace";
+      document.body.style.fontFamily = "var(--tg-font-ui)";
       document.documentElement.style.scrollBehavior = "auto";
     };
 
@@ -171,7 +171,7 @@ const App = () => {
             border: "1px solid var(--tg-panel-border)",
             color: "var(--tg-text)",
             boxShadow: "var(--tg-shadow)",
-            fontFamily: "'Inter','Courier New',monospace",
+            fontFamily: "var(--tg-font-ui)",
           },
         }}
       />

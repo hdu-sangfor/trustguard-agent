@@ -199,6 +199,7 @@ const Header = ({ currentPhase = 0 }: HeaderProps) => {
                   }}
               />
               <span
+                  className="nav-brand-text"
                   style={{
                       fontFamily: "'Courier New', monospace",
                       fontSize: "1rem",
@@ -212,7 +213,7 @@ const Header = ({ currentPhase = 0 }: HeaderProps) => {
     </span>
           </div>
 
-          <nav style={{display: "flex", alignItems: "center", gap: "10px", overflowX: "auto", flexShrink: 1, minWidth: 0, paddingBottom: 2}}>
+          <nav className="nav-primary" style={{display: "flex", alignItems: "center", gap: "12px", flexShrink: 1, minWidth: 0, paddingBottom: 2}}>
               {navLinks.map((link) => {
                 const isActive = link.path === "/" ? pathname === "/" : pathname.startsWith(link.path);
                 return (
@@ -257,13 +258,15 @@ const Header = ({ currentPhase = 0 }: HeaderProps) => {
               {/* Backend health indicator */}
               {backendOnline !== null && (
                   <span
+                      className="nav-health"
                       title={backendOnline ? "后端连接正常 · 数据实时同步" : "后端未连接 · 当前展示演示数据"}
                       style={{
                           display: "inline-flex",
                           alignItems: "center",
                           gap: 5,
-                          fontSize: 11,
-                          fontFamily: "monospace",
+                          fontSize: 12,
+                          fontFamily: "var(--tg-font-ui)",
+                          fontWeight: 600,
                           color: backendOnline ? "rgba(52,211,153,0.9)" : "rgba(251,191,36,0.9)",
                           userSelect: "none",
                           padding: backendOnline ? undefined : "1px 6px",
@@ -422,12 +425,13 @@ const Header = ({ currentPhase = 0 }: HeaderProps) => {
                 <>
                   {loggedIn && sessionDisplayName && (
                     <button
+                      className="nav-user-name"
                       type="button"
                       onClick={() => navigate("/profile")}
                       style={{
                         background: "none", border: "none", padding: "0 4px",
                         cursor: "pointer", color: "var(--tg-text-muted)",
-                        fontFamily: "monospace", fontSize: 11,
+                        fontFamily: "var(--tg-font-ui)", fontSize: 12, fontWeight: 600,
                       }}
                       title="个人中心"
                     >
