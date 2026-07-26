@@ -219,6 +219,8 @@ async def run_penetration_knowledge_search(
         "status": response.status,
         "degraded_components": response.degraded_components,
         "resource_refs": [item["resource_ref"] for item in hit_summaries],
+        "chunk_ids": chunk_ids,
+        "materialized_count": len(chunk_ids),
         "shadow": active.shadow_mode,
     }
     await _emit(trace_emitter, task_id, "MCP_TOOL_CALLED", payload)
@@ -230,6 +232,8 @@ async def run_penetration_knowledge_search(
             {
                 "phase": phase,
                 "scope": response.scope,
+                "request_id": response.request_id,
+                "client_request_id": request_id,
                 "chunk_ids": chunk_ids,
                 "materialized_count": len(chunk_ids),
                 "failed_count": len(materialization_errors),
@@ -244,6 +248,8 @@ async def run_penetration_knowledge_search(
             {
                 "phase": phase,
                 "scope": response.scope,
+                "request_id": response.request_id,
+                "client_request_id": request_id,
                 "chunk_ids": chunk_ids,
                 "injected_count": len(materialized_hits),
                 "shadow": False,

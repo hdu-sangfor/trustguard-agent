@@ -356,6 +356,10 @@ async def test_active_search_materializes_injects_and_reuses_chunk(
         "KNOWLEDGE_MATERIALIZED",
         "KNOWLEDGE_INJECTED",
     ]
+    assert events[1].payload["chunk_ids"] == [mcp_hit["chunk_id"]]
+    assert events[1].payload["materialized_count"] == 1
+    assert events[2].payload["request_id"] == events[1].payload["request_id"]
+    assert events[2].payload["client_request_id"] == events[1].payload["client_request_id"]
 
     target_context["kb_hits"] = [original_experience]
     await run_penetration_knowledge_search(

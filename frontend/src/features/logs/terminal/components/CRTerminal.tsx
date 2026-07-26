@@ -8,6 +8,7 @@ import {
 } from '../orbitTasksStorage';
 import { getTaskEvents, getTaskTodos, listTasks, toFrontendStatus, formatEventsAsLog, type ApiEvent, type ApiTodo } from '@/shared/lib/api';
 import { LogJsonValue } from './LogJsonValue';
+import { KnowledgeSearchDetails } from './KnowledgeSearchDetails';
 
 /** Safely format a timestamp — returns HH:MM:SS or raw string on failure */
 function safeTime(ts: unknown): string {
@@ -45,6 +46,51 @@ function parseJavaMap(raw: string): Record<string, string> | null {
     }
   }
   return Object.keys(result).length > 0 ? result : null;
+}
+
+function parseEventPayload(event: ApiEvent): Record<string, unknown> {
+  if (typeof event.payload === 'string') {
+    try {
+      return JSON.parse(event.payload) as Record<string, unknown>;
+    } catch {
+      return parseJavaMap(event.payload) ?? { raw: event.payload };
+    }
+  }
+  return event.payload && typeof event.payload === 'object'
+    ? event.payload as Record<string, unknown>
+    : {};
+}
+
+function stringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => typeof item === 'string' ? item.trim() : '')
+    .filter(Boolean);
+}
+
+function linkedKnowledgeChunkIds(
+  events: ApiEvent[],
+  current: ApiEvent,
+  payload: Record<string, unknown>,
+): string[] {
+  const direct = stringList(payload.chunk_ids);
+  if (direct.length > 0) return direct;
+
+  const currentIndex = events.indexOf(current);
+  if (currentIndex < 0) return [];
+  const phase = typeof payload.phase === 'string' ? payload.phase : '';
+  const scanEnd = Math.min(events.length, currentIndex + 6);
+  for (let index = currentIndex + 1; index < scanEnd; index++) {
+    const candidate = events[index];
+    if (!candidate) continue;
+    if (candidate.eventType === 'MCP_TOOL_CALLED' || candidate.eventType === 'KNOWLEDGE_TRIGGERED') break;
+    if (candidate.eventType !== 'KNOWLEDGE_MATERIALIZED') continue;
+    const candidatePayload = parseEventPayload(candidate);
+    const candidatePhase = typeof candidatePayload.phase === 'string' ? candidatePayload.phase : '';
+    if (phase && candidatePhase && candidatePhase !== phase) continue;
+    return stringList(candidatePayload.chunk_ids);
+  }
+  return [];
 }
 
 const PH = {
@@ -1023,16 +1069,7 @@ export function CRTerminal() {
                         const nodes: React.ReactNode[] = [];
                         let lastPhase = '';
                         filteredEvents.forEach((e, idx) => {
-                          // payload may be a JSON string or Java toString map — parse it
-                          let p: Record<string, unknown> = {};
-                          if (typeof e.payload === 'string') {
-                            try { p = JSON.parse(e.payload); } catch {
-                              const jm = parseJavaMap(e.payload);
-                              p = jm ?? { raw: e.payload };
-                            }
-                          } else if (e.payload && typeof e.payload === 'object') {
-                            p = e.payload as Record<string, unknown>;
-                          }
+                          const p = parseEventPayload(e);
                           const ts = safeTime(e.timestamp);
                           const type = e.eventType ?? '';
                           const phaseVal = typeof p.phase === 'string' ? p.phase : '';
@@ -1051,8 +1088,51 @@ export function CRTerminal() {
                             );
                           }
 
-                          // Skill events — expandable
-                          if (type === 'SKILL_COMPLETED' || type === 'SKILL_INVOKED') {
+                          // RAG MCP retrieval — metadata in the trace, content loaded from task-local chunks on demand.
+                          if (type === 'MCP_TOOL_CALLED' && p.tool === 'knowledge_search') {
+                            const key = `ev-${idx}`;
+                            const expanded = expandedKeys.has(key);
+                            const chunkIds = linkedKnowledgeChunkIds(apiEvents, e, p);
+                            const resourceRefs = stringList(p.resource_refs);
+                            const hitCount = typeof p.hit_count === 'number' ? p.hit_count : resourceRefs.length;
+                            const latency = typeof p.latency_ms === 'number' ? `${p.latency_ms}ms` : '';
+                            const status = typeof p.status === 'string' ? p.status : '';
+                            const taskId = e.taskId || selectedId || '';
+                            nodes.push(
+                              <div key={key} className="my-0.5">
+                                <button
+                                  type="button"
+                                  className="log-event-row w-full text-left rounded log-hover-row"
+                                  aria-expanded={expanded}
+                                  onClick={() => {
+                                    setExpandedKeys((prev) => {
+                                      const next = new Set(prev);
+                                      if (next.has(key)) { next.delete(key); } else { next.add(key); }
+                                      return next;
+                                    });
+                                  }}
+                                >
+                                  <span className="log-event-time">{ts}</span>
+                                  <span className="log-event-type">RAG · MCP</span>
+                                  <span className="log-event-detail">
+                                    knowledge_search · 命中 {hitCount}
+                                    {latency && ` · ${latency}`}
+                                    {status && ` · ${status}`}
+                                  </span>
+                                  <span className="log-event-expand">{expanded ? '▲' : '▼'}</span>
+                                </button>
+                                {expanded && (
+                                  <div className="log-event-json mt-1 mb-2 max-h-[440px] overflow-y-auto rounded border p-2.5 log-soft-panel font-mono">
+                                    <KnowledgeSearchDetails
+                                      taskId={taskId}
+                                      chunkIds={chunkIds}
+                                      resourceRefs={resourceRefs}
+                                    />
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          } else if (type === 'SKILL_COMPLETED' || type === 'SKILL_INVOKED') {
                             const skillId = typeof p.skill_id === 'string' ? p.skill_id : '?';
                             const key = `ev-${idx}`;
                             const expanded = expandedKeys.has(key);

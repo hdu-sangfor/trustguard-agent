@@ -212,6 +212,10 @@ class CreateTaskRequest(BaseModel):
     extra_user_requirements: str | None = Field(default=None, validation_alias=AliasChoices("extra_user_requirements", "extraUserRequirements"))
 
 
+class TaskKnowledgeChunksRequest(BaseModel):
+    chunk_ids: list[str] = Field(default_factory=list, max_length=20)
+
+
 class LoginRequest(BaseModel):
     username: str
     password: str
@@ -427,6 +431,84 @@ async def task_events(task_id: str, limit: int = 500) -> dict[str, Any]:
             for r in rows
         ]
     return ok(data or [])
+
+
+@app.post("/api/v1/tasks/{task_id}/knowledge-chunks:batchGet", response_model=None)
+async def task_knowledge_chunks(
+    task_id: str,
+    req: TaskKnowledgeChunksRequest,
+    request: Request,
+) -> dict[str, Any] | JSONResponse:
+    """按任务读取已物化的 RAG 知识片段，仅返回日志展示所需的有界预览。"""
+    if not _get_task_row(task_id):
+        return fail("任务不存在", code="NOT_FOUND", data={"taskId": task_id})
+
+    chunk_ids: list[str] = []
+    for raw in req.chunk_ids:
+        chunk_id = str(raw).strip()
+        if not re.fullmatch(r"chk-[a-f0-9]{32}", chunk_id):
+            continue
+        if chunk_id not in chunk_ids:
+            chunk_ids.append(chunk_id)
+    if not chunk_ids:
+        return ok({"chunks": [], "missingChunkIds": []})
+
+    headers: dict[str, str] = {}
+    tenant_id = (request.headers.get("X-Tenant-Id") or "").strip()
+    if tenant_id:
+        headers["X-Tenant-Id"] = tenant_id
+    try:
+        data = await _orch(
+            "POST",
+            f"/v1/orchestrator/tasks/{task_id}/chunks:batchGet",
+            json_body={"chunk_ids": chunk_ids},
+            headers=headers or None,
+            timeout=10.0,
+        )
+    except Exception as exc:
+        log.warning("knowledge chunk read failed task_id=%s: %s", task_id, exc)
+        return fail("知识片段暂时不可用", code="KNOWLEDGE_CHUNK_UNAVAILABLE")
+
+    records = data.get("chunks") if isinstance(data, dict) else {}
+    records = records if isinstance(records, dict) else {}
+    chunks: list[dict[str, Any]] = []
+    missing: list[str] = []
+    preview_limit = 6000
+    for chunk_id in chunk_ids:
+        record = records.get(chunk_id)
+        if not isinstance(record, dict):
+            missing.append(chunk_id)
+            continue
+        meta = record.get("meta")
+        content = record.get("content")
+        if not isinstance(meta, dict) or not isinstance(content, dict):
+            missing.append(chunk_id)
+            continue
+        if meta.get("chunk_type") != "rag_knowledge":
+            missing.append(chunk_id)
+            continue
+
+        text = str(content.get("text") or "")
+        source_ref = content.get("source_ref")
+        source_ref = source_ref if isinstance(source_ref, dict) else {}
+        metadata = content.get("metadata")
+        metadata = metadata if isinstance(metadata, dict) else {}
+        chunks.append(
+            {
+                "chunkId": chunk_id,
+                "title": str(content.get("title") or "").strip(),
+                "filename": str(content.get("filename") or "").strip(),
+                "pageNo": content.get("page_no"),
+                "preview": text[:preview_limit],
+                "textLength": len(text),
+                "truncated": len(text) > preview_limit,
+                "sourceType": str(source_ref.get("source_type") or "").strip(),
+                "sourceUri": str(source_ref.get("source_uri") or "").strip(),
+                "scope": str(source_ref.get("scope") or "").strip(),
+                "contentType": str(metadata.get("content_type") or "").strip(),
+            }
+        )
+    return ok({"chunks": chunks, "missingChunkIds": missing})
 
 
 @app.get("/api/v1/tasks/{task_id}/observation")
