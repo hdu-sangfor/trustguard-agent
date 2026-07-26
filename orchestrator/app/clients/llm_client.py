@@ -779,7 +779,7 @@ async def _assemble_decision_user_content(
     from app.knowledge.config import knowledge_mcp_enabled
 
     kb_cfg = get_kb_config()
-    knowledge_shadow_task: asyncio.Task[None] | None = None
+    knowledge_mcp_task: asyncio.Task[None] | None = None
     if knowledge_mcp_enabled():
         try:
             shadow_query_text, _, _ = _build_kb_query_and_filters(
@@ -788,10 +788,10 @@ async def _assemble_decision_user_content(
                 history_summary=history_summary,
                 available_skill_ids=available_skill_ids,
             )
-            from app.knowledge.shadow import run_penetration_shadow_search
+            from app.knowledge.shadow import run_penetration_knowledge_search
 
-            knowledge_shadow_task = asyncio.create_task(
-                run_penetration_shadow_search(
+            knowledge_mcp_task = asyncio.create_task(
+                run_penetration_knowledge_search(
                     task_id=task_id,
                     phase=phase.value,
                     query_text=shadow_query_text,
@@ -800,12 +800,15 @@ async def _assemble_decision_user_content(
             )
         except Exception:
             logger.warning(
-                "knowledge MCP shadow query setup failed task_id=%s phase=%s",
+                "knowledge MCP query setup failed task_id=%s phase=%s",
                 task_id,
                 phase.value,
                 exc_info=True,
             )
-    if kb_cfg.enabled:
+    if kb_cfg.enabled and (
+        kb_cfg.legacy_static_read_enabled
+        or kb_cfg.legacy_experience_read_enabled
+    ):
         try:
             from app.kb_experience_payload import kb_experience_effectiveness_soft_enabled
             from app.kb_retrieval_scoring import (
@@ -852,21 +855,30 @@ async def _assemble_decision_user_content(
             ws_sc, pr_sc = pick_workspace_scope_from_context(target_context, include_env_defaults=True)
             kb_embed_quota_scope = (ws_sc or pr_sc or "").strip() or None
 
-            knowledge_hits = await kb_client.retrieve_knowledge_tiered(
-                query_text=query_text,
-                top_k=know_top_k,
-                filters=knowledge_filters,
-                quota_scope=kb_embed_quota_scope,
-            )
-            experience_hits = await kb_client.retrieve(
-                collection=kb_cfg.experience_collection,
-                query_text=query_text,
-                top_k=exp_top_k,
-                filters=experience_filters,
-                quota_scope=kb_embed_quota_scope,
-            )
+            knowledge_hits: list[Any] = []
+            if kb_cfg.legacy_static_read_enabled:
+                knowledge_hits = await kb_client.retrieve_knowledge_tiered(
+                    query_text=query_text,
+                    top_k=know_top_k,
+                    filters=knowledge_filters,
+                    quota_scope=kb_embed_quota_scope,
+                )
 
-            legacy_col = (kb_cfg.experience_legacy_collection or "").strip()
+            experience_hits: list[Any] = []
+            if kb_cfg.legacy_experience_read_enabled:
+                experience_hits = await kb_client.retrieve(
+                    collection=kb_cfg.experience_collection,
+                    query_text=query_text,
+                    top_k=exp_top_k,
+                    filters=experience_filters,
+                    quota_scope=kb_embed_quota_scope,
+                )
+
+            legacy_col = (
+                (kb_cfg.experience_legacy_collection or "").strip()
+                if kb_cfg.legacy_experience_read_enabled
+                else ""
+            )
             experience_legacy_filters: dict[str, Any] | None = None
             legacy_hits: list[Any] = []
             if legacy_col and legacy_col != kb_cfg.experience_collection:
@@ -1002,6 +1014,10 @@ async def _assemble_decision_user_content(
                     "kb_experience_effectiveness_soft": eff_soft,
                     "kb_hierarchical_rag": kb_hierarchical_rag_enabled(),
                     "kb_parent_chunk_resolved_count": parent_resolved,
+                    "legacy_static_read_enabled": kb_cfg.legacy_static_read_enabled,
+                    "legacy_experience_read_enabled": (
+                        kb_cfg.legacy_experience_read_enabled
+                    ),
                 }
                 if legacy_col and legacy_col != kb_cfg.experience_collection:
                     trace_payload["experience_legacy_collection"] = legacy_col
@@ -1034,12 +1050,12 @@ async def _assemble_decision_user_content(
         except Exception:
             pass
 
-    if knowledge_shadow_task is not None:
+    if knowledge_mcp_task is not None:
         try:
-            await knowledge_shadow_task
+            await knowledge_mcp_task
         except Exception:
             logger.warning(
-                "knowledge MCP shadow task failed open task_id=%s phase=%s",
+                "knowledge MCP task failed open task_id=%s phase=%s",
                 task_id,
                 phase.value,
                 exc_info=True,

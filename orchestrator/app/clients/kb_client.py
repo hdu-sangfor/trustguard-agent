@@ -212,6 +212,9 @@ class KBConfig:
     embed_base_url: str
     embed_api_key: str
     auto_create: bool
+    # 迁移期读取开关：允许 RAG MCP 替换旧静态知识，同时保留 Agent Experience。
+    legacy_static_read_enabled: bool = True
+    legacy_experience_read_enabled: bool = True
 
 
 def get_kb_config() -> KBConfig:
@@ -240,6 +243,14 @@ def get_kb_config() -> KBConfig:
     embed_base_url = (os.getenv("KB_EMBED_BASE_URL") or os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1").strip()
     embed_api_key = (os.getenv("KB_EMBED_API_KEY") or os.getenv("OPENAI_API_KEY") or "").strip()
     auto_create = _env_bool("KB_AUTO_CREATE", default=False)
+    legacy_static_read_enabled = _env_bool(
+        "LEGACY_STATIC_KB_READ_ENABLED",
+        default=True,
+    )
+    legacy_experience_read_enabled = _env_bool(
+        "LEGACY_EXPERIENCE_READ_ENABLED",
+        default=True,
+    )
 
     return KBConfig(
         enabled=enabled,
@@ -260,6 +271,8 @@ def get_kb_config() -> KBConfig:
         embed_base_url=embed_base_url,
         embed_api_key=embed_api_key,
         auto_create=auto_create,
+        legacy_static_read_enabled=legacy_static_read_enabled,
+        legacy_experience_read_enabled=legacy_experience_read_enabled,
     )
 
 

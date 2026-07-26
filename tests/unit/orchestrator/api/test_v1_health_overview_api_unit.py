@@ -349,6 +349,8 @@ def test_v1_health_overview_kb_matches_standalone_kb_observe():
         "KB_EMBED_MODEL",
         "KB_EMBED_BASE_URL",
         "KB_EMBED_API_KEY",
+        "LEGACY_STATIC_KB_READ_ENABLED",
+        "LEGACY_EXPERIENCE_READ_ENABLED",
     ]}
     try:
         os.environ.pop("V1_KB_FEDERATION_OBSERVE_ENABLED", None)
@@ -364,6 +366,8 @@ def test_v1_health_overview_kb_matches_standalone_kb_observe():
         os.environ["KB_EMBED_MODEL"] = "text-embedding-v1"
         os.environ["KB_EMBED_BASE_URL"] = "https://embed.v1.local/v1"
         os.environ["KB_EMBED_API_KEY"] = "kb-match-secret"
+        os.environ["LEGACY_STATIC_KB_READ_ENABLED"] = "false"
+        os.environ["LEGACY_EXPERIENCE_READ_ENABLED"] = "true"
 
         mod = _load_main_module()
 
@@ -379,6 +383,10 @@ def test_v1_health_overview_kb_matches_standalone_kb_observe():
         body, kb = asyncio.run(_run())
         expected_summary = {
             "enabled": kb.get("enabled"),
+            "legacy_static_read_enabled": kb.get("legacy_static_read_enabled"),
+            "legacy_experience_read_enabled": kb.get(
+                "legacy_experience_read_enabled"
+            ),
             "has_embed_api_key": kb.get("has_embed_api_key"),
             "observe_endpoint_available": True,
             "kb_federation_observe_enabled": False,
