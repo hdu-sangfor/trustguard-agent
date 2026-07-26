@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
 import logging
 import os
@@ -15,21 +14,28 @@ from typing import Any
 from urllib.parse import urlparse
 
 import httpx
-import bcrypt
-import pymysql
-from fastapi import FastAPI, Header, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
-from pymysql.cursors import DictCursor
 
+from app.api.knowledge import router as knowledge_router
+from app.audit import record_audit as _record_audit
+from app.db import execute as _execute
+from app.db import query as _query
+from app.responses import fail, ok
+from app.security.auth import (
+    AUTH_TOKEN_TTL_SECONDS,
+    CurrentUser,
+    get_current_user,
+    get_user_by_id,
+    get_user_by_username,
+    hash_password,
+    issue_token,
+    verify_password,
+)
 
 log = logging.getLogger("trustguard.gateway")
 
-MYSQL_HOST = os.getenv("MYSQL_HOST", "127.0.0.1")
-MYSQL_PORT = int(os.getenv("MYSQL_PORT", "3306"))
-MYSQL_USER = os.getenv("MYSQL_USER", "trustguard")
-MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "trustguard")
-MYSQL_DATABASE = os.getenv("MYSQL_DATABASE", "trustguard_agent")
 ORCHESTRATOR_BASE_URL = os.getenv("ORCHESTRATOR_BASE_URL", "http://localhost:18081").rstrip("/")
 EVIDENCE_BASE_URL = os.getenv("EVIDENCE_BASE_URL", "http://localhost:18103").rstrip("/")
 EXECUTOR_BASE_URL = os.getenv("EXECUTOR_BASE_URL", "http://localhost:18102").rstrip("/")
@@ -41,40 +47,7 @@ PHASE_ORDER = ["RECON", "THREAT_MODEL", "VULN_SCAN", "EXPLOIT", "REPORT", "DONE"
 STATUS_VALUES = ["PENDING", "RUNNING", "PAUSED", "DONE", "FAILED", "CANCELLED"]
 
 app = FastAPI(title="TrustGuard Gateway", version="1.0.0")
-
-
-def ok(data: Any = None, message: str = "success") -> dict[str, Any]:
-    return {"code": "0", "message": message, "data": data}
-
-
-def fail(message: str, code: str = "BAD_REQUEST", data: Any = None, status_code: int = 200) -> JSONResponse:
-    return JSONResponse(status_code=status_code, content={"code": code, "message": message, "data": data})
-
-
-def _conn():
-    return pymysql.connect(
-        host=MYSQL_HOST,
-        port=MYSQL_PORT,
-        user=MYSQL_USER,
-        password=MYSQL_PASSWORD,
-        database=MYSQL_DATABASE,
-        charset="utf8mb4",
-        autocommit=True,
-        cursorclass=DictCursor,
-    )
-
-
-def _query(sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
-    with _conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(sql, params)
-            return list(cur.fetchall() or [])
-
-
-def _execute(sql: str, params: tuple[Any, ...] = ()) -> int:
-    with _conn() as conn:
-        with conn.cursor() as cur:
-            return int(cur.execute(sql, params))
+app.include_router(knowledge_router)
 
 
 def _scalar(sql: str, params: tuple[Any, ...] = ()) -> Any:
@@ -214,18 +187,6 @@ async def _best_effort_restore(row: dict[str, Any]) -> None:
         log.warning("orchestrator restore failed task_id=%s: %s", row.get("task_id"), exc)
 
 
-def _extract_username(auth_header: str | None) -> str | None:
-    if not auth_header or not auth_header.startswith("Bearer "):
-        return None
-    token = auth_header[7:].strip()
-    try:
-        raw = base64.b64decode(token + "=" * (-len(token) % 4), validate=False).decode("utf-8", errors="ignore")
-    except Exception:
-        return None
-    username = raw.split(":", 1)[0].strip()
-    return username or None
-
-
 def _user_to_api(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": int(row.get("id") or 0),
@@ -239,57 +200,6 @@ def _user_to_api(row: dict[str, Any]) -> dict[str, Any]:
         "createdAt": _dt_iso(row.get("created_at")) or "",
         "updatedAt": _dt_iso(row.get("updated_at")) or "",
     }
-
-
-def _get_user_by_username(username: str) -> dict[str, Any] | None:
-    rows = _query("SELECT * FROM tg_user WHERE username = %s", (username,))
-    return rows[0] if rows else None
-
-
-def _get_user_by_id(user_id: str) -> dict[str, Any] | None:
-    rows = _query("SELECT * FROM tg_user WHERE user_id = %s", (user_id,))
-    return rows[0] if rows else None
-
-
-def _verify_password(row: dict[str, Any], password: str) -> bool:
-    hashed = row.get("password_hash")
-    if isinstance(hashed, str) and hashed:
-        try:
-            return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
-        except Exception:
-            log.warning("password hash verification failed for username=%s", row.get("username"))
-    return False
-
-
-def _hash_password(password: str) -> str:
-    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt(rounds=12)).decode("utf-8")
-
-
-def _token(username: str) -> str:
-    raw = f"{username}:{uuid.uuid4().hex}"
-    return base64.b64encode(raw.encode("utf-8")).decode("ascii")
-
-
-def _record_audit(event_type: str, actor: str, target: str = "", detail: str = "") -> None:
-    # The current schema does not include an audit table. Recent audit endpoints derive from trace events.
-    try:
-        _execute(
-            """
-            INSERT INTO tg_trace_events
-              (task_id, event_id, ts, event_type, source_module, payload, created_at)
-            VALUES (%s, %s, %s, %s, %s, %s, NOW())
-            """,
-            (
-                target or "platform",
-                "evt-" + uuid.uuid4().hex[:12],
-                _now_iso(),
-                event_type,
-                "gateway",
-                json.dumps({"actor": actor, "target": target, "detail": detail}, ensure_ascii=False),
-            ),
-        )
-    except Exception:
-        log.debug("audit record skipped", exc_info=True)
 
 
 class CreateTaskRequest(BaseModel):
@@ -864,24 +774,24 @@ def _trace_headers(request: Request) -> dict[str, str]:
 
 @app.post("/api/v1/auth/login", response_model=None)
 def login(req: LoginRequest) -> dict[str, Any] | JSONResponse:
-    row = _get_user_by_username(req.username.strip())
-    if not row or row.get("status") != "ACTIVE" or not _verify_password(row, req.password):
+    row = get_user_by_username(req.username.strip())
+    if not row or row.get("status") != "ACTIVE" or not verify_password(row, req.password):
         _record_audit("LOGIN_FAILED", req.username, "", "登录失败")
         return fail("用户名或密码错误", code="UNAUTHORIZED")
     _execute("UPDATE tg_user SET last_login_at = NOW(), updated_at = NOW() WHERE user_id = %s", (row["user_id"],))
-    row = _get_user_by_username(req.username.strip()) or row
+    row = get_user_by_username(req.username.strip()) or row
     _record_audit("LOGIN_SUCCESS", row["username"], row["user_id"], f"角色: {row.get('role')}")
-    return ok({"token": _token(row["username"]), "user": _user_to_api(row), "expiresIn": 86400})
+    return ok({"token": issue_token(row), "user": _user_to_api(row), "expiresIn": AUTH_TOKEN_TTL_SECONDS})
 
 
 @app.post("/api/v1/auth/register", response_model=None)
 def register(req: RegisterRequest) -> dict[str, Any] | JSONResponse:
     if len(req.password) < 6:
         return fail("密码长度至少为6位", code="BAD_REQUEST")
-    if _get_user_by_username(req.username.strip()):
+    if get_user_by_username(req.username.strip()):
         return fail("用户名已存在", code="BAD_REQUEST")
     user_id = "user-" + uuid.uuid4().hex[:12]
-    hashed = _hash_password(req.password)
+    hashed = hash_password(req.password)
     _execute(
         """
         INSERT INTO tg_user (user_id, username, display_name, email, role, status, password_hash, created_at, updated_at)
@@ -889,9 +799,9 @@ def register(req: RegisterRequest) -> dict[str, Any] | JSONResponse:
         """,
         (user_id, req.username.strip(), req.displayName or req.username.strip(), req.email, hashed),
     )
-    row = _get_user_by_id(user_id)
+    row = get_user_by_id(user_id)
     _record_audit("REGISTER", req.username, user_id, "角色: VIEWER")
-    return ok({"token": _token(req.username.strip()), "user": _user_to_api(row or {}), "expiresIn": 86400})
+    return ok({"token": issue_token(row or {}), "user": _user_to_api(row or {}), "expiresIn": AUTH_TOKEN_TTL_SECONDS})
 
 
 @app.post("/api/v1/auth/logout")
@@ -900,46 +810,45 @@ def logout() -> dict[str, Any]:
 
 
 @app.get("/api/v1/auth/me", response_model=None)
-def me(authorization: str | None = Header(default=None)) -> dict[str, Any] | JSONResponse:
-    username = _extract_username(authorization)
-    if not username:
-        return fail("缺少或无效的 Authorization 请求头", code="UNAUTHORIZED")
-    row = _get_user_by_username(username)
-    if not row or row.get("status") != "ACTIVE":
-        return fail("用户不存在或已禁用", code="UNAUTHORIZED")
+def me(
+    user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any] | JSONResponse:
+    row = get_user_by_id(user.user_id)
+    if not row:
+        raise HTTPException(status_code=401, detail="用户不存在或已禁用")
     return ok(_user_to_api(row))
 
 
 @app.put("/api/v1/auth/me", response_model=None)
-async def update_me(request: Request, authorization: str | None = Header(default=None)) -> dict[str, Any] | JSONResponse:
-    username = _extract_username(authorization)
-    if not username:
-        return fail("未登录", code="UNAUTHORIZED")
-    row = _get_user_by_username(username)
+async def update_me(
+    request: Request,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any] | JSONResponse:
+    row = get_user_by_id(user.user_id)
     if not row:
-        return fail("用户不存在", code="UNAUTHORIZED")
+        raise HTTPException(status_code=401, detail="用户不存在或已禁用")
     body = await request.json()
     _execute(
         "UPDATE tg_user SET display_name = COALESCE(%s, display_name), email = COALESCE(%s, email), updated_at = NOW() WHERE user_id = %s",
         (body.get("displayName"), body.get("email"), row["user_id"]),
     )
-    return ok(_user_to_api(_get_user_by_id(row["user_id"]) or row))
+    return ok(_user_to_api(get_user_by_id(row["user_id"]) or row))
 
 
 @app.put("/api/v1/auth/me/password", response_model=None)
-async def change_my_password(request: Request, authorization: str | None = Header(default=None)) -> dict[str, Any] | JSONResponse:
-    username = _extract_username(authorization)
-    if not username:
-        return fail("未登录", code="UNAUTHORIZED")
-    row = _get_user_by_username(username)
+async def change_my_password(
+    request: Request,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any] | JSONResponse:
+    row = get_user_by_id(user.user_id)
     body = await request.json()
     old_password = body.get("oldPassword") or ""
     new_password = body.get("newPassword") or ""
-    if not row or not _verify_password(row, old_password):
+    if not row or not verify_password(row, old_password):
         return fail("当前密码不正确", code="BAD_REQUEST")
     if len(new_password) < 6:
         return fail("新密码长度至少为 6 位", code="BAD_REQUEST")
-    _execute("UPDATE tg_user SET password_hash = %s, updated_at = NOW() WHERE user_id = %s", (_hash_password(new_password), row["user_id"]))
+    _execute("UPDATE tg_user SET password_hash = %s, updated_at = NOW() WHERE user_id = %s", (hash_password(new_password), row["user_id"]))
     return ok({"updated": True, "userId": row["user_id"]})
 
 
@@ -951,7 +860,7 @@ def list_users() -> dict[str, Any]:
 
 @app.get("/api/v1/admin/users/{user_id}", response_model=None)
 def get_user(user_id: str) -> dict[str, Any] | JSONResponse:
-    row = _get_user_by_id(user_id)
+    row = get_user_by_id(user_id)
     if not row:
         return fail("用户不存在", code="NOT_FOUND")
     return ok(_user_to_api(row))
@@ -960,13 +869,13 @@ def get_user(user_id: str) -> dict[str, Any] | JSONResponse:
 @app.post("/api/v1/admin/users", response_model=None)
 def create_user(req: UserCreateRequest) -> dict[str, Any] | JSONResponse:
     username = req.username.strip()
-    if _get_user_by_username(username):
+    if get_user_by_username(username):
         return fail("用户名已存在", code="BAD_REQUEST")
     role = (req.role or "VIEWER").upper()
     if role not in ("ADMIN", "OPERATOR", "VIEWER"):
         role = "VIEWER"
     user_id = "user-" + uuid.uuid4().hex[:12]
-    hashed = _hash_password(req.password or f"{username}123")
+    hashed = hash_password(req.password or f"{username}123")
     _execute(
         """
         INSERT INTO tg_user (user_id, username, display_name, email, role, status, password_hash, created_at, updated_at)
@@ -974,14 +883,14 @@ def create_user(req: UserCreateRequest) -> dict[str, Any] | JSONResponse:
         """,
         (user_id, username, req.displayName or username, req.email, role, hashed),
     )
-    row = _get_user_by_id(user_id)
+    row = get_user_by_id(user_id)
     _record_audit("USER_CREATED", "admin", user_id, f"username={username} role={role}")
     return ok(_user_to_api(row or {}))
 
 
 @app.put("/api/v1/admin/users/{user_id}", response_model=None)
 async def update_user(user_id: str, request: Request) -> dict[str, Any] | JSONResponse:
-    row = _get_user_by_id(user_id)
+    row = get_user_by_id(user_id)
     if not row:
         return fail("用户不存在", code="NOT_FOUND")
     body = await request.json()
@@ -1004,7 +913,7 @@ async def update_user(user_id: str, request: Request) -> dict[str, Any] | JSONRe
         (body.get("displayName"), body.get("email"), role, status, user_id),
     )
     _record_audit("USER_UPDATED", "admin", user_id, "")
-    return ok(_user_to_api(_get_user_by_id(user_id) or row))
+    return ok(_user_to_api(get_user_by_id(user_id) or row))
 
 
 @app.delete("/api/v1/admin/users/{user_id}", response_model=None)
@@ -1018,14 +927,14 @@ def delete_user(user_id: str) -> dict[str, Any] | JSONResponse:
 
 @app.put("/api/v1/admin/users/{user_id}/password", response_model=None)
 async def set_user_password(user_id: str, request: Request) -> dict[str, Any] | JSONResponse:
-    row = _get_user_by_id(user_id)
+    row = get_user_by_id(user_id)
     if not row:
         return fail("用户不存在", code="NOT_FOUND")
     body = await request.json()
     password = body.get("password") or body.get("newPassword") or ""
     if len(password) < 6:
         return fail("密码长度至少为 6 位", code="BAD_REQUEST")
-    _execute("UPDATE tg_user SET password_hash = %s, updated_at = NOW() WHERE user_id = %s", (_hash_password(password), user_id))
+    _execute("UPDATE tg_user SET password_hash = %s, updated_at = NOW() WHERE user_id = %s", (hash_password(password), user_id))
     return ok({"updated": True, "userId": user_id})
 
 

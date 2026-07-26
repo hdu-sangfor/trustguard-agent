@@ -254,8 +254,15 @@ services:
       ORCHESTRATOR_BASE_URL: http://orchestrator:18081
       EVIDENCE_BASE_URL: http://evidence:18103
       EXECUTOR_BASE_URL: http://executor:18102
+      RAG_SERVICE_BASE_URL: ${RAG_SERVICE_BASE_URL:-http://host.docker.internal:18200}
+      RAG_GATEWAY_SERVICE_TOKEN: ${RAG_GATEWAY_SERVICE_TOKEN:-}
+      AUTH_TOKEN_SECRET: ${AUTH_TOKEN_SECRET:-trustguard-agent-dev-secret}
+      AUTH_TOKEN_TTL_SECONDS: ${AUTH_TOKEN_TTL_SECONDS:-86400}
+      RAG_UPLOAD_MAX_BYTES: ${RAG_UPLOAD_MAX_BYTES:-52428800}
       SERVER_PORT: 18080
     env_file: *optional-env-files
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       mysql: { condition: service_healthy }
       redis: { condition: service_healthy }

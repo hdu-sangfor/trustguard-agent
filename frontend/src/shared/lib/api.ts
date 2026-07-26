@@ -124,7 +124,14 @@ async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
     headers: { ...authHeaders(), ...(opts?.headers as Record<string, string> | undefined) },
   });
   if (resp.status === 401) { fireUnauthorized(); throw new Error('未授权，请重新登录'); }
-  if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
+  if (!resp.ok) {
+    let detail = `HTTP ${resp.status} ${resp.statusText}`;
+    try {
+      const errorBody = await resp.json() as { message?: string; detail?: string };
+      detail = errorBody.message || errorBody.detail || detail;
+    } catch { /* keep HTTP fallback */ }
+    throw new Error(detail);
+  }
   const json = (await resp.json()) as ApiResponse<T>;
   // Backend returns code as string "0"; tolerate both "0" and 0 for older responses.
   if (json.code !== '0' && json.code !== 0) throw new Error(json.message ?? 'API error');
@@ -933,6 +940,411 @@ export interface ApiRuntimeConfig {
 
 export async function getRuntimeConfig(): Promise<ApiRuntimeConfig> {
   return apiFetch<ApiRuntimeConfig>('/api/v1/admin/config/runtime');
+}
+
+// ─── RAG knowledge center ───────────────────────────────────────────────────
+
+export interface ApiRagDependency {
+  status: string;
+  latency_ms?: number | null;
+  detail?: string | null;
+}
+
+export interface ApiRagHealth {
+  status: string;
+  service?: string;
+  version?: string;
+  env?: string;
+  dependencies?: Record<string, ApiRagDependency>;
+}
+
+export interface ApiKnowledgeBase {
+  id: string;
+  name: string;
+  description?: string | null;
+  embedding_profile: string;
+  embedding_provider: string;
+  embedding_api_driver?: string | null;
+  embedding_model: string;
+  embedding_dim: number;
+  content_revision: number;
+  is_default: boolean;
+  is_system: boolean;
+  document_count: number;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface ApiKnowledgeBaseList {
+  items: ApiKnowledgeBase[];
+  total: number;
+}
+
+export interface ApiKnowledgeSourceCapabilities {
+  gateway?: {
+    max_upload_bytes?: number;
+  };
+  embedding_profiles?: Array<{
+    id: string;
+    provider?: string;
+    model?: string;
+    dimension?: number;
+    default?: boolean;
+  }>;
+  sources?: Array<{
+    source_type: string;
+    mime_types?: string[];
+    max_bytes?: number;
+    max_pdf_pages?: number;
+  }>;
+}
+
+export interface ApiKnowledgeDocument {
+  id: string;
+  knowledge_base_id?: string | null;
+  source_type: string;
+  source_uri: string;
+  content_hash: string;
+  status: string;
+  title?: string | null;
+  mime_type?: string | null;
+  original_filename?: string | null;
+  doc_version: number;
+  metadata?: Record<string, unknown> | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface ApiKnowledgeDocumentList {
+  items: ApiKnowledgeDocument[];
+  total: number;
+  offset: number;
+  limit: number;
+}
+
+export interface ApiKnowledgeChunk {
+  id: string;
+  chunk_index: number;
+  text: string;
+  token_count: number;
+  page_no?: number | null;
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface ApiKnowledgeSearchSource {
+  document_id: string;
+  source_uri: string;
+  original_filename?: string | null;
+  chunk_index: number;
+  page_no?: number | null;
+}
+
+export interface ApiKnowledgeSearchHit {
+  chunk_id: string;
+  text: string;
+  score: number;
+  vector_score?: number | null;
+  keyword_score?: number | null;
+  rerank_score?: number | null;
+  title?: string | null;
+  entity_id?: string | null;
+  entity_type?: string | null;
+  exact_entity_match?: string | null;
+  source: ApiKnowledgeSearchSource;
+  metadata?: Record<string, unknown> | null;
+  expanded: boolean;
+}
+
+export interface ApiKnowledgeSearchResponse {
+  schema_version: string;
+  request_id: string;
+  query: string;
+  knowledge_base_id: string;
+  content_revision: number;
+  search_status: string;
+  effective_mode: string;
+  results: ApiKnowledgeSearchHit[];
+  total: number;
+  fusion_method: string;
+  retrieval_time_ms: number;
+  components: Record<string, number>;
+  degraded_components: string[];
+  query_entities: string[];
+  abstained: boolean;
+  abstention_reason?: string | null;
+  query_plan?: Record<string, unknown>;
+  coverage?: { status?: string; warning?: string | null };
+  coverage_warning?: string | null;
+}
+
+export interface ApiKnowledgeAnswerCitation {
+  citation_id: number;
+  chunk_id: string;
+  document_id: string;
+  source_uri: string;
+  original_filename?: string | null;
+  chunk_index: number;
+  page_no?: number | null;
+  excerpt: string;
+}
+
+export interface ApiKnowledgeAnswerUsage {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+}
+
+export interface ApiKnowledgeAnswerResponse {
+  query: string;
+  knowledge_base_id: string;
+  status: string;
+  answer: string;
+  citations: ApiKnowledgeAnswerCitation[];
+  search_status: string;
+  effective_mode: string;
+  degraded_components: string[];
+  abstained: boolean;
+  abstention_reason?: string | null;
+  query_entities: string[];
+  retrieved_count: number;
+  context_chunk_count: number;
+  context_token_count: number;
+  retrieval_time_ms: number;
+  generation_time_ms: number;
+  total_time_ms: number;
+  model?: string | null;
+  usage?: ApiKnowledgeAnswerUsage | null;
+  query_plan?: Record<string, unknown> | null;
+  coverage_status: string;
+  coverage_warning?: string | null;
+}
+
+export interface ApiKnowledgeIngestJob {
+  id: string;
+  source_type: string;
+  status: string;
+  current_step?: string | null;
+  document_id?: string | null;
+  pending_document_id?: string | null;
+  conflict_candidates: string[];
+  error_code?: string | null;
+  error_message?: string | null;
+  attempt: number;
+  max_attempts: number;
+  step_logs?: Array<Record<string, unknown>>;
+  created_at?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  knowledge_base_id?: string | null;
+}
+
+export interface ApiKnowledgeIngestCreated {
+  job_id: string;
+  status: string;
+  knowledge_base_id: string;
+  embedding_profile: string;
+  embedding_model?: string | null;
+  embedding_dim?: number | null;
+}
+
+export async function getRagHealth(): Promise<ApiRagHealth> {
+  return apiFetch<ApiRagHealth>('/api/v1/knowledge/health');
+}
+
+export async function listKnowledgeBases(): Promise<ApiKnowledgeBaseList> {
+  return apiFetch<ApiKnowledgeBaseList>('/api/v1/knowledge/bases');
+}
+
+export async function getKnowledgeCapabilities(): Promise<ApiKnowledgeSourceCapabilities> {
+  return apiFetch<ApiKnowledgeSourceCapabilities>('/api/v1/knowledge/capabilities');
+}
+
+export async function createKnowledgeBase(params: {
+  name: string;
+  description?: string;
+  embeddingProfile?: string;
+}): Promise<ApiKnowledgeBase> {
+  return apiFetch<ApiKnowledgeBase>('/api/v1/knowledge/bases', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: params.name,
+      description: params.description || null,
+      embedding_profile: params.embeddingProfile ?? 'configured',
+    }),
+  });
+}
+
+export async function updateKnowledgeBase(
+  knowledgeBaseId: string,
+  params: { name?: string; description?: string | null },
+): Promise<ApiKnowledgeBase> {
+  return apiFetch<ApiKnowledgeBase>(
+    `/api/v1/knowledge/bases/${encodeURIComponent(knowledgeBaseId)}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    },
+  );
+}
+
+export async function deleteKnowledgeBase(knowledgeBaseId: string): Promise<void> {
+  await apiFetch<unknown>(
+    `/api/v1/knowledge/bases/${encodeURIComponent(knowledgeBaseId)}`,
+    { method: 'DELETE' },
+  );
+}
+
+export async function listKnowledgeDocuments(params: {
+  knowledgeBaseId: string;
+  offset?: number;
+  limit?: number;
+  status?: string;
+  query?: string;
+}): Promise<ApiKnowledgeDocumentList> {
+  const search = new URLSearchParams({
+    knowledge_base_id: params.knowledgeBaseId,
+    offset: String(params.offset ?? 0),
+    limit: String(params.limit ?? 20),
+  });
+  if (params.status) search.set('status', params.status);
+  if (params.query?.trim()) search.set('query', params.query.trim());
+  return apiFetch<ApiKnowledgeDocumentList>(`/api/v1/knowledge/documents?${search.toString()}`);
+}
+
+export async function getKnowledgeDocument(
+  documentId: string,
+  knowledgeBaseId: string,
+): Promise<ApiKnowledgeDocument> {
+  return apiFetch<ApiKnowledgeDocument>(
+    `/api/v1/knowledge/documents/${encodeURIComponent(documentId)}?knowledge_base_id=${encodeURIComponent(knowledgeBaseId)}`,
+  );
+}
+
+export async function getKnowledgeDocumentChunks(
+  documentId: string,
+  knowledgeBaseId: string,
+): Promise<ApiKnowledgeChunk[]> {
+  return apiFetch<ApiKnowledgeChunk[]>(
+    `/api/v1/knowledge/documents/${encodeURIComponent(documentId)}/chunks?knowledge_base_id=${encodeURIComponent(knowledgeBaseId)}`,
+  );
+}
+
+export async function updateKnowledgeDocument(
+  documentId: string,
+  knowledgeBaseId: string,
+  params: { title?: string; original_filename?: string; metadata?: Record<string, unknown> | null },
+): Promise<ApiKnowledgeDocument> {
+  return apiFetch<ApiKnowledgeDocument>(
+    `/api/v1/knowledge/documents/${encodeURIComponent(documentId)}?knowledge_base_id=${encodeURIComponent(knowledgeBaseId)}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    },
+  );
+}
+
+export async function deleteKnowledgeDocument(
+  documentId: string,
+  knowledgeBaseId: string,
+): Promise<void> {
+  await apiFetch<unknown>(
+    `/api/v1/knowledge/documents/${encodeURIComponent(documentId)}?knowledge_base_id=${encodeURIComponent(knowledgeBaseId)}`,
+    { method: 'DELETE' },
+  );
+}
+
+export async function uploadKnowledgeDocument(
+  knowledgeBaseId: string,
+  file: File,
+): Promise<ApiKnowledgeIngestCreated> {
+  const query = new URLSearchParams({ filename: file.name });
+  return apiFetch<ApiKnowledgeIngestCreated>(
+    `/api/v1/knowledge/bases/${encodeURIComponent(knowledgeBaseId)}/documents?${query.toString()}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': file.type || 'application/octet-stream' },
+      body: file,
+    },
+  );
+}
+
+export async function getKnowledgeIngestJob(
+  knowledgeBaseId: string,
+  jobId: string,
+): Promise<ApiKnowledgeIngestJob> {
+  return apiFetch<ApiKnowledgeIngestJob>(
+    `/api/v1/knowledge/bases/${encodeURIComponent(knowledgeBaseId)}/ingest/jobs/${encodeURIComponent(jobId)}`,
+  );
+}
+
+export async function resolveKnowledgeIngestConflict(
+  knowledgeBaseId: string,
+  jobId: string,
+  keepDocumentId: string,
+): Promise<ApiKnowledgeIngestJob> {
+  return apiFetch<ApiKnowledgeIngestJob>(
+    `/api/v1/knowledge/bases/${encodeURIComponent(knowledgeBaseId)}/ingest/jobs/${encodeURIComponent(jobId)}/resolve`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ keep_document_id: keepDocumentId }),
+    },
+  );
+}
+
+export async function searchKnowledge(params: {
+  query: string;
+  knowledgeBaseId: string;
+  topK?: number;
+  retrievalMode?: 'auto' | 'focused' | 'comprehensive' | 'enumeration';
+  enableQueryRewrite?: boolean;
+  enableVector?: boolean;
+  enableKeyword?: boolean;
+  enableRerank?: boolean;
+}): Promise<ApiKnowledgeSearchResponse> {
+  return apiFetch<ApiKnowledgeSearchResponse>('/api/v1/knowledge/search', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      query: params.query,
+      knowledge_base_id: params.knowledgeBaseId,
+      top_k: params.topK ?? 8,
+      retrieval_mode: params.retrievalMode ?? 'auto',
+      enable_query_rewrite: params.enableQueryRewrite ?? false,
+      enable_vector: params.enableVector ?? true,
+      enable_keyword: params.enableKeyword ?? true,
+      enable_rerank: params.enableRerank ?? true,
+    }),
+  });
+}
+
+export async function answerKnowledge(params: {
+  query: string;
+  knowledgeBaseId: string;
+  topK?: number;
+  retrievalMode?: 'auto' | 'focused' | 'comprehensive' | 'enumeration';
+  enableQueryRewrite?: boolean;
+  enableVector?: boolean;
+  enableKeyword?: boolean;
+  enableRerank?: boolean;
+}): Promise<ApiKnowledgeAnswerResponse> {
+  return apiFetch<ApiKnowledgeAnswerResponse>('/api/v1/knowledge/answer', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      query: params.query,
+      knowledge_base_id: params.knowledgeBaseId,
+      top_k: params.topK ?? 8,
+      retrieval_mode: params.retrievalMode ?? 'auto',
+      enable_query_rewrite: params.enableQueryRewrite ?? true,
+      enable_vector: params.enableVector ?? true,
+      enable_keyword: params.enableKeyword ?? true,
+      enable_rerank: params.enableRerank ?? true,
+    }),
+  });
 }
 
 export async function getConfigOverrides(): Promise<Record<string, string>> {
