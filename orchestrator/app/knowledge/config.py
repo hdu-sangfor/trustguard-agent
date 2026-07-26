@@ -46,6 +46,8 @@ def _float_env(
 class KnowledgeMcpSettings:
     enabled: bool
     shadow_mode: bool
+    materialize_enabled: bool
+    inject_enabled: bool
     endpoint: str
     access_token: str | None
     scope: KnowledgeScope
@@ -54,6 +56,7 @@ class KnowledgeMcpSettings:
     rewrite: bool
     timeout_seconds: float
     max_retries: int
+    materialize_limit: int
     workspace_id: str
     workflow_type: str
 
@@ -70,9 +73,17 @@ class KnowledgeMcpSettings:
             endpoint = "http://localhost:18201/mcp"
         raw_scope = (env.get("KNOWLEDGE_MCP_SCOPE") or "penetration").strip()
         raw_mode = (env.get("KNOWLEDGE_MCP_MODE") or "comprehensive").strip()
+        inject_enabled = _bool_env(env, "KNOWLEDGE_MCP_INJECT_ENABLED", False)
+        materialize_enabled = _bool_env(
+            env,
+            "KNOWLEDGE_MCP_MATERIALIZE_ENABLED",
+            False,
+        ) or inject_enabled
         return cls(
             enabled=_bool_env(env, "KNOWLEDGE_MCP_ENABLED", False),
             shadow_mode=_bool_env(env, "KNOWLEDGE_MCP_SHADOW_MODE", True),
+            materialize_enabled=materialize_enabled,
+            inject_enabled=inject_enabled,
             endpoint=endpoint,
             access_token=(env.get("KNOWLEDGE_MCP_ACCESS_TOKEN") or "").strip() or None,
             scope=KnowledgeScope(raw_scope),
@@ -93,6 +104,13 @@ class KnowledgeMcpSettings:
                 minimum=0,
                 maximum=3,
             ),
+            materialize_limit=_int_env(
+                env,
+                "KNOWLEDGE_MCP_MATERIALIZE_LIMIT",
+                3,
+                minimum=1,
+                maximum=20,
+            ),
             workspace_id=(env.get("KNOWLEDGE_MCP_WORKSPACE_ID") or "default").strip()
             or "default",
             workflow_type=(
@@ -100,6 +118,10 @@ class KnowledgeMcpSettings:
             ).strip()
             or "penetration",
         )
+
+    @property
+    def effective_inject_enabled(self) -> bool:
+        return self.inject_enabled and not self.shadow_mode
 
 
 def knowledge_mcp_enabled(environ: Mapping[str, str] | None = None) -> bool:

@@ -12,7 +12,11 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
 from app.knowledge.config import KnowledgeMcpSettings
-from app.knowledge.models import KnowledgeSearchRequest, KnowledgeSearchResponse
+from app.knowledge.models import (
+    KnowledgeResource,
+    KnowledgeSearchRequest,
+    KnowledgeSearchResponse,
+)
 
 
 @dataclass(frozen=True)
@@ -30,6 +34,13 @@ class KnowledgeTransport(Protocol):
         *,
         context: KnowledgeCallContext,
     ) -> KnowledgeSearchResponse: ...
+
+    async def read_resource(
+        self,
+        resource_uri: str,
+        *,
+        context: KnowledgeCallContext,
+    ) -> KnowledgeResource: ...
 
     async def aclose(self) -> None: ...
 
@@ -96,11 +107,8 @@ class McpKnowledgeTransport:
                 retryable=True,
             ) from exc
         except Exception as exc:
-            raise McpKnowledgeTransportError(
-                "MCP_UNAVAILABLE",
-                f"RAG MCP request failed: {str(exc)[:300]}",
-                retryable=True,
-            ) from exc
+            code, message, retryable = _exception_error(exc)
+            raise McpKnowledgeTransportError(code, message, retryable=retryable) from exc
         finally:
             self._context_headers.reset(token)
 
@@ -119,6 +127,69 @@ class McpKnowledgeTransport:
             raise McpKnowledgeTransportError(
                 "MCP_SCHEMA_MISMATCH",
                 f"knowledge_search response failed v1 validation: {str(exc)[:300]}",
+                retryable=False,
+            ) from exc
+
+    async def read_resource(
+        self,
+        resource_uri: str,
+        *,
+        context: KnowledgeCallContext,
+    ) -> KnowledgeResource:
+        token = self._context_headers.set(self._headers(context))
+        try:
+            async with (
+                streamable_http_client(
+                    self._settings.endpoint,
+                    http_client=self._client,
+                ) as (read_stream, write_stream, _),
+                ClientSession(
+                    read_stream,
+                    write_stream,
+                    read_timeout_seconds=timedelta(
+                        seconds=self._settings.timeout_seconds
+                    ),
+                ) as session,
+            ):
+                await session.initialize()
+                await self._ensure_contract(session)
+                result = await session.read_resource(resource_uri)
+        except McpKnowledgeTransportError:
+            raise
+        except (httpx.TimeoutException, TimeoutError) as exc:
+            raise McpKnowledgeTransportError(
+                "MCP_TIMEOUT",
+                "RAG MCP knowledge resource read timed out",
+                retryable=True,
+            ) from exc
+        except Exception as exc:
+            code, message, retryable = _exception_error(exc)
+            raise McpKnowledgeTransportError(code, message, retryable=retryable) from exc
+        finally:
+            self._context_headers.reset(token)
+
+        text = next(
+            (
+                candidate
+                for item in result.contents
+                if isinstance((candidate := getattr(item, "text", None)), str)
+                and candidate.strip()
+            ),
+            None,
+        )
+        if text is None:
+            raise McpKnowledgeTransportError(
+                "MCP_SCHEMA_MISMATCH",
+                "knowledge resource did not return JSON text content",
+                retryable=False,
+            )
+        try:
+            payload = json.loads(text)
+            return KnowledgeResource.model_validate(payload)
+        except Exception as exc:
+            raise McpKnowledgeTransportError(
+                "MCP_SCHEMA_MISMATCH",
+                f"knowledge resource failed v1 validation: {str(exc)[:300]}",
                 retryable=False,
             ) from exc
 
@@ -161,6 +232,23 @@ class McpKnowledgeTransport:
                     "RAG MCP knowledge_search v1 schema is unavailable",
                     retryable=False,
                 )
+            templates = await session.list_resource_templates()
+            resource_template = next(
+                (
+                    item
+                    for item in templates.resourceTemplates
+                    if item.name == "knowledge_resource"
+                ),
+                None,
+            )
+            if resource_template is None or str(resource_template.uriTemplate) != (
+                "trustguard-rag://{scope}/resources/{resource_ref}"
+            ):
+                raise McpKnowledgeTransportError(
+                    "MCP_SCHEMA_MISMATCH",
+                    "RAG MCP knowledge resource v1 template is unavailable",
+                    retryable=False,
+                )
             self._contract_validated = True
 
     async def _inject_context_headers(self, request: httpx.Request) -> None:
@@ -197,3 +285,19 @@ def _tool_error(content: list[Any]) -> tuple[str, str, bool]:
     except (TypeError, ValueError):
         pass
     return "MCP_TOOL_ERROR", (text or "RAG MCP knowledge_search failed")[:500], False
+
+
+def _exception_error(exc: Exception) -> tuple[str, str, bool]:
+    text = str(exc).strip()
+    for position, char in enumerate(text):
+        if char != "{":
+            continue
+        try:
+            payload, _ = json.JSONDecoder().raw_decode(text[position:])
+        except (TypeError, ValueError):
+            continue
+        if isinstance(payload, dict):
+            code = str(payload.get("code") or "MCP_UNAVAILABLE")
+            message = str(payload.get("message") or text or "RAG MCP request failed")
+            return code, message[:500], bool(payload.get("retryable"))
+    return "MCP_UNAVAILABLE", (text or "RAG MCP request failed")[:500], True

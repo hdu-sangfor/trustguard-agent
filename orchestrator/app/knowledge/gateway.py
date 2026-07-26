@@ -9,7 +9,11 @@ from app.knowledge.mcp_client import (
     McpKnowledgeTransport,
     McpKnowledgeTransportError,
 )
-from app.knowledge.models import KnowledgeSearchRequest, KnowledgeSearchResponse
+from app.knowledge.models import (
+    KnowledgeResource,
+    KnowledgeSearchRequest,
+    KnowledgeSearchResponse,
+)
 
 
 class KnowledgeGateway:
@@ -44,6 +48,36 @@ class KnowledgeGateway:
                 last_error = McpKnowledgeTransportError(
                     "MCP_TIMEOUT",
                     "RAG MCP knowledge_search timed out",
+                    retryable=True,
+                )
+                if attempt >= self._max_retries:
+                    raise last_error from exc
+        assert last_error is not None
+        raise last_error
+
+    async def read_resource(
+        self,
+        resource_uri: str,
+        *,
+        context: KnowledgeCallContext,
+    ) -> KnowledgeResource:
+        last_error: McpKnowledgeTransportError | None = None
+        for attempt in range(self._max_retries + 1):
+            try:
+                async with asyncio.timeout(self._timeout_seconds):
+                    return await self._transport.read_resource(
+                        resource_uri,
+                        context=context,
+                    )
+            except McpKnowledgeTransportError as exc:
+                last_error = exc
+                if not exc.retryable or attempt >= self._max_retries:
+                    raise
+                await asyncio.sleep(min(0.25 * (2**attempt), 1.0))
+            except TimeoutError as exc:
+                last_error = McpKnowledgeTransportError(
+                    "MCP_TIMEOUT",
+                    "RAG MCP knowledge resource read timed out",
                     retryable=True,
                 )
                 if attempt >= self._max_retries:

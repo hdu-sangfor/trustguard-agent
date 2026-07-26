@@ -131,3 +131,24 @@ class KnowledgeResource(BaseModel):
     ) = None
     visibility: Literal["global", "workspace"]
     metadata: dict[str, Any]
+
+
+class KnowledgeSourceRef(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["knowledge-source-ref-v1"] = "knowledge-source-ref-v1"
+    provider: Literal["trustguard-rag-mcp"] = "trustguard-rag-mcp"
+    scope: str = Field(min_length=1, max_length=64)
+    resource_uri: str = Field(pattern=r"^trustguard-rag://")
+    resource_ref: str = Field(min_length=1, max_length=2048, pattern=r"^krf1\.")
+    search_content_revision: str = Field(min_length=1, max_length=128)
+    resource_content_revision: str = Field(min_length=1, max_length=128)
+    source_revision: int = Field(ge=1)
+    content_hash: str = Field(pattern=r"^sha256:[a-f0-9]{64}$")
+    document_id: str | None = Field(default=None, max_length=128)
+    experience_id: str | None = Field(default=None, max_length=128)
+    source_uri: str | None = Field(default=None, max_length=2048)
+    source_type: Literal["document", "experience", "playbook"]
+    workflow_type: str | None = Field(default=None, max_length=64)
+    visibility: Literal["global", "workspace"]
+    retrieved_at: str = Field(min_length=1, max_length=64)
