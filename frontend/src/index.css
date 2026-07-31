@@ -47,7 +47,9 @@
 }
 
 :root {
-  --fontSans: "Inter";
+  --tg-font-ui: "Inter", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --tg-font-mono: "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  --fontSans: var(--tg-font-ui);
   --background: rgba(255, 255, 255, 1);
   --foreground: rgba(32, 32, 32, 1);
   --card: rgba(255, 255, 255, 1);
@@ -456,7 +458,7 @@ body.no-page-scroll {
 .sentinel-body {
   background: var(--dark-bg);
   color: #e0f7ff;
-  font-family: 'Inter', 'Courier New', monospace;
+  font-family: var(--tg-font-ui);
   overflow-x: hidden;
 }
 
@@ -530,6 +532,33 @@ html[data-theme="light"] .nav-link {
 .nav-link:hover {
   color: var(--neon-blue);
   text-shadow: 0 0 8px color-mix(in srgb, var(--neon-blue) 45%, transparent);
+}
+
+.nav-menu-btn {
+  display: none !important;
+}
+
+@media (max-width: 1480px) {
+  .nav-primary {
+    display: none !important;
+  }
+
+  .nav-menu-btn {
+    display: inline-flex !important;
+  }
+}
+
+@media (max-width: 760px) {
+  .nav-glass {
+    padding-inline: 14px !important;
+    gap: 10px !important;
+  }
+
+  .nav-brand-text,
+  .nav-health,
+  .nav-user-name {
+    display: none !important;
+  }
 }
 
 .nav-login-btn {

@@ -23,8 +23,8 @@ const inputStyle: CSSProperties = {
   border: "1px solid var(--tg-panel-border)",
   borderRadius: 7,
   color: "var(--tg-text)",
-  fontFamily: "monospace",
-  fontSize: 13,
+  fontFamily: "var(--tg-font-ui)",
+  fontSize: 14,
   outline: "none",
 };
 
@@ -86,18 +86,18 @@ export default function KnowledgeAnswerPanel({
 
   return (
     <section className="knowledge-answer-layout">
-      <div style={{ ...panelStyle, padding: 18, alignSelf: "start" }}>
+      <div className="knowledge-form-panel" style={{ ...panelStyle, padding: 20, alignSelf: "start" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 17 }}>
           <MessageSquareText size={17} color="var(--tg-accent)" />
           <div>
-            <div style={{ color: "var(--tg-text)", fontSize: 14, fontWeight: 700 }}>基于知识库回答</div>
-            <div style={{ color: "var(--tg-text-faint)", fontSize: 10, marginTop: 2 }}>
+            <div style={{ color: "var(--tg-text)", fontSize: 16, fontWeight: 750 }}>基于知识库回答</div>
+            <div style={{ color: "var(--tg-text-muted)", fontSize: 12, marginTop: 3, lineHeight: 1.5 }}>
               单轮检索增强生成 · 强制引用与拒答
             </div>
           </div>
         </div>
 
-        <label style={{ display: "block", color: "var(--tg-text-muted)", fontSize: 12, marginBottom: 7 }}>
+        <label style={{ display: "block", color: "var(--tg-text-muted)", fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
           知识库范围
         </label>
         <select
@@ -117,7 +117,7 @@ export default function KnowledgeAnswerPanel({
           ))}
         </select>
 
-        <label style={{ display: "block", color: "var(--tg-text-muted)", fontSize: 12, margin: "16px 0 7px" }}>
+        <label style={{ display: "block", color: "var(--tg-text-muted)", fontSize: 13, fontWeight: 600, margin: "18px 0 8px" }}>
           问题
         </label>
         <textarea
@@ -162,7 +162,7 @@ export default function KnowledgeAnswerPanel({
           ].map(([label, value, setter]) => (
             <label
               key={label as string}
-              style={{ color: "var(--tg-text-muted)", fontSize: 12, display: "flex", gap: 7, alignItems: "center" }}
+              style={{ color: "var(--tg-text-muted)", fontSize: 13, fontWeight: 550, display: "flex", gap: 8, alignItems: "center" }}
             >
               <input
                 type="checkbox"
@@ -186,7 +186,8 @@ export default function KnowledgeAnswerPanel({
             padding: "10px 14px",
             background: "var(--tg-accent-soft)",
             color: "var(--tg-accent)",
-            fontFamily: "monospace",
+            fontFamily: "var(--tg-font-ui)",
+            fontSize: 13,
             fontWeight: 700,
             cursor: answering ? "wait" : "pointer",
           }}
@@ -197,11 +198,11 @@ export default function KnowledgeAnswerPanel({
 
       <div style={{ minWidth: 0 }}>
         {!result && (
-          <div style={{ ...panelStyle, minHeight: 400, display: "grid", placeItems: "center", padding: 30, textAlign: "center" }}>
+          <div className="knowledge-empty-state" style={{ ...panelStyle, minHeight: 400, display: "grid", placeItems: "center", padding: 34, textAlign: "center" }}>
             <div>
               <Bot size={38} color="var(--tg-accent)" style={{ margin: "0 auto 14px", opacity: 0.78 }} />
-              <h2 style={{ color: "var(--tg-text)", fontSize: 16, margin: 0 }}>等待基于证据的回答</h2>
-              <p style={{ color: "var(--tg-text-muted)", fontSize: 12, maxWidth: 460, lineHeight: 1.75 }}>
+              <h2 style={{ color: "var(--tg-text)", fontSize: 18, fontWeight: 700, margin: 0 }}>等待基于证据的回答</h2>
+              <p style={{ color: "var(--tg-text-muted)", fontSize: 14, maxWidth: 500, lineHeight: 1.8 }}>
                 RAG 会先检索证据，再生成带引用的回答。证据不足时应明确拒答，而不是补全未经验证的结论。
               </p>
             </div>
@@ -210,7 +211,7 @@ export default function KnowledgeAnswerPanel({
 
         {result && (
           <>
-            <div style={{ ...panelStyle, padding: 14, display: "flex", gap: 15, flexWrap: "wrap", color: "var(--tg-text-muted)", fontSize: 11 }}>
+            <div style={{ ...panelStyle, padding: 15, display: "flex", gap: 16, flexWrap: "wrap", color: "var(--tg-text-muted)", fontSize: 12 }}>
               <span>
                 状态{" "}
                 <strong style={{ color: result.status === "answered" ? "var(--tg-success)" : "var(--tg-warning)" }}>
@@ -240,11 +241,11 @@ export default function KnowledgeAnswerPanel({
                 ) : (
                   <ShieldAlert size={18} color="var(--tg-warning)" />
                 )}
-                <span style={{ color: result.status === "answered" ? "var(--tg-accent)" : "var(--tg-warning)", fontSize: 11, fontFamily: "monospace" }}>
+                <span style={{ color: result.status === "answered" ? "var(--tg-accent)" : "var(--tg-warning)", fontSize: 12, fontFamily: "var(--tg-font-mono)", fontWeight: 700 }}>
                   {result.status === "answered" ? "GROUNDED ANSWER" : "INSUFFICIENT EVIDENCE"}
                 </span>
               </div>
-              <p style={{ color: "var(--tg-text)", fontSize: 14, lineHeight: 1.85, whiteSpace: "pre-wrap", margin: "15px 0 0" }}>
+              <p style={{ color: "var(--tg-text)", fontSize: 15, lineHeight: 1.9, whiteSpace: "pre-wrap", margin: "16px 0 0" }}>
                 {result.answer}
               </p>
               {(result.abstention_reason || result.coverage_warning) && (
@@ -265,15 +266,15 @@ export default function KnowledgeAnswerPanel({
                   <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
                     <Quote size={17} color="var(--tg-accent)" style={{ flexShrink: 0, marginTop: 2 }} />
                     <div style={{ minWidth: 0, flex: 1 }}>
-                      <div style={{ color: "var(--tg-text)", fontSize: 12, fontWeight: 700 }}>
+                      <div style={{ color: "var(--tg-text)", fontSize: 14, fontWeight: 700 }}>
                         [{citation.citation_id}] {citation.original_filename || citation.source_uri}
                       </div>
-                      <div style={{ color: "var(--tg-text-faint)", fontSize: 10, fontFamily: "monospace", marginTop: 4 }}>
+                      <div style={{ color: "var(--tg-text-muted)", fontSize: 11, fontFamily: "var(--tg-font-mono)", marginTop: 5 }}>
                         CHUNK {citation.chunk_index + 1}
                         {citation.page_no ? ` · PAGE ${citation.page_no}` : ""}
                         {" · "}{citation.document_id}
                       </div>
-                      <p style={{ color: "var(--tg-text-muted)", fontSize: 12, lineHeight: 1.7, margin: "10px 0 0", whiteSpace: "pre-wrap" }}>
+                      <p style={{ color: "var(--tg-text-muted)", fontSize: 14, lineHeight: 1.8, margin: "11px 0 0", whiteSpace: "pre-wrap" }}>
                         {citation.excerpt}
                       </p>
                     </div>

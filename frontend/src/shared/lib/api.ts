@@ -28,6 +28,25 @@ export interface ApiEvent {
   payload: Record<string, unknown>;
 }
 
+export interface ApiTaskKnowledgeChunk {
+  chunkId: string;
+  title: string;
+  filename: string;
+  pageNo: number | null;
+  preview: string;
+  textLength: number;
+  truncated: boolean;
+  sourceType: string;
+  sourceUri: string;
+  scope: string;
+  contentType: string;
+}
+
+export interface ApiTaskKnowledgeChunksResult {
+  chunks: ApiTaskKnowledgeChunk[];
+  missingChunkIds: string[];
+}
+
 export interface ApiTodo {
   todoId: string;
   name: string;
@@ -223,6 +242,20 @@ export async function getTaskEvents(taskId: string, limit = 500): Promise<ApiEve
   // Backend returns events as direct array; tolerate both formats
   if (Array.isArray(data)) return data;
   return data.events ?? [];
+}
+
+export async function getTaskKnowledgeChunks(
+  taskId: string,
+  chunkIds: string[],
+): Promise<ApiTaskKnowledgeChunksResult> {
+  return apiFetch<ApiTaskKnowledgeChunksResult>(
+    `/api/v1/tasks/${taskId}/knowledge-chunks:batchGet`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chunk_ids: chunkIds }),
+    },
+  );
 }
 
 export async function getTaskObservation(taskId: string): Promise<ApiObservation> {

@@ -76,8 +76,8 @@ const inputStyle = {
   border: "1px solid var(--tg-panel-border)",
   borderRadius: 7,
   color: "var(--tg-text)",
-  fontFamily: "monospace",
-  fontSize: 13,
+  fontFamily: "var(--tg-font-ui)",
+  fontSize: 14,
   outline: "none",
 } as const;
 
@@ -141,15 +141,15 @@ function MetricCard({
   detail: string;
 }) {
   return (
-    <div style={{ ...panelStyle, padding: "16px 18px", flex: "1 1 190px", minWidth: 180 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--tg-text-muted)", fontSize: 12 }}>
+    <div className="knowledge-metric-card" style={{ ...panelStyle, padding: "18px 20px", flex: "1 1 190px", minWidth: 180 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--tg-text-muted)", fontSize: 13, fontWeight: 600 }}>
         {icon}
         <span>{label}</span>
       </div>
-      <div style={{ marginTop: 10, color: "var(--tg-text)", fontSize: 24, fontWeight: 800, fontFamily: "monospace" }}>
+      <div style={{ marginTop: 11, color: "var(--tg-text)", fontSize: 26, lineHeight: 1.15, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>
         {value}
       </div>
-      <div style={{ marginTop: 4, color: "var(--tg-text-faint)", fontSize: 11 }}>{detail}</div>
+      <div style={{ marginTop: 6, color: "var(--tg-text-muted)", fontSize: 12, lineHeight: 1.5 }}>{detail}</div>
     </div>
   );
 }
@@ -492,18 +492,18 @@ export default function KnowledgePage() {
   };
 
   return (
-    <div style={{ minHeight: "100vh", background: "var(--tg-page-gradient)", paddingTop: 82, paddingBottom: 60 }}>
+    <div className="knowledge-page" style={{ minHeight: "100vh", background: "var(--tg-page-gradient)", paddingTop: 82, paddingBottom: 60 }}>
       <Header />
-      <main style={{ maxWidth: 1380, margin: "0 auto", padding: "0 24px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 18, alignItems: "flex-start", flexWrap: "wrap" }}>
+      <main className="knowledge-page-content" style={{ maxWidth: 1380, margin: "0 auto", padding: "0 24px" }}>
+        <div className="knowledge-page-heading" style={{ display: "flex", justifyContent: "space-between", gap: 18, alignItems: "flex-start", flexWrap: "wrap" }}>
           <div>
-            <div style={{ color: "var(--tg-accent)", fontSize: 11, letterSpacing: "0.18em", fontFamily: "monospace" }}>
+            <div style={{ color: "var(--tg-accent)", fontSize: 11, letterSpacing: "0.18em", fontFamily: "var(--tg-font-mono)", fontWeight: 700 }}>
               TRUSTGUARD KNOWLEDGE
             </div>
-            <h1 style={{ margin: "7px 0 5px", color: "var(--tg-text)", fontSize: 25, fontFamily: "monospace" }}>
+            <h1 style={{ margin: "7px 0 7px", color: "var(--tg-text)", fontSize: 28, fontWeight: 800 }}>
               知识中心
             </h1>
-            <p style={{ margin: 0, color: "var(--tg-text-muted)", fontSize: 13 }}>
+            <p style={{ margin: 0, color: "var(--tg-text-muted)", fontSize: 14, lineHeight: 1.7 }}>
               单租户共享知识中心：通过 Agent Gateway 完成知识问答、检索、知识库与文档管理。
             </p>
           </div>
@@ -527,7 +527,7 @@ export default function KnowledgePage() {
           </button>
         </div>
 
-        <div style={{ display: "flex", gap: 13, flexWrap: "wrap", marginTop: 24 }}>
+        <div className="knowledge-metrics" style={{ display: "flex", gap: 13, flexWrap: "wrap", marginTop: 24 }}>
           <MetricCard
             icon={<Activity size={15} />}
             label="RAG 服务"
@@ -554,7 +554,7 @@ export default function KnowledgePage() {
           />
         </div>
 
-        <div style={{ ...panelStyle, marginTop: 18, padding: 6, display: "flex", gap: 6, width: "fit-content" }}>
+        <div className="knowledge-view-tabs" style={{ ...panelStyle, marginTop: 20, padding: 6, display: "flex", gap: 6, width: "fit-content" }}>
           {([
             ["answer", "知识问答", MessageSquareText],
             ["search", "知识检索", Search],
@@ -574,8 +574,9 @@ export default function KnowledgePage() {
                 gap: 7,
                 alignItems: "center",
                 cursor: "pointer",
-                fontFamily: "monospace",
-                fontSize: 12,
+                fontFamily: "var(--tg-font-ui)",
+                fontSize: 13,
+                fontWeight: view === name ? 700 : 600,
               }}
             >
               <Icon size={14} />
@@ -601,8 +602,8 @@ export default function KnowledgePage() {
           />
         ) : view === "search" ? (
           <section className="knowledge-search-layout">
-            <div style={{ ...panelStyle, padding: 18, alignSelf: "start" }}>
-              <label style={{ display: "block", color: "var(--tg-text-muted)", fontSize: 12, marginBottom: 7 }}>知识库范围</label>
+            <div className="knowledge-form-panel" style={{ ...panelStyle, padding: 20, alignSelf: "start" }}>
+              <label style={{ display: "block", color: "var(--tg-text-muted)", fontSize: 13, fontWeight: 600, marginBottom: 8 }}>知识库范围</label>
               <select
                 value={selectedBaseId}
                 onChange={(event) => {
@@ -620,7 +621,7 @@ export default function KnowledgePage() {
                 ))}
               </select>
 
-              <label style={{ display: "block", color: "var(--tg-text-muted)", fontSize: 12, margin: "16px 0 7px" }}>检索问题</label>
+              <label style={{ display: "block", color: "var(--tg-text-muted)", fontSize: 13, fontWeight: 600, margin: "18px 0 8px" }}>检索问题</label>
               <textarea
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
@@ -657,7 +658,7 @@ export default function KnowledgePage() {
                   ["结果重排", enableRerank, setEnableRerank],
                   ["Query 改写", enableRewrite, setEnableRewrite],
                 ].map(([label, value, setter]) => (
-                  <label key={label as string} style={{ color: "var(--tg-text-muted)", fontSize: 12, display: "flex", gap: 7, alignItems: "center" }}>
+                  <label key={label as string} style={{ color: "var(--tg-text-muted)", fontSize: 13, fontWeight: 550, display: "flex", gap: 8, alignItems: "center" }}>
                     <input
                       type="checkbox"
                       checked={value as boolean}
@@ -680,7 +681,8 @@ export default function KnowledgePage() {
                   padding: "10px 14px",
                   background: "var(--tg-accent-soft)",
                   color: "var(--tg-accent)",
-                  fontFamily: "monospace",
+                  fontFamily: "var(--tg-font-ui)",
+                  fontSize: 13,
                   fontWeight: 700,
                   cursor: searching ? "wait" : "pointer",
                 }}
@@ -691,11 +693,11 @@ export default function KnowledgePage() {
 
             <div style={{ minWidth: 0 }}>
               {!searchResult && (
-                <div style={{ ...panelStyle, minHeight: 360, display: "grid", placeItems: "center", padding: 30, textAlign: "center" }}>
+                <div className="knowledge-empty-state" style={{ ...panelStyle, minHeight: 380, display: "grid", placeItems: "center", padding: 34, textAlign: "center" }}>
                   <div>
                     <Search size={34} color="var(--tg-accent)" style={{ margin: "0 auto 14px", opacity: 0.75 }} />
-                    <h2 style={{ color: "var(--tg-text)", fontSize: 16, margin: 0 }}>等待知识检索</h2>
-                    <p style={{ color: "var(--tg-text-muted)", fontSize: 12, maxWidth: 420, lineHeight: 1.7 }}>
+                    <h2 style={{ color: "var(--tg-text)", fontSize: 18, fontWeight: 700, margin: 0 }}>等待知识检索</h2>
+                    <p style={{ color: "var(--tg-text-muted)", fontSize: 14, maxWidth: 480, lineHeight: 1.8 }}>
                       检索结果由 TrustGuard RAG 提供。当前页面只读取结构化结果，不直接访问 Qdrant 或 OpenSearch。
                     </p>
                   </div>
@@ -704,7 +706,7 @@ export default function KnowledgePage() {
 
               {searchResult && (
                 <>
-                  <div style={{ ...panelStyle, padding: 14, display: "flex", gap: 15, flexWrap: "wrap", color: "var(--tg-text-muted)", fontSize: 11 }}>
+                  <div style={{ ...panelStyle, padding: 15, display: "flex", gap: 16, flexWrap: "wrap", color: "var(--tg-text-muted)", fontSize: 12 }}>
                     <span>结果 <strong style={{ color: "var(--tg-text)" }}>{searchResult.total}</strong></span>
                     <span>耗时 <strong style={{ color: "var(--tg-text)" }}>{searchResult.retrieval_time_ms.toFixed(1)} ms</strong></span>
                     <span>模式 <strong style={{ color: "var(--tg-text)" }}>{searchResult.effective_mode}</strong></span>
@@ -726,7 +728,7 @@ export default function KnowledgePage() {
                       <article key={hit.chunk_id} style={{ ...panelStyle, padding: 17 }}>
                         <div style={{ display: "flex", justifyContent: "space-between", gap: 14 }}>
                           <div style={{ minWidth: 0 }}>
-                            <div style={{ color: "var(--tg-accent)", fontFamily: "monospace", fontSize: 11 }}>
+                            <div style={{ color: "var(--tg-accent)", fontFamily: "var(--tg-font-mono)", fontSize: 12, fontWeight: 700 }}>
                               #{String(index + 1).padStart(2, "0")} · CHUNK {hit.source.chunk_index + 1}
                               {hit.source.page_no ? ` · PAGE ${hit.source.page_no}` : ""}
                             </div>
@@ -734,7 +736,7 @@ export default function KnowledgePage() {
                               {hit.title || hit.source.original_filename || hit.source.source_uri}
                             </h3>
                           </div>
-                          <div style={{ color: "var(--tg-text-muted)", fontSize: 10, textAlign: "right", fontFamily: "monospace", flexShrink: 0 }}>
+                          <div style={{ color: "var(--tg-text-muted)", fontSize: 11, lineHeight: 1.55, textAlign: "right", fontFamily: "var(--tg-font-mono)", flexShrink: 0 }}>
                             <div>RERANK {formatScore(hit.rerank_score)}</div>
                             <div>VECTOR {formatScore(hit.vector_score)}</div>
                             <div>KEYWORD {formatScore(hit.keyword_score)}</div>
@@ -743,7 +745,7 @@ export default function KnowledgePage() {
                         <p style={{ color: "var(--tg-text-muted)", fontSize: 13, lineHeight: 1.75, whiteSpace: "pre-wrap", margin: "13px 0 0" }}>
                           {hit.text}
                         </p>
-                        <div style={{ marginTop: 12, color: "var(--tg-text-faint)", fontSize: 10, fontFamily: "monospace", overflowWrap: "anywhere" }}>
+                        <div style={{ marginTop: 12, color: "var(--tg-text-muted)", fontSize: 11, fontFamily: "var(--tg-font-mono)", overflowWrap: "anywhere" }}>
                           {hit.source.document_id}
                         </div>
                       </article>
@@ -827,12 +829,12 @@ export default function KnowledgePage() {
                 <div style={{ ...panelStyle, padding: 17 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 14, alignItems: "flex-start" }}>
                     <div>
-                      <div style={{ display: "flex", gap: 8, alignItems: "center", color: "var(--tg-accent)", fontSize: 11, fontFamily: "monospace" }}>
+                      <div style={{ display: "flex", gap: 8, alignItems: "center", color: "var(--tg-accent)", fontSize: 11, fontFamily: "var(--tg-font-mono)", fontWeight: 700 }}>
                         <ShieldCheck size={14} />
                         SINGLE-TENANT SHARED KNOWLEDGE
                       </div>
                       <h2 style={{ color: "var(--tg-text)", fontSize: 16, margin: "8px 0 4px" }}>{selectedBase.name}</h2>
-                      <p style={{ color: "var(--tg-text-muted)", fontSize: 12, lineHeight: 1.65, margin: 0 }}>
+                      <p style={{ color: "var(--tg-text-muted)", fontSize: 14, lineHeight: 1.75, margin: 0 }}>
                         {selectedBase.description || "暂无知识库描述"}
                       </p>
                     </div>
@@ -856,7 +858,7 @@ export default function KnowledgePage() {
                       </button>
                     </div>
                   </div>
-                  <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 13, color: "var(--tg-text-faint)", fontSize: 10, fontFamily: "monospace" }}>
+                  <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 14, color: "var(--tg-text-muted)", fontSize: 11, fontFamily: "var(--tg-font-mono)" }}>
                     <span>{selectedBase.document_count} DOCUMENTS</span>
                     <span>REVISION {selectedBase.content_revision}</span>
                     <span>{selectedBase.embedding_profile}</span>
@@ -866,7 +868,7 @@ export default function KnowledgePage() {
 
                 <div style={{ ...panelStyle, padding: 17 }}>
                   <div style={{ color: "var(--tg-text)", fontSize: 13, fontWeight: 700 }}>文件入库</div>
-                  <p style={{ color: "var(--tg-text-muted)", fontSize: 11, lineHeight: 1.6, margin: "7px 0 0" }}>
+                  <p style={{ color: "var(--tg-text-muted)", fontSize: 13, lineHeight: 1.7, margin: "8px 0 0" }}>
                     支持 PDF、DOCX、文本、Markdown、CSV、JSON、HTML 与启用 OCR 后的图片。
                     {capabilities?.sources?.[0]?.max_bytes
                       ? ` 单文件最大 ${(capabilities.sources[0].max_bytes! / 1024 / 1024).toFixed(0)} MiB。`
@@ -931,17 +933,17 @@ export default function KnowledgePage() {
                   {uploadJobs.map((job) => (
                     <div key={job.id} className="knowledge-job-row">
                       <div style={{ minWidth: 0 }}>
-                        <div style={{ color: "var(--tg-text)", fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        <div style={{ color: "var(--tg-text)", fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                           {job.filename}
                         </div>
-                        <div style={{ color: "var(--tg-text-faint)", fontSize: 10, fontFamily: "monospace", marginTop: 3 }}>
+                        <div style={{ color: "var(--tg-text-muted)", fontSize: 11, fontFamily: "var(--tg-font-mono)", marginTop: 4 }}>
                           {job.current_step || "queued"} · {job.id}
                         </div>
                         {job.error_message && (
-                          <div style={{ color: "var(--tg-danger)", fontSize: 11, marginTop: 5 }}>{job.error_message}</div>
+                          <div style={{ color: "var(--tg-danger)", fontSize: 12, marginTop: 6 }}>{job.error_message}</div>
                         )}
                       </div>
-                      <span style={{ color: statusColor(job.status), fontSize: 10, fontFamily: "monospace", textTransform: "uppercase" }}>
+                      <span style={{ color: statusColor(job.status), fontSize: 11, fontFamily: "var(--tg-font-mono)", fontWeight: 700, textTransform: "uppercase" }}>
                         {job.status}
                       </span>
                       {job.status === "conflict" && job.pending_document_id && (
@@ -971,7 +973,7 @@ export default function KnowledgePage() {
             )}
 
             {!canManage && (
-              <div style={{ ...panelStyle, marginTop: 12, padding: 13, color: "var(--tg-text-muted)", fontSize: 12 }}>
+              <div style={{ ...panelStyle, marginTop: 12, padding: 14, color: "var(--tg-text-muted)", fontSize: 13, lineHeight: 1.65 }}>
                 当前账号为只读角色。知识库创建、文档上传、编辑和删除仅对 ADMIN/OPERATOR 开放。
               </div>
             )}
@@ -1010,11 +1012,11 @@ export default function KnowledgePage() {
                         <div style={{ color: "var(--tg-text)", fontSize: 13, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                           {document.title || document.original_filename || "未命名文档"}
                         </div>
-                        <div style={{ marginTop: 4, color: "var(--tg-text-faint)", fontSize: 10, fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        <div style={{ marginTop: 5, color: "var(--tg-text-muted)", fontSize: 11, fontFamily: "var(--tg-font-mono)", overflow: "hidden", textOverflow: "ellipsis" }}>
                           {document.original_filename || document.source_uri} · {formatDate(document.created_at)}
                         </div>
                       </div>
-                      <span style={{ color: statusColor(document.status), fontSize: 10, fontFamily: "monospace", textTransform: "uppercase" }}>
+                      <span style={{ color: statusColor(document.status), fontSize: 11, fontFamily: "var(--tg-font-mono)", fontWeight: 700, textTransform: "uppercase" }}>
                         {document.status}
                       </span>
                     </button>
@@ -1022,10 +1024,10 @@ export default function KnowledgePage() {
                     {expanded && (
                       <div style={{ borderTop: "1px solid var(--tg-panel-border)", padding: 17, background: "var(--tg-panel-muted)" }}>
                         {documentDetailLoading === document.id ? (
-                          <div style={{ color: "var(--tg-text-muted)", fontSize: 12 }}>正在读取文档与分块…</div>
+                          <div style={{ color: "var(--tg-text-muted)", fontSize: 13 }}>正在读取文档与分块…</div>
                         ) : (
                           <>
-                            <div style={{ display: "flex", gap: 16, flexWrap: "wrap", color: "var(--tg-text-muted)", fontSize: 11 }}>
+                            <div style={{ display: "flex", gap: 16, flexWrap: "wrap", color: "var(--tg-text-muted)", fontSize: 12 }}>
                               <span>版本 <strong style={{ color: "var(--tg-text)" }}>{detail.doc_version}</strong></span>
                               <span>分块 <strong style={{ color: "var(--tg-text)" }}>{chunks.length}</strong></span>
                               <span>类型 <strong style={{ color: "var(--tg-text)" }}>{detail.mime_type ?? detail.source_type}</strong></span>
@@ -1054,10 +1056,10 @@ export default function KnowledgePage() {
                             <div style={{ display: "grid", gap: 9, marginTop: 14 }}>
                               {chunks.map((chunk) => (
                                 <div key={chunk.id} style={{ background: "var(--tg-code-bg)", border: "1px solid var(--tg-panel-border)", borderRadius: 7, padding: 13 }}>
-                                  <div style={{ color: "var(--tg-accent)", fontSize: 10, fontFamily: "monospace" }}>
+                                  <div style={{ color: "var(--tg-accent)", fontSize: 11, fontFamily: "var(--tg-font-mono)", fontWeight: 700 }}>
                                     CHUNK {chunk.chunk_index + 1} · PAGE {chunk.page_no ?? "—"} · {chunk.token_count} TOKENS
                                   </div>
-                                  <p style={{ margin: "9px 0 0", color: "var(--tg-text-muted)", fontSize: 12, lineHeight: 1.7, whiteSpace: "pre-wrap" }}>
+                                  <p style={{ margin: "10px 0 0", color: "var(--tg-text-muted)", fontSize: 14, lineHeight: 1.8, whiteSpace: "pre-wrap" }}>
                                     {chunk.text}
                                   </p>
                                 </div>

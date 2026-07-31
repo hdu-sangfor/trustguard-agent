@@ -7,6 +7,8 @@ import {
   type StoredOrbitTask,
 } from '../orbitTasksStorage';
 import { getTaskEvents, getTaskTodos, listTasks, toFrontendStatus, formatEventsAsLog, type ApiEvent, type ApiTodo } from '@/shared/lib/api';
+import { LogJsonValue } from './LogJsonValue';
+import { KnowledgeSearchDetails } from './KnowledgeSearchDetails';
 
 /** Safely format a timestamp — returns HH:MM:SS or raw string on failure */
 function safeTime(ts: unknown): string {
@@ -44,6 +46,51 @@ function parseJavaMap(raw: string): Record<string, string> | null {
     }
   }
   return Object.keys(result).length > 0 ? result : null;
+}
+
+function parseEventPayload(event: ApiEvent): Record<string, unknown> {
+  if (typeof event.payload === 'string') {
+    try {
+      return JSON.parse(event.payload) as Record<string, unknown>;
+    } catch {
+      return parseJavaMap(event.payload) ?? { raw: event.payload };
+    }
+  }
+  return event.payload && typeof event.payload === 'object'
+    ? event.payload as Record<string, unknown>
+    : {};
+}
+
+function stringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => typeof item === 'string' ? item.trim() : '')
+    .filter(Boolean);
+}
+
+function linkedKnowledgeChunkIds(
+  events: ApiEvent[],
+  current: ApiEvent,
+  payload: Record<string, unknown>,
+): string[] {
+  const direct = stringList(payload.chunk_ids);
+  if (direct.length > 0) return direct;
+
+  const currentIndex = events.indexOf(current);
+  if (currentIndex < 0) return [];
+  const phase = typeof payload.phase === 'string' ? payload.phase : '';
+  const scanEnd = Math.min(events.length, currentIndex + 6);
+  for (let index = currentIndex + 1; index < scanEnd; index++) {
+    const candidate = events[index];
+    if (!candidate) continue;
+    if (candidate.eventType === 'MCP_TOOL_CALLED' || candidate.eventType === 'KNOWLEDGE_TRIGGERED') break;
+    if (candidate.eventType !== 'KNOWLEDGE_MATERIALIZED') continue;
+    const candidatePayload = parseEventPayload(candidate);
+    const candidatePhase = typeof candidatePayload.phase === 'string' ? candidatePayload.phase : '';
+    if (phase && candidatePhase && candidatePhase !== phase) continue;
+    return stringList(candidatePayload.chunk_ids);
+  }
+  return [];
 }
 
 const PH = {
@@ -421,10 +468,15 @@ export function CRTerminal() {
     }
     .crt-readable {
       --log-accent: var(--tg-accent);
-      --log-muted: var(--tg-text-muted);
+      --log-muted: #a8b4c7;
+      --log-faint: #8391a7;
       --log-success: var(--tg-success);
       --log-warning: var(--tg-warning);
       --log-danger: var(--tg-danger);
+    }
+    html[data-theme="light"] .crt-readable {
+      --log-muted: #475569;
+      --log-faint: #64748b;
     }
     .scanline-effect { display: none !important; }
     .crt-curvature {
@@ -527,10 +579,10 @@ export function CRTerminal() {
       color: var(--tg-text) !important;
     }
     .crt-readable .log-muted-text {
-      color: var(--tg-text-muted) !important;
+      color: var(--log-muted) !important;
     }
     .crt-readable .log-faint-text {
-      color: var(--tg-text-faint) !important;
+      color: var(--log-faint) !important;
     }
     .crt-readable .log-accent-text {
       color: var(--tg-accent) !important;
@@ -553,6 +605,139 @@ export function CRTerminal() {
     }
     .crt-readable .log-hover-row:hover {
       background: var(--tg-hover-bg) !important;
+    }
+    .crt-readable .crt-log-body {
+      font-size: 13px;
+      line-height: 1.6;
+    }
+    .crt-readable .crt-log-body button {
+      font: inherit;
+    }
+    .log-toolbar-input {
+      min-height: 30px;
+    }
+    .log-toolbar-action {
+      min-height: 30px;
+    }
+    .log-event-row {
+      display: grid;
+      grid-template-columns: 72px minmax(132px, 190px) minmax(0, 1fr) 16px;
+      align-items: start;
+      column-gap: 8px;
+      padding: 4px 6px;
+    }
+    .log-event-time {
+      color: var(--log-muted) !important;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
+    .log-event-type {
+      min-width: 0;
+      padding: 0 6px;
+      border: 1px solid var(--tg-panel-border);
+      border-radius: 4px;
+      background: var(--tg-panel-muted);
+      color: var(--log-accent) !important;
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 18px;
+      letter-spacing: 0.02em;
+      overflow-wrap: anywhere;
+    }
+    .log-event-detail {
+      min-width: 0;
+      overflow-wrap: anywhere;
+      white-space: pre-wrap;
+    }
+    .log-event-expand {
+      color: var(--log-faint) !important;
+      font-size: 11px;
+      line-height: 18px;
+      text-align: center;
+    }
+    .log-event-json {
+      margin-left: 80px;
+      font-size: 12px;
+      line-height: 1.6;
+    }
+    .log-json-collection {
+      display: flex;
+      min-width: 0;
+      flex-direction: column;
+    }
+    .log-json-entry {
+      display: grid;
+      grid-template-columns: minmax(96px, auto) minmax(0, 1fr);
+      align-items: start;
+      gap: 12px;
+      min-width: 0;
+      padding: 4px 0;
+    }
+    .log-json-entry + .log-json-entry {
+      border-top: 1px solid color-mix(in srgb, var(--tg-panel-border) 65%, transparent);
+    }
+    .log-json-key {
+      color: var(--log-accent);
+      font-weight: 600;
+      overflow-wrap: anywhere;
+    }
+    .log-json-value {
+      min-width: 0;
+    }
+    .log-json-value > .log-json-collection {
+      border-left: 2px solid var(--tg-panel-border);
+      padding-left: 10px;
+    }
+    .log-json-string {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    .log-json-mixed {
+      display: flex;
+      min-width: 0;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .log-json-embedded {
+      position: relative;
+      min-width: 0;
+      padding: 24px 8px 6px;
+      border: 1px solid var(--tg-panel-border);
+      border-radius: 5px;
+      background: var(--tg-terminal-bg);
+    }
+    .log-json-badge {
+      position: absolute;
+      top: 5px;
+      left: 7px;
+      color: var(--log-accent);
+      font-size: 10px;
+      font-weight: 700;
+      line-height: 14px;
+      letter-spacing: 0.08em;
+    }
+    @media (max-width: 720px) {
+      .log-event-row {
+        grid-template-columns: 64px minmax(0, 1fr) 16px;
+        row-gap: 3px;
+      }
+      .log-event-type {
+        grid-column: 2;
+      }
+      .log-event-detail {
+        grid-column: 2 / 4;
+      }
+      .log-event-expand {
+        grid-column: 3;
+        grid-row: 1;
+      }
+      .log-event-json {
+        margin-left: 70px;
+      }
+      .log-json-entry {
+        grid-template-columns: minmax(72px, 96px) minmax(0, 1fr);
+        gap: 8px;
+      }
     }
     .crt-tab-strip {
       background: var(--tg-panel-bg);
@@ -695,7 +880,7 @@ export function CRTerminal() {
                   if (!log.trim()) return null;
                   return (
                     <div className="shrink-0 flex items-center justify-end gap-2 mb-1.5">
-                      <span className="text-[9px] font-mono" style={{ color: LOG_TONE.faint }}>本地日志</span>
+                      <span className="text-[11px] font-mono" style={{ color: LOG_TONE.faint }}>本地日志</span>
                       <button
                         type="button"
                         title="导出本地日志"
@@ -708,17 +893,17 @@ export function CRTerminal() {
                           a.click();
                           URL.revokeObjectURL(url);
                         }}
-                        className="text-[9px] font-mono shrink-0 px-1.5 py-0.5 rounded"
+                        className="log-toolbar-action text-[11px] font-mono shrink-0 px-2 py-1 rounded"
                         style={{
                           background: LOG_TONE.panel, border: `1px solid ${LOG_TONE.border}`,
                           color: LOG_TONE.accent, cursor: 'pointer',
                         }}
-                      >↓</button>
+                      >↓ 导出</button>
                     </div>
                   );
                 })()}
                 {/* Filter bar + event count */}
-                <div className="shrink-0 flex items-center gap-2 mb-1.5 pointer-events-auto">
+                <div className="shrink-0 flex flex-wrap items-center gap-2 mb-2 pointer-events-auto">
                   {apiEvents.length > 0 && (
                     <>
                     <input
@@ -727,18 +912,18 @@ export function CRTerminal() {
                       value={filterText}
                       onChange={(e) => setFilterText(e.target.value)}
                       placeholder="筛选… (Ctrl+F)"
-                      className="flex-1 min-w-0 text-[10px] font-mono rounded px-2 py-0.5 outline-none"
+                      className="log-toolbar-input flex-1 min-w-[140px] text-[12px] font-mono rounded px-2.5 py-1 outline-none"
                       style={{
                         background: 'var(--tg-input-bg)', border: `1px solid ${LOG_TONE.border}`,
-                        color: PH.text, maxWidth: 160,
+                        color: PH.text, maxWidth: 220,
                       }}
                     />
-                    <span className="text-[9px] font-mono shrink-0" style={{ color: LOG_TONE.muted }}>
+                    <span className="text-[11px] font-mono shrink-0" style={{ color: LOG_TONE.muted }}>
                       {filterText ? `${filteredEvents.length} / ${apiEvents.length}` : `${apiEvents.length} 条`}
                     </span>
                     {filterText && (
                       <button type="button" onClick={() => setFilterText('')}
-                        className="text-[9px] font-mono shrink-0"
+                        className="text-[11px] font-mono shrink-0"
                         style={{ background: 'none', border: 'none', color: LOG_TONE.accent, cursor: 'pointer', padding: 0 }}>
                         ✕
                       </button>
@@ -758,7 +943,7 @@ export function CRTerminal() {
                           setUserScrolledUp(false);
                         }
                       }}
-                      className="text-[9px] font-mono shrink-0 px-1.5 py-0.5 rounded"
+                      className="log-toolbar-action text-[11px] font-mono shrink-0 px-2 py-1 rounded"
                       style={{
                         background: userScrolledUp ? LOG_TONE.warningSoft : LOG_TONE.successSoft,
                         border: `1px solid ${LOG_TONE.border}`,
@@ -772,13 +957,13 @@ export function CRTerminal() {
                       type="button"
                       onClick={exportEvents}
                       title="导出日志"
-                      className="text-[9px] font-mono shrink-0 px-1.5 py-0.5 rounded"
+                      className="log-toolbar-action text-[11px] font-mono shrink-0 px-2 py-1 rounded"
                       style={{
                         background: LOG_TONE.panel, border: `1px solid ${LOG_TONE.border}`,
                         color: LOG_TONE.accent, cursor: 'pointer',
                       }}
                     >
-                      ↓
+                      ↓ 导出
                     </button>
                     </>
                   )}
@@ -793,7 +978,7 @@ export function CRTerminal() {
                         if (el) el.scrollTop = el.scrollHeight;
                         setUserScrolledUp(false);
                       }}
-                      className="flex items-center gap-1 px-3 py-1 rounded-md text-[10px] font-mono font-bold"
+                      className="flex items-center gap-1 px-3 py-1.5 rounded-md text-[11px] font-mono font-bold"
                       style={{
                         background: 'var(--tg-accent-soft)',
                         border: `1px solid ${LOG_TONE.border}`,
@@ -807,7 +992,7 @@ export function CRTerminal() {
                 <div
                   ref={logBodyRef}
                   onScroll={handleLogScroll}
-                  className="crt-log-body flex-1 min-h-0 w-full overflow-y-auto overflow-x-hidden overscroll-contain font-mono text-xs pointer-events-auto select-text"
+                  className="crt-log-body flex-1 min-h-0 w-full overflow-y-auto overflow-x-hidden overscroll-contain font-mono pointer-events-auto select-text"
                   style={{ color: PH.text }}
                 >
                   {apiEvents.length === 0 ? (
@@ -856,9 +1041,9 @@ export function CRTerminal() {
                             const mc = MODULE_COLORS[mod];
                             return (
                               <div key={li} className="crt-log-line flex gap-2 items-start px-2 py-1">
-                                <span className="shrink-0 log-muted-text text-[10px] w-32 overflow-hidden leading-relaxed">{ts}</span>
+                                <span className="shrink-0 log-muted-text text-[11px] w-32 overflow-hidden leading-relaxed">{ts}</span>
                                 <span
-                                  className="shrink-0 text-[10px] font-bold px-1 rounded leading-relaxed"
+                                  className="shrink-0 text-[11px] font-bold px-1 rounded leading-relaxed"
                                   style={{
                                     color: mc?.color ?? LOG_TONE.muted,
                                     background: LOG_TONE.panelMuted,
@@ -867,7 +1052,7 @@ export function CRTerminal() {
                                     textAlign: 'center',
                                   }}
                                 >{mc?.label ?? mod.slice(0, 5)}</span>
-                                <span className="text-[11px] break-words whitespace-pre-wrap leading-relaxed">{msg}</span>
+                                <span className="text-[12px] break-words whitespace-pre-wrap leading-relaxed">{msg}</span>
                               </div>
                             );
                           })}
@@ -875,7 +1060,7 @@ export function CRTerminal() {
                       );
                     })()
                   ) : filteredEvents.length === 0 ? (
-                    <div className="log-muted-text text-[10px] font-mono px-1 py-2">
+                    <div className="log-muted-text text-[12px] font-mono px-1 py-2">
                       无匹配事件
                     </div>
                   ) : (
@@ -884,16 +1069,7 @@ export function CRTerminal() {
                         const nodes: React.ReactNode[] = [];
                         let lastPhase = '';
                         filteredEvents.forEach((e, idx) => {
-                          // payload may be a JSON string or Java toString map — parse it
-                          let p: Record<string, unknown> = {};
-                          if (typeof e.payload === 'string') {
-                            try { p = JSON.parse(e.payload); } catch {
-                              const jm = parseJavaMap(e.payload);
-                              p = jm ?? { raw: e.payload };
-                            }
-                          } else if (e.payload && typeof e.payload === 'object') {
-                            p = e.payload as Record<string, unknown>;
-                          }
+                          const p = parseEventPayload(e);
                           const ts = safeTime(e.timestamp);
                           const type = e.eventType ?? '';
                           const phaseVal = typeof p.phase === 'string' ? p.phase : '';
@@ -904,7 +1080,7 @@ export function CRTerminal() {
                             nodes.push(
                               <div key={`ph-${idx}`} className="my-2 flex items-center gap-2">
                                 <div className="flex-1 h-px log-divider" />
-                                <span className="log-accent-text text-[10px] font-bold tracking-widest px-2 py-0.5 rounded border log-soft-panel">
+                                <span className="log-accent-text text-[11px] font-bold tracking-widest px-2 py-0.5 rounded border log-soft-panel">
                                   {phaseVal}
                                 </span>
                                 <div className="flex-1 h-px log-divider" />
@@ -912,8 +1088,51 @@ export function CRTerminal() {
                             );
                           }
 
-                          // Skill events — expandable
-                          if (type === 'SKILL_COMPLETED' || type === 'SKILL_INVOKED') {
+                          // RAG MCP retrieval — metadata in the trace, content loaded from task-local chunks on demand.
+                          if (type === 'MCP_TOOL_CALLED' && p.tool === 'knowledge_search') {
+                            const key = `ev-${idx}`;
+                            const expanded = expandedKeys.has(key);
+                            const chunkIds = linkedKnowledgeChunkIds(apiEvents, e, p);
+                            const resourceRefs = stringList(p.resource_refs);
+                            const hitCount = typeof p.hit_count === 'number' ? p.hit_count : resourceRefs.length;
+                            const latency = typeof p.latency_ms === 'number' ? `${p.latency_ms}ms` : '';
+                            const status = typeof p.status === 'string' ? p.status : '';
+                            const taskId = e.taskId || selectedId || '';
+                            nodes.push(
+                              <div key={key} className="my-0.5">
+                                <button
+                                  type="button"
+                                  className="log-event-row w-full text-left rounded log-hover-row"
+                                  aria-expanded={expanded}
+                                  onClick={() => {
+                                    setExpandedKeys((prev) => {
+                                      const next = new Set(prev);
+                                      if (next.has(key)) { next.delete(key); } else { next.add(key); }
+                                      return next;
+                                    });
+                                  }}
+                                >
+                                  <span className="log-event-time">{ts}</span>
+                                  <span className="log-event-type">RAG · MCP</span>
+                                  <span className="log-event-detail">
+                                    knowledge_search · 命中 {hitCount}
+                                    {latency && ` · ${latency}`}
+                                    {status && ` · ${status}`}
+                                  </span>
+                                  <span className="log-event-expand">{expanded ? '▲' : '▼'}</span>
+                                </button>
+                                {expanded && (
+                                  <div className="log-event-json mt-1 mb-2 max-h-[440px] overflow-y-auto rounded border p-2.5 log-soft-panel font-mono">
+                                    <KnowledgeSearchDetails
+                                      taskId={taskId}
+                                      chunkIds={chunkIds}
+                                      resourceRefs={resourceRefs}
+                                    />
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          } else if (type === 'SKILL_COMPLETED' || type === 'SKILL_INVOKED') {
                             const skillId = typeof p.skill_id === 'string' ? p.skill_id : '?';
                             const key = `ev-${idx}`;
                             const expanded = expandedKeys.has(key);
@@ -933,14 +1152,14 @@ export function CRTerminal() {
                                     });
                                   }}
                                 >
-                                  <span className="log-muted-text shrink-0 w-16">{ts}</span>
+                                  <span className="log-event-time shrink-0 w-[72px]">{ts}</span>
                                   <span className={`shrink-0 w-3 ${ok ? 'log-success-text' : 'log-danger-text'}`}>{type === 'SKILL_COMPLETED' ? (ok ? '✓' : '✗') : '▶'}</span>
                                   <span className="log-accent-text font-bold break-words">{skillId}</span>
-                                  {ref && <span className="log-faint-text text-[9px] ml-1">[{ref.slice(0, 32)}…]</span>}
-                                  <span className="ml-auto log-faint-text text-[9px]">{expanded ? '▲' : '▼'}</span>
+                                  {ref && <span className="log-faint-text text-[11px] ml-1">[{ref.slice(0, 32)}…]</span>}
+                                  <span className="ml-auto log-faint-text text-[11px]">{expanded ? '▲' : '▼'}</span>
                                 </button>
                                 {expanded && summary && (
-                                  <div className="ml-7 mt-1 mb-2 p-2 rounded border log-soft-panel text-[11px] whitespace-pre-wrap break-words leading-relaxed">
+                                  <div className="log-event-json mt-1 mb-2 p-2.5 rounded border log-soft-panel whitespace-pre-wrap break-words">
                                     {summary}
                                   </div>
                                 )}
@@ -966,14 +1185,14 @@ export function CRTerminal() {
                                     });
                                   }}
                                 >
-                                  <span className="log-muted-text shrink-0 w-16">{ts}</span>
+                                  <span className="log-event-time shrink-0 w-[72px]">{ts}</span>
                                   <span className="log-accent-text shrink-0">LLM</span>
                                   <span className="log-accent-text">{action}</span>
                                   {skill && <span className="log-muted-text">{skill}</span>}
-                                  {reason && <span className="ml-auto log-faint-text text-[9px]">{expanded ? '▲' : '▼'}</span>}
+                                  {reason && <span className="ml-auto log-faint-text text-[11px]">{expanded ? '▲' : '▼'}</span>}
                                 </button>
                                 {expanded && reason && (
-                                  <div className="ml-7 mt-1 mb-2 p-2 rounded border log-soft-panel text-[11px] whitespace-pre-wrap leading-relaxed">
+                                  <div className="log-event-json mt-1 mb-2 p-2.5 rounded border log-soft-panel whitespace-pre-wrap">
                                     {reason}
                                   </div>
                                 )}
@@ -984,7 +1203,7 @@ export function CRTerminal() {
                             nodes.push(
                               <div key={`ev-${idx}`} className="my-1.5 flex items-center gap-2">
                                 <div className="flex-1 h-px log-divider" />
-                                <span className="log-success-text text-[10px] font-bold tracking-widest px-2 py-0.5 rounded border log-soft-panel">
+                                <span className="log-success-text text-[11px] font-bold tracking-widest px-2 py-0.5 rounded border log-soft-panel">
                                   ✓ {ph} 完成
                                 </span>
                                 <div className="flex-1 h-px log-divider" />
@@ -994,7 +1213,7 @@ export function CRTerminal() {
                             nodes.push(
                               <div key={`ev-${idx}`} className="my-2 flex items-center gap-2">
                                 <div className="flex-1 h-px log-divider" />
-                                <span className="log-accent-text text-[10px] font-bold tracking-widest px-2 py-0.5 rounded border log-soft-panel">
+                                <span className="log-accent-text text-[11px] font-bold tracking-widest px-2 py-0.5 rounded border log-soft-panel">
                                   ▶ 任务启动 {ts}
                                 </span>
                                 <div className="flex-1 h-px log-divider" />
@@ -1004,7 +1223,7 @@ export function CRTerminal() {
                             nodes.push(
                               <div key={`ev-${idx}`} className="my-2 flex items-center gap-2">
                                 <div className="flex-1 h-px log-divider" />
-                                <span className="log-success-text text-[10px] font-bold tracking-widest px-2 py-0.5 rounded border log-soft-panel">
+                                <span className="log-success-text text-[11px] font-bold tracking-widest px-2 py-0.5 rounded border log-soft-panel">
                                   ✓ 任务完成 {ts}
                                 </span>
                                 <div className="flex-1 h-px log-divider" />
@@ -1016,19 +1235,19 @@ export function CRTerminal() {
                               <div key={`ev-${idx}`} className="my-2">
                                 <div className="flex items-center gap-2">
                                   <div className="flex-1 h-px log-divider" />
-                                  <span className="log-danger-text text-[10px] font-bold tracking-widest px-2 py-0.5 rounded border log-soft-panel">
+                                  <span className="log-danger-text text-[11px] font-bold tracking-widest px-2 py-0.5 rounded border log-soft-panel">
                                     ✗ 任务失败 {ts}
                                   </span>
                                   <div className="flex-1 h-px log-divider" />
                                 </div>
-                                {msg && <div className="mt-1 px-3 py-1.5 rounded border log-soft-panel text-[10px] break-all">{msg}</div>}
+                                {msg && <div className="mt-1 px-3 py-1.5 rounded border log-soft-panel text-[12px] leading-relaxed break-all">{msg}</div>}
                               </div>
                             );
                           } else if (type === 'ERROR' || type === 'EXECUTION_ERROR' || type === 'SKILL_ERROR' || type === 'SKILL_TIMEOUT') {
                             const msg = typeof p.message === 'string' ? p.message : typeof p.error === 'string' ? p.error : JSON.stringify(p).slice(0, 120);
                             nodes.push(
                               <div key={`ev-${idx}`} className="flex gap-2 items-start px-1 py-0.5">
-                                <span className="shrink-0 w-14 log-muted-text">{ts}</span>
+                                <span className="log-event-time shrink-0 w-[72px]">{ts}</span>
                                 <span className="log-danger-text shrink-0 font-bold">✗</span>
                                 <span className="log-danger-text shrink-0">{type}</span>
                                 <span className="log-danger-text break-all">{msg}</span>
@@ -1038,18 +1257,18 @@ export function CRTerminal() {
                             const name = typeof p.name === 'string' ? p.name : typeof p.item_id === 'string' ? p.item_id : '';
                             const status = typeof p.status === 'string' ? p.status : '';
                             nodes.push(
-                              <div key={`ev-${idx}`} className="flex gap-2 items-start px-1 py-0.5 opacity-60">
-                                <span className="shrink-0 w-14 log-muted-text">{ts}</span>
-                                <span className="log-accent-text shrink-0 text-[9px]">PLAN</span>
-                                <span className="log-muted-text text-[10px]">{name}</span>
-                                {status && <span className="log-faint-text text-[9px] ml-auto shrink-0">{status}</span>}
+                              <div key={`ev-${idx}`} className="flex gap-2 items-start px-1 py-0.5 opacity-80">
+                                <span className="log-event-time shrink-0 w-[72px]">{ts}</span>
+                                <span className="log-accent-text shrink-0 text-[11px]">PLAN</span>
+                                <span className="log-muted-text text-[11px]">{name}</span>
+                                {status && <span className="log-faint-text text-[11px] ml-auto shrink-0">{status}</span>}
                               </div>
                             );
                           } else if (type === 'TASK_PAUSED') {
                             const reason = typeof p.reason === 'string' ? p.reason : typeof p.message === 'string' ? p.message : '';
                             nodes.push(
                               <div key={`ev-${idx}`} className="flex gap-2 items-start px-1 py-0.5">
-                                <span className="shrink-0 w-14 log-muted-text">{ts}</span>
+                                <span className="log-event-time shrink-0 w-[72px]">{ts}</span>
                                 <span className="log-warning-text shrink-0 font-bold">⏸</span>
                                 <span className="log-warning-text shrink-0 font-semibold">PAUSED</span>
                                 {reason && <span className="log-warning-text break-all">{reason}</span>}
@@ -1059,7 +1278,7 @@ export function CRTerminal() {
                             const reason = typeof p.reason === 'string' ? p.reason : typeof p.message === 'string' ? p.message : '';
                             nodes.push(
                               <div key={`ev-${idx}`} className="flex gap-2 items-start px-1 py-0.5">
-                                <span className="shrink-0 w-14 log-muted-text">{ts}</span>
+                                <span className="log-event-time shrink-0 w-[72px]">{ts}</span>
                                 <span className="log-success-text shrink-0 font-bold">▶</span>
                                 <span className="log-success-text shrink-0 font-semibold">RESUMED</span>
                                 {reason && <span className="log-success-text break-all">{reason}</span>}
@@ -1068,30 +1287,30 @@ export function CRTerminal() {
                           } else if (type === 'TICK_STARTED') {
                             const tickNum = typeof p.tick === 'number' ? p.tick : typeof p.tick_id === 'string' ? p.tick_id : '';
                             nodes.push(
-                              <div key={`ev-${idx}`} className="flex gap-2 items-start px-1 py-0.5 opacity-40">
-                                <span className="shrink-0 w-14 log-muted-text">{ts}</span>
-                                <span className="log-accent-text shrink-0 text-[9px]">TICK</span>
-                                <span className="log-muted-text text-[10px]">{tickNum !== '' ? `#${tickNum}` : ''} started</span>
+                              <div key={`ev-${idx}`} className="flex gap-2 items-start px-1 py-0.5 opacity-65">
+                                <span className="log-event-time shrink-0 w-[72px]">{ts}</span>
+                                <span className="log-accent-text shrink-0 text-[11px]">TICK</span>
+                                <span className="log-muted-text text-[11px]">{tickNum !== '' ? `#${tickNum}` : ''} started</span>
                               </div>
                             );
                           } else if (type === 'TICK_COMPLETED') {
                             const tickNum = typeof p.tick === 'number' ? p.tick : typeof p.tick_id === 'string' ? p.tick_id : '';
                             const dur = typeof p.duration_ms === 'number' ? `${p.duration_ms}ms` : '';
                             nodes.push(
-                              <div key={`ev-${idx}`} className="flex gap-2 items-start px-1 py-0.5 opacity-40">
-                                <span className="shrink-0 w-14 log-muted-text">{ts}</span>
-                                <span className="log-accent-text shrink-0 text-[9px]">TICK</span>
-                                <span className="log-muted-text text-[10px]">{tickNum !== '' ? `#${tickNum}` : ''} done {dur && <span className="log-faint-text">({dur})</span>}</span>
+                              <div key={`ev-${idx}`} className="flex gap-2 items-start px-1 py-0.5 opacity-65">
+                                <span className="log-event-time shrink-0 w-[72px]">{ts}</span>
+                                <span className="log-accent-text shrink-0 text-[11px]">TICK</span>
+                                <span className="log-muted-text text-[11px]">{tickNum !== '' ? `#${tickNum}` : ''} done {dur && <span className="log-faint-text">({dur})</span>}</span>
                               </div>
                             );
                           } else if (type === 'PHASE_END') {
                             const phase = typeof p.phase === 'string' ? p.phase : '';
                             nodes.push(
                               <div key={`ev-${idx}`} className="flex gap-2 items-center px-1 py-0.5 opacity-70">
-                                <span className="shrink-0 w-14 log-muted-text">{ts}</span>
+                                <span className="log-event-time shrink-0 w-[72px]">{ts}</span>
                                 <span className="log-success-text shrink-0">◀</span>
                                 <span className="log-success-text shrink-0 font-semibold text-[11px]">阶段结束</span>
-                                {phase && <span className="log-muted-text text-[10px] uppercase tracking-wider">{phase}</span>}
+                                {phase && <span className="log-muted-text text-[11px] uppercase tracking-wider">{phase}</span>}
                               </div>
                             );
                           } else if (type === 'PLAN_LIST_DECISION') {
@@ -1101,77 +1320,77 @@ export function CRTerminal() {
                             nodes.push(
                               <div key={`ev-${idx}`} className="flex flex-col gap-0.5 px-1 py-1 border-l-2 ml-1 mb-0.5" style={{ borderColor: LOG_TONE.border }}>
                                 <div className="flex gap-2 items-center">
-                                  <span className="shrink-0 w-14 log-muted-text">{ts}</span>
-                                  <span className="log-accent-text shrink-0 font-bold text-[10px]">DECISION</span>
+                                  <span className="log-event-time shrink-0 w-[72px]">{ts}</span>
+                                  <span className="log-accent-text shrink-0 font-bold text-[11px]">DECISION</span>
                                   {skill && <span className="log-accent-text font-semibold">{skill}</span>}
                                 </div>
-                                {intent && <div className="pl-16 log-muted-text text-[10px] italic">{intent}</div>}
-                                {reasoning && <div className="pl-16 log-faint-text text-[9px] break-all">{reasoning}{reasoning.length >= 200 ? '…' : ''}</div>}
+                                {intent && <div className="pl-[80px] log-muted-text text-[11px] italic">{intent}</div>}
+                                {reasoning && <div className="pl-[80px] log-faint-text text-[11px] leading-relaxed break-all">{reasoning}{reasoning.length >= 200 ? '…' : ''}</div>}
                               </div>
                             );
                           } else if (type === 'FRAMEWORK_TARGET_SET' || type === 'FRAMEWORK_TARGET_UPGRADED') {
                             const fw = typeof p.framework === 'string' ? p.framework : typeof p.target_framework === 'string' ? p.target_framework : '';
                             nodes.push(
-                              <div key={`ev-${idx}`} className="flex gap-2 items-start px-1 py-0.5 opacity-80">
-                                <span className="shrink-0 w-14 log-muted-text">{ts}</span>
-                                <span className="log-warning-text shrink-0 text-[9px] font-bold">FRAMEWORK</span>
+                              <div key={`ev-${idx}`} className="flex gap-2 items-start px-1 py-0.5 opacity-90">
+                                <span className="log-event-time shrink-0 w-[72px]">{ts}</span>
+                                <span className="log-warning-text shrink-0 text-[11px] font-bold">FRAMEWORK</span>
                                 <span className="log-warning-text font-semibold">{fw || '?'}</span>
-                                {type === 'FRAMEWORK_TARGET_UPGRADED' && <span className="log-muted-text text-[9px]">↑ upgraded</span>}
+                                {type === 'FRAMEWORK_TARGET_UPGRADED' && <span className="log-muted-text text-[11px]">↑ upgraded</span>}
                               </div>
                             );
                           } else if (type === 'MEMORY_FACT_ADDED') {
                             const key = typeof p.key === 'string' ? p.key : '';
                             const val = typeof p.value === 'string' ? p.value.slice(0, 80) : '';
                             nodes.push(
-                              <div key={`ev-${idx}`} className="flex gap-2 items-start px-1 py-0.5 opacity-60">
-                                <span className="shrink-0 w-14 log-muted-text">{ts}</span>
-                                <span className="log-accent-text shrink-0 text-[9px]">MEM+</span>
-                                {key && <span className="log-accent-text text-[10px]">{key}</span>}
-                                {val && <span className="log-muted-text text-[9px] break-all">= {val}</span>}
+                              <div key={`ev-${idx}`} className="flex gap-2 items-start px-1 py-0.5 opacity-80">
+                                <span className="log-event-time shrink-0 w-[72px]">{ts}</span>
+                                <span className="log-accent-text shrink-0 text-[11px]">MEM+</span>
+                                {key && <span className="log-accent-text text-[11px]">{key}</span>}
+                                {val && <span className="log-muted-text text-[11px] break-all">= {val}</span>}
                               </div>
                             );
                           } else if (type === 'TODO_STATUS_UPDATED') {
                             const name = typeof p.name === 'string' ? p.name : typeof p.item_id === 'string' ? p.item_id : '';
                             const status = typeof p.status === 'string' ? p.status : '';
                             nodes.push(
-                              <div key={`ev-${idx}`} className="flex gap-2 items-start px-1 py-0.5 opacity-65">
-                                <span className="shrink-0 w-14 log-muted-text">{ts}</span>
-                                <span className="log-accent-text shrink-0 text-[9px]">TODO</span>
-                                <span className="log-muted-text text-[10px]">{name}</span>
-                                {status && <span className="log-faint-text text-[9px] ml-auto">{status}</span>}
+                              <div key={`ev-${idx}`} className="flex gap-2 items-start px-1 py-0.5 opacity-80">
+                                <span className="log-event-time shrink-0 w-[72px]">{ts}</span>
+                                <span className="log-accent-text shrink-0 text-[11px]">TODO</span>
+                                <span className="log-muted-text text-[11px]">{name}</span>
+                                {status && <span className="log-faint-text text-[11px] ml-auto">{status}</span>}
                               </div>
                             );
                           } else if (type === 'PHASE_BUDGET_EXCEEDED' || type === 'COST_BUDGET_EXCEEDED' || type === 'PLAN_ROUND_CAP_EXCEEDED') {
                             const msg = typeof p.message === 'string' ? p.message : type;
                             nodes.push(
                               <div key={`ev-${idx}`} className="flex gap-2 items-start px-1 py-0.5">
-                                <span className="shrink-0 w-14 log-muted-text">{ts}</span>
-                                <span className="log-warning-text shrink-0 font-bold text-[10px]">⚠</span>
-                                <span className="log-warning-text text-[10px] break-all">{msg}</span>
+                                <span className="log-event-time shrink-0 w-[72px]">{ts}</span>
+                                <span className="log-warning-text shrink-0 font-bold text-[11px]">⚠</span>
+                                <span className="log-warning-text text-[11px] break-all">{msg}</span>
                               </div>
                             );
                           } else if (type === 'LOOP_BREAK') {
                             const reason = typeof p.reason === 'string' ? p.reason : '';
                             nodes.push(
-                              <div key={`ev-${idx}`} className="flex gap-2 items-start px-1 py-0.5 opacity-70">
-                                <span className="shrink-0 w-14 log-muted-text">{ts}</span>
-                                <span className="log-warning-text shrink-0 text-[10px] font-bold">LOOP</span>
-                                {reason && <span className="log-warning-text text-[10px]">{reason}</span>}
+                              <div key={`ev-${idx}`} className="flex gap-2 items-start px-1 py-0.5 opacity-80">
+                                <span className="log-event-time shrink-0 w-[72px]">{ts}</span>
+                                <span className="log-warning-text shrink-0 text-[11px] font-bold">LOOP</span>
+                                {reason && <span className="log-warning-text text-[11px]">{reason}</span>}
                               </div>
                             );
                           } else if (type === 'LLM_TRANSIENT_RETRY') {
                             const attempt = typeof p.attempt === 'number' ? p.attempt : '';
                             nodes.push(
-                              <div key={`ev-${idx}`} className="flex gap-2 items-start px-1 py-0.5 opacity-50">
-                                <span className="shrink-0 w-14 log-muted-text">{ts}</span>
-                                <span className="log-warning-text shrink-0 text-[9px]">RETRY</span>
-                                {attempt !== '' && <span className="log-muted-text text-[9px]">#{attempt}</span>}
+                              <div key={`ev-${idx}`} className="flex gap-2 items-start px-1 py-0.5 opacity-70">
+                                <span className="log-event-time shrink-0 w-[72px]">{ts}</span>
+                                <span className="log-warning-text shrink-0 text-[11px]">RETRY</span>
+                                {attempt !== '' && <span className="log-muted-text text-[11px]">#{attempt}</span>}
                               </div>
                             );
                           } else if (type === 'REPORT_REQUESTED') {
                             nodes.push(
                               <div key={`ev-${idx}`} className="flex gap-2 items-center px-1 py-0.5">
-                                <span className="shrink-0 w-14 log-muted-text">{ts}</span>
+                                <span className="log-event-time shrink-0 w-[72px]">{ts}</span>
                                 <span className="log-success-text shrink-0 font-bold">▣</span>
                                 <span className="log-success-text font-semibold text-[11px]">报告生成中…</span>
                               </div>
@@ -1180,11 +1399,11 @@ export function CRTerminal() {
                             const skill = typeof p.skill_id === 'string' ? p.skill_id : '';
                             const target = typeof p.target === 'string' ? p.target.slice(0, 60) : '';
                             nodes.push(
-                              <div key={`ev-${idx}`} className="flex gap-2 items-start px-1 py-0.5 opacity-55">
-                                <span className="shrink-0 w-14 log-muted-text">{ts}</span>
-                                <span className="log-accent-text shrink-0 text-[9px]">EXEC→</span>
-                                {skill && <span className="log-accent-text text-[10px]">{skill}</span>}
-                                {target && <span className="log-muted-text text-[9px] break-all">{target}</span>}
+                              <div key={`ev-${idx}`} className="flex gap-2 items-start px-1 py-0.5 opacity-75">
+                                <span className="log-event-time shrink-0 w-[72px]">{ts}</span>
+                                <span className="log-accent-text shrink-0 text-[11px]">EXEC→</span>
+                                {skill && <span className="log-accent-text text-[11px]">{skill}</span>}
+                                {target && <span className="log-muted-text text-[11px] break-all">{target}</span>}
                               </div>
                             );
                           } else {
@@ -1198,13 +1417,12 @@ export function CRTerminal() {
                               const raw = JSON.stringify(p);
                               detail = raw.length > 80 ? raw.slice(0, 80) + '…' : raw;
                             }
-                            const fullJson = JSON.stringify(p, null, 2);
-                            const hasMore = fullJson.length > 100;
+                            const hasMore = Object.keys(p).length > 0;
                             nodes.push(
                               <div key={key} className="my-0.5">
                                 <button
                                   type="button"
-                                  className="w-full text-left flex gap-2 items-start px-1 py-0.5 rounded log-hover-row"
+                                  className="log-event-row w-full text-left rounded log-hover-row"
                                   onClick={() => {
                                     if (!hasMore) return;
                                     setExpandedKeys((prev) => {
@@ -1214,19 +1432,14 @@ export function CRTerminal() {
                                     });
                                   }}
                                 >
-                                  <span className="shrink-0 w-14 log-muted-text">{ts}</span>
-                                  <span className="log-accent-text shrink-0">{type}</span>
-                                  <span className="break-all flex-1">{detail}</span>
-                                  {hasMore && <span className="ml-auto log-faint-text text-[9px] shrink-0">{expanded ? '▲' : '▼'}</span>}
+                                  <span className="log-event-time">{ts}</span>
+                                  <span className="log-event-type">{type || 'EVENT'}</span>
+                                  <span className="log-event-detail">{detail}</span>
+                                  {hasMore && <span className="log-event-expand">{expanded ? '▲' : '▼'}</span>}
                                 </button>
                                 {expanded && (
-                                  <div className="ml-7 mt-1 mb-2 p-2 rounded border log-soft-panel text-[10px] font-mono overflow-x-auto max-h-60 overflow-y-auto">
-                                    {Object.entries(p).map(([k, v]) => (
-                                      <div key={k} className="flex gap-2 py-0.5">
-                                        <span className="log-accent-text shrink-0">{k}:</span>
-                                        <span className="break-all whitespace-pre-wrap">{typeof v === 'object' ? JSON.stringify(v, null, 2) : String(v ?? '')}</span>
-                                      </div>
-                                    ))}
+                                  <div className="log-event-json mt-1 mb-2 p-2.5 rounded border log-soft-panel font-mono overflow-x-auto max-h-60 overflow-y-auto">
+                                    <LogJsonValue value={p} />
                                   </div>
                                 )}
                               </div>

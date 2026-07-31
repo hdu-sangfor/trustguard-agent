@@ -269,6 +269,9 @@ async def _orchestrator_lifespan(app: FastAPI):
         fed_sync_task.cancel()
         with suppress(asyncio.CancelledError):
             await fed_sync_task
+    from app.knowledge.gateway import close_knowledge_gateway
+
+    await close_knowledge_gateway()
 
 app = FastAPI(
     title="Orchestrator Service",
@@ -366,6 +369,8 @@ def _v1_kb_health_summary() -> dict[str, Any]:
     kb_cfg = get_kb_config()
     return {
         "enabled": kb_cfg.enabled,
+        "legacy_static_read_enabled": kb_cfg.legacy_static_read_enabled,
+        "legacy_experience_read_enabled": kb_cfg.legacy_experience_read_enabled,
         "observe_endpoint_available": True,
         "has_embed_api_key": bool(kb_cfg.embed_api_key),
         "kb_federation_observe_enabled": _kb_federation_observe_enabled(),
@@ -1494,6 +1499,8 @@ async def get_v1_kb_observe() -> dict[str, Any]:
     kb_cfg = get_kb_config()
     return {
         "enabled": kb_cfg.enabled,
+        "legacy_static_read_enabled": kb_cfg.legacy_static_read_enabled,
+        "legacy_experience_read_enabled": kb_cfg.legacy_experience_read_enabled,
         "qdrant_url": kb_cfg.qdrant_url,
         "top_k": kb_cfg.top_k,
         "knowledge_collection": kb_cfg.knowledge_collection,
