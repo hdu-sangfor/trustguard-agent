@@ -1,0 +1,16 @@
+.completion-dialog { max-width: 520px !important; padding: 24px !important; border: 1px solid rgba(34,211,238,.35) !important; background: var(--tg-panel-bg) !important; color: var(--tg-text) !important; box-shadow: 0 24px 90px rgba(0,0,0,.5), inset 0 1px rgba(255,255,255,.03) !important; font-family: Inter, monospace; }
+.completion-dialog-icon { width: 52px; height: 52px; display: grid; place-items: center; border-radius: 14px; color: var(--tg-success); background: var(--tg-success-soft); border: 1px solid rgba(134,239,172,.28); }
+.completion-dialog-eyebrow { display: flex; align-items: center; gap: 6px; color: var(--tg-accent); font: 700 10px monospace; letter-spacing: .13em; }
+.completion-dialog-title { margin-top: 3px; color: var(--tg-text); font: 700 20px monospace; }
+.completion-dialog-description { color: var(--tg-text-muted) !important; font-size: 12px !important; line-height: 1.7 !important; }
+.completion-dialog-summary { display: grid; gap: 7px; padding: 12px; border: 1px solid var(--tg-panel-border); border-radius: 8px; background: var(--tg-panel-muted); }
+.completion-dialog-summary > div { display: grid; grid-template-columns: auto 72px minmax(0,1fr); align-items: center; gap: 7px; color: var(--tg-accent); }
+.completion-dialog-summary span { color: var(--tg-text-faint); font-size: 10px; }
+.completion-dialog-summary strong { color: var(--tg-text); font: 600 11px monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.completion-dialog-summary .completion-dialog-approved { color: var(--tg-success); }
+.completion-dialog-summary .completion-dialog-rejected { color: var(--tg-danger); }
+.completion-dialog-actions { margin-top: 4px; }
+.completion-dialog-actions button { min-height: 36px; padding: 8px 14px; border-radius: 7px; cursor: pointer; font: 700 11px monospace; }
+.completion-dialog-later { border: 1px solid var(--tg-panel-border); background: var(--tg-input-bg); color: var(--tg-text-muted); }
+.completion-dialog-review { border: 1px solid rgba(34,211,238,.42); background: var(--tg-accent-soft); color: var(--tg-accent); display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.completion-dialog-actions button:hover { border-color: rgba(34,211,238,.55); color: var(--tg-accent); }

@@ -4,6 +4,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Toaster, toast } from "sonner";
 import NotFound from "@/features/not-found/NotFound";
 import ErrorBoundary from "@/shared/components/ErrorBoundary";
+import TaskCompletionDialogSystem from "@/shared/components/TaskCompletionDialogSystem";
 import { applyThemeMode, PREFERENCES_CHANGED_EVENT, readThemeMode, type ThemeMode } from "@/shared/lib/preferences";
 
 const PageLoader = () => (
@@ -65,6 +66,8 @@ const BatchPage = lazy(reloadOnChunkError(() => import("@/features/batch/BatchPa
 const DashboardPage = lazy(reloadOnChunkError(() => import("@/features/dashboard/DashboardPage")));
 const AuditPage = lazy(reloadOnChunkError(() => import("@/features/audit/AuditPage")));
 const KnowledgePage = lazy(reloadOnChunkError(() => import("@/features/knowledge/KnowledgePage")));
+const KnowledgeCollectionPage = lazy(reloadOnChunkError(() => import("@/features/knowledge-collection/KnowledgeCollectionPage")));
+const KnowledgeReviewPage = lazy(reloadOnChunkError(() => import("@/features/knowledge-review/KnowledgeReviewPage")));
 import { AppSessionProvider } from "@/shared/context/AppSessionContext";
 import { SENTINEL_ORBIT_TASKS_KEY, ORBIT_TASKS_UPDATED_EVENT, type StoredOrbitTask } from "@/shared/constants/orbitTasksStorage";
 
@@ -177,6 +180,7 @@ const App = () => {
       />
       <AppSessionProvider>
         <BrowserRouter>
+          <TaskCompletionDialogSystem />
           <ErrorBoundary>
             <Suspense fallback={<PageLoader />}>
               <Routes>
@@ -199,6 +203,8 @@ const App = () => {
                 <Route path="/dashboard" element={<DashboardPage />} />
                 <Route path="/audit" element={<AuditPage />} />
                 <Route path="/knowledge" element={<KnowledgePage />} />
+                <Route path="/knowledge/collect" element={<KnowledgeCollectionPage />} />
+                <Route path="/knowledge/collect/review/:jobId" element={<KnowledgeReviewPage />} />
                 <Route path="/testbench" element={<Navigate to="/tasks" replace />} />
                 <Route path="*" element={<NotFound />} />
               </Routes>

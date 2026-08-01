@@ -123,7 +123,7 @@ const Header = ({ currentPhase = 0 }: HeaderProps) => {
     window.scrollTo({ top: 0 });
   };
 
-  const requireLogin = (path: "/logs" | "/tasks" | "/admin" | "/reports" | "/system" | "/monitor" | "/config" | "/stats" | "/vulns" | "/batch" | "/dashboard" | "/audit" | "/knowledge") => {
+  const requireLogin = (path: "/logs" | "/tasks" | "/admin" | "/reports" | "/system" | "/monitor" | "/config" | "/stats" | "/vulns" | "/batch" | "/dashboard" | "/audit" | "/knowledge" | "/knowledge/collect") => {
     if (!loggedIn) {
       toast.error("请先登录");
       localStorage.setItem("sentinel_login_redirect", path);
@@ -141,6 +141,7 @@ const Header = ({ currentPhase = 0 }: HeaderProps) => {
     { label: "报告中心", onClick: () => requireLogin("/reports"),   badge: 0,          path: "/reports" },
     { label: "技能库",   onClick: () => navigate("/skills"),        badge: 0,          path: "/skills" },
     { label: "知识中心", onClick: () => requireLogin("/knowledge"), badge: 0,          path: "/knowledge" },
+    { label: "数据采集", onClick: () => requireLogin("/knowledge/collect"), badge: 0,  path: "/knowledge/collect" },
     { label: "监控大屏", onClick: () => requireLogin("/monitor"),   badge: 0,          path: "/monitor" },
     { label: "统计分析", onClick: () => requireLogin("/stats"),     badge: 0,          path: "/stats" },
     { label: "漏洞库",   onClick: () => requireLogin("/vulns"),     badge: 0,          path: "/vulns" },
@@ -214,7 +215,8 @@ const Header = ({ currentPhase = 0 }: HeaderProps) => {
 
           <nav style={{display: "flex", alignItems: "center", gap: "10px", overflowX: "auto", flexShrink: 1, minWidth: 0, paddingBottom: 2}}>
               {navLinks.map((link) => {
-                const isActive = link.path === "/" ? pathname === "/" : pathname.startsWith(link.path);
+                const isExactPath = link.path === "/" || link.path === "/knowledge";
+                const isActive = isExactPath ? pathname === link.path : pathname.startsWith(link.path);
                 return (
                   <button
                       key={link.label}
