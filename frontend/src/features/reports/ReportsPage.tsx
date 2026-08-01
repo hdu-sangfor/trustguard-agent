@@ -145,6 +145,21 @@ type ReportEntry = {
   expanded: boolean;
 };
 
+/**
+ * Replace list metadata without discarding details the user has already opened.
+ * Polling returns a new array every time, so rebuilding entries here would also
+ * reset each card's expanded state.
+ */
+function reconcileEntries(tasks: ApiTask[], previous: ReportEntry[]): ReportEntry[] {
+  const existingByTaskId = new Map(previous.map((entry) => [entry.task.taskId, entry]));
+  return tasks.map((task) => {
+    const existing = existingByTaskId.get(task.taskId);
+    return existing
+      ? { ...existing, task }
+      : { task, report: null, execs: null, observation: null, loading: false, expanded: false };
+  });
+}
+
 // ─── HTML Report Generator ────────────────────────────────────────────────────
 function generateHtmlReport(
   t: ApiTask,
@@ -354,7 +369,7 @@ const ReportsPage = () => {
     try {
       const tasks = await listCompletedTasks(100);
       if (tasks.length > 0) {
-        setEntries(tasks.map((t) => ({ task: t, report: null, execs: null, observation: null, loading: false, expanded: false })));
+        setEntries((previous) => reconcileEntries(tasks, previous));
       } else {
         // Backend online but no completed tasks — check if we have local finished tasks as demo data
         const { readStoredOrbitTasks } = await import("@/shared/constants/orbitTasksStorage");
@@ -371,7 +386,7 @@ const ReportsPage = () => {
             createdAt: new Date(t.createdAt).toISOString(),
             updatedAt: new Date(t.updatedAt ?? t.createdAt).toISOString(),
           }));
-          setEntries(demoTasks.map((t) => ({ task: t, report: null, execs: null, observation: null, loading: false, expanded: false })));
+          setEntries((previous) => reconcileEntries(demoTasks, previous));
         } else {
           setEntries([]);
         }
@@ -394,7 +409,7 @@ const ReportsPage = () => {
             createdAt: new Date(t.createdAt).toISOString(),
             updatedAt: new Date(t.updatedAt ?? t.createdAt).toISOString(),
           }));
-          setEntries(demoTasks.map((t) => ({ task: t, report: null, execs: null, observation: null, loading: false, expanded: false })));
+          setEntries((previous) => reconcileEntries(demoTasks, previous));
           setLastRefresh(new Date());
         }
       } catch { /* ignore */ }
@@ -418,12 +433,12 @@ const ReportsPage = () => {
     return () => window.clearInterval(iv);
   }, [refresh]);
 
-  const toggleExpand = async (idx: number) => {
-    const entry = entries[idx];
+  const toggleExpand = async (taskId: string) => {
+    const entry = entries.find((candidate) => candidate.task.taskId === taskId);
     if (!entry) return;
     const nowExpanded = !entry.expanded;
     // Toggle collapsed state immediately
-    setEntries((prev) => prev.map((e, i) => i === idx ? { ...e, expanded: nowExpanded, loading: nowExpanded && e.report === null } : e));
+    setEntries((prev) => prev.map((e) => e.task.taskId === taskId ? { ...e, expanded: nowExpanded, loading: nowExpanded && e.report === null } : e));
     if (!nowExpanded || entry.report !== null) return;
     // Fetch report + executions + observation lazily
     const [reportRes, execsRes, obsRes] = await Promise.allSettled([
@@ -572,7 +587,7 @@ const ReportsPage = () => {
       }
     }
 
-    setEntries((prev) => prev.map((e, i) => i === idx ? { ...e, report, execs, observation, loading: false } : e));
+    setEntries((prev) => prev.map((e) => e.task.taskId === taskId ? { ...e, report, execs, observation, loading: false } : e));
   };
 
   const downloadReport = async (entry: ReportEntry) => {
@@ -1034,12 +1049,11 @@ const ReportsPage = () => {
                 ? Math.round((new Date(t.updatedAt).getTime() - new Date(t.createdAt).getTime()) / 60000)
                 : null;
 
-              const realIdx = entries.indexOf(entry);
               return (
                 <div key={t.taskId} style={{ borderBottom: idx < filtered.length - 1 ? "1px solid rgba(51,65,85,0.2)" : "none" }}>
                   {/* Summary row — clickable */}
                   <div
-                    onClick={() => { void toggleExpand(realIdx); }}
+                    onClick={() => { void toggleExpand(t.taskId); }}
                     style={{
                       padding: "12px 18px", cursor: "pointer", display: "flex", gap: 12,
                       alignItems: "center", flexWrap: "wrap",
