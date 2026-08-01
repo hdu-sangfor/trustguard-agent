@@ -113,6 +113,30 @@ services:
       timeout: 5s
       retries: 3
 
+  supervisor:
+    build:
+      context: ./supervisor
+      dockerfile: Dockerfile
+      args: *build-args
+      extra_hosts: *build-extra-hosts
+      network: *build-network
+    image: ${TRUSTGUARD_IMAGE_PREFIX:-trustguard-}supervisor
+    restart: unless-stopped
+    ports:
+      - "18082:18082"
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      SERVER_PORT: 18082
+      SUPERVISOR_CONFIRMATION_SECRET: ${SUPERVISOR_CONFIRMATION_SECRET:-trustguard-supervisor-dev-secret}
+    env_file: *optional-env-files
+    depends_on:
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:18082/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
   orchestrator:
     build:
       context: ./orchestrator
@@ -273,6 +297,7 @@ services:
       ORCHESTRATOR_BASE_URL: http://orchestrator:18081
       EVIDENCE_BASE_URL: http://evidence:18103
       EXECUTOR_BASE_URL: http://executor:18102
+      SUPERVISOR_BASE_URL: http://supervisor:18082
       RAG_SERVICE_BASE_URL: ${RAG_SERVICE_BASE_URL:-http://host.docker.internal:18200}
       RAG_GATEWAY_SERVICE_TOKEN: ${RAG_GATEWAY_SERVICE_TOKEN:-}
       AUTH_TOKEN_SECRET: ${AUTH_TOKEN_SECRET:-trustguard-agent-dev-secret}
@@ -287,6 +312,7 @@ services:
       redis: { condition: service_healthy }
       rabbitmq: { condition: service_healthy }
       evidence: { condition: service_healthy }
+      supervisor: { condition: service_healthy }
       orchestrator: { condition: service_healthy }
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:18080/health')"]

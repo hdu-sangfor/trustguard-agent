@@ -810,3 +810,21 @@ html[data-theme="light"] .nav-link {
   background: radial-gradient(ellipse at center, rgba(0, 247, 255, 0.25) 0%, transparent 70%);
   transition: opacity 0.6s ease;
 }
+@keyframes tg-spin {
+  to { transform: rotate(360deg); }
+}
+
+.tg-spin {
+  animation: tg-spin 0.9s linear infinite;
+}
+
+@media (max-width: 860px) {
+  .task-agent-layout {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .task-agent-layout aside {
+    position: static !important;
+    grid-row: 1;
+  }
+}

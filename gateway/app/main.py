@@ -31,6 +31,7 @@ from app.security.auth import (
     get_user_by_username,
     hash_password,
     issue_token,
+    require_roles,
     verify_password,
 )
 
@@ -39,12 +40,14 @@ log = logging.getLogger("trustguard.gateway")
 ORCHESTRATOR_BASE_URL = os.getenv("ORCHESTRATOR_BASE_URL", "http://localhost:18081").rstrip("/")
 EVIDENCE_BASE_URL = os.getenv("EVIDENCE_BASE_URL", "http://localhost:18103").rstrip("/")
 EXECUTOR_BASE_URL = os.getenv("EXECUTOR_BASE_URL", "http://localhost:18102").rstrip("/")
+SUPERVISOR_BASE_URL = os.getenv("SUPERVISOR_BASE_URL", "http://localhost:18082").rstrip("/")
 MQ_BROKER_URL = os.getenv("MQ_BROKER_URL", "amqp://guest:guest@localhost:5672/")
 KB_QDRANT_URL = os.getenv("KB_QDRANT_URL", "http://localhost:6333").rstrip("/")
 
 START_TIME = datetime.now(timezone.utc)
 PHASE_ORDER = ["RECON", "THREAT_MODEL", "VULN_SCAN", "EXPLOIT", "REPORT", "DONE"]
 STATUS_VALUES = ["PENDING", "RUNNING", "PAUSED", "DONE", "FAILED", "CANCELLED"]
+_TASK_AGENT_IDEMPOTENCY: dict[str, dict[str, Any]] = {}
 
 app = FastAPI(title="TrustGuard Gateway", version="1.0.0")
 app.include_router(knowledge_router)
@@ -155,6 +158,33 @@ async def _orch(method: str, path: str, *, json_body: Any = None, params: dict[s
         return resp.json()
 
 
+async def _supervisor(
+    method: str,
+    path: str,
+    *,
+    json_body: Any = None,
+    actor_id: str = "",
+    timeout: float = 20.0,
+) -> Any:
+    headers = {"X-Actor-Id": actor_id} if actor_id else None
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        resp = await client.request(
+            method,
+            f"{SUPERVISOR_BASE_URL}{path}",
+            json=json_body,
+            headers=headers,
+        )
+        if resp.status_code == 204:
+            return None
+        if resp.is_error:
+            try:
+                detail = resp.json().get("detail")
+            except Exception:
+                detail = resp.text
+            raise HTTPException(status_code=resp.status_code, detail=detail or "Supervisor request failed")
+        return resp.json() if resp.content else None
+
+
 async def _evidence(method: str, path: str, *, json_body: Any = None, params: dict[str, Any] | None = None, timeout: float = 15.0) -> Any:
     async with httpx.AsyncClient(timeout=timeout) as client:
         resp = await client.request(method, f"{EVIDENCE_BASE_URL}{path}", json=json_body, params=params)
@@ -212,6 +242,22 @@ class CreateTaskRequest(BaseModel):
     extra_user_requirements: str | None = Field(default=None, validation_alias=AliasChoices("extra_user_requirements", "extraUserRequirements"))
 
 
+class TaskAgentDraftRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    message: str = Field(min_length=1, max_length=8000)
+    conversation_id: str | None = Field(default=None, validation_alias=AliasChoices("conversation_id", "conversationId"))
+
+
+class TaskAgentConfirmRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    confirmation_token: str = Field(validation_alias=AliasChoices("confirmation_token", "confirmationToken"), min_length=1)
+    start: bool = True
+    max_ticks: int = Field(default=100, validation_alias=AliasChoices("max_ticks", "maxTicks"), ge=1, le=1000)
+    idempotency_key: str | None = Field(default=None, validation_alias=AliasChoices("idempotency_key", "idempotencyKey"), max_length=128)
+
+
 class TaskKnowledgeChunksRequest(BaseModel):
     chunk_ids: list[str] = Field(default_factory=list, max_length=20)
 
@@ -252,8 +298,7 @@ async def http_exception_handler(_: Request, exc: HTTPException) -> JSONResponse
     return fail(detail, code="HTTP_ERROR", status_code=exc.status_code)
 
 
-@app.post("/api/v1/tasks")
-async def create_task(req: CreateTaskRequest) -> dict[str, Any]:
+async def _create_task_impl(req: CreateTaskRequest, *, actor: CurrentUser | None = None) -> dict[str, Any]:
     task_id = "task-" + uuid.uuid4().hex
     name = (req.name or "").strip() or "未命名任务"
     target = req.target.strip()
@@ -283,7 +328,14 @@ async def create_task(req: CreateTaskRequest) -> dict[str, Any]:
         )
     except Exception as exc:
         log.warning("orchestrator create failed task_id=%s: %s", task_id, exc)
-    return ok(_task_row_to_api(row or {}))
+    if actor is not None:
+        _record_audit("TASK_CREATED", actor.user_id, task_id, f"source=task-agent target={target}")
+    return _task_row_to_api(row or {})
+
+
+@app.post("/api/v1/tasks")
+async def create_task(req: CreateTaskRequest) -> dict[str, Any]:
+    return ok(await _create_task_impl(req))
 
 
 @app.get("/api/v1/tasks")
@@ -375,6 +427,98 @@ async def resume_task(
     if isinstance(result, dict) and maxTicks > 0:
         return await _run_lifecycle(task_id, "run", max_ticks=maxTicks, max_duration_seconds=max_duration_seconds)
     return result
+
+
+@app.post("/api/v1/task-agent/draft")
+async def task_agent_draft(
+    req: TaskAgentDraftRequest,
+    user: CurrentUser = Depends(require_roles("ADMIN", "OPERATOR")),
+) -> dict[str, Any]:
+    body = await _supervisor(
+        "POST",
+        "/v1/task-agent/draft",
+        json_body={"message": req.message, "conversationId": req.conversation_id},
+        actor_id=user.user_id,
+    )
+    _record_audit(
+        "TASK_AGENT_DRAFT",
+        user.user_id,
+        str((body or {}).get("draftId") or "platform"),
+        f"status={(body or {}).get('status')}",
+    )
+    return ok(body)
+
+
+@app.post("/api/v1/task-agent/confirm")
+async def task_agent_confirm(
+    req: TaskAgentConfirmRequest,
+    user: CurrentUser = Depends(require_roles("ADMIN", "OPERATOR")),
+) -> dict[str, Any]:
+    idem = (req.idempotency_key or "").strip()
+    idem_scope = f"{user.user_id}:{idem}" if idem else ""
+    if idem_scope and idem_scope in _TASK_AGENT_IDEMPOTENCY:
+        return ok(_TASK_AGENT_IDEMPOTENCY[idem_scope])
+
+    consumed = await _supervisor(
+        "POST",
+        "/v1/task-agent/drafts/consume",
+        json_body={"confirmationToken": req.confirmation_token},
+        actor_id=user.user_id,
+    )
+    draft = (consumed or {}).get("draft") or {}
+    target = str(draft.get("target") or "").strip()
+    if not target:
+        raise HTTPException(status_code=400, detail="Supervisor draft is missing target")
+    create_req = CreateTaskRequest(
+        name=str(draft.get("name") or "自然语言渗透测试"),
+        target=target,
+        description=str(draft.get("description") or ""),
+        business_background=str(draft.get("businessBackground") or draft.get("business_background") or ""),
+        extra_user_requirements=str(draft.get("extraUserRequirements") or draft.get("extra_user_requirements") or ""),
+    )
+    task = await _create_task_impl(create_req, actor=user)
+    task_id = str(task.get("taskId") or "")
+    activity = [
+        {
+            "id": "confirm-1",
+            "kind": "tool",
+            "title": "创建渗透测试任务",
+            "detail": f"Gateway 已创建 {task_id}",
+            "status": "done",
+            "timestamp": _now_iso(),
+        }
+    ]
+    if req.start:
+        max_duration = int(draft.get("maxDurationSeconds") or draft.get("max_duration_seconds") or 900)
+        result = await _run_lifecycle(
+            task_id,
+            "run",
+            max_ticks=req.max_ticks,
+            max_duration_seconds=max_duration,
+        )
+        if isinstance(result, JSONResponse):
+            raise HTTPException(status_code=502, detail="任务已创建，但启动失败")
+        activity.append(
+            {
+                "id": "confirm-2",
+                "kind": "progress",
+                "title": "启动 Pentest Workflow",
+                "detail": "Orchestrator 已接管任务；后续阶段和工具事件会持续回到当前对话。",
+                "status": "running",
+                "timestamp": _now_iso(),
+            }
+        )
+    payload = {
+        "conversationId": (consumed or {}).get("conversationId"),
+        "draftId": (consumed or {}).get("draftId"),
+        "task": task,
+        "started": bool(req.start),
+        "activities": activity,
+    }
+    if idem_scope:
+        _TASK_AGENT_IDEMPOTENCY[idem_scope] = payload
+    _record_audit("TASK_AGENT_CONFIRMED", user.user_id, task_id, f"start={req.start}")
+    return ok(payload)
 
 
 @app.get("/api/v1/tasks/{task_id}/run-status")

@@ -123,7 +123,7 @@ const Header = ({ currentPhase = 0 }: HeaderProps) => {
     window.scrollTo({ top: 0 });
   };
 
-  const requireLogin = (path: "/logs" | "/tasks" | "/admin" | "/reports" | "/system" | "/monitor" | "/config" | "/stats" | "/vulns" | "/batch" | "/dashboard" | "/audit" | "/knowledge" | "/knowledge/collect") => {
+  const requireLogin = (path: "/logs" | "/tasks" | "/admin" | "/reports" | "/system" | "/monitor" | "/config" | "/stats" | "/vulns" | "/batch" | "/dashboard" | "/audit" | "/knowledge" | "/knowledge/collect" | "/agent") => {
     if (!loggedIn) {
       toast.error("请先登录");
       localStorage.setItem("sentinel_login_redirect", path);
@@ -138,6 +138,7 @@ const Header = ({ currentPhase = 0 }: HeaderProps) => {
     { label: "技术特点", onClick: () => navigate("/features"),      badge: 0,          path: "/features" },
     { label: "运行日志", onClick: () => requireLogin("/logs"),      badge: 0,          path: "/logs" },
     { label: "任务管理", onClick: () => requireLogin("/tasks"),     badge: runningCount, path: "/tasks" },
+    { label: "Agent 创建", onClick: () => requireLogin("/agent"),    badge: 0,          path: "/agent" },
     { label: "报告中心", onClick: () => requireLogin("/reports"),   badge: 0,          path: "/reports" },
     { label: "技能库",   onClick: () => navigate("/skills"),        badge: 0,          path: "/skills" },
     { label: "知识中心", onClick: () => requireLogin("/knowledge"), badge: 0,          path: "/knowledge" },

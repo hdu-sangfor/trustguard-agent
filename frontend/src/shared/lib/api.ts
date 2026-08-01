@@ -20,7 +20,49 @@ export interface ApiTask {
   updatedAt: string;
 }
 
+export interface ApiAgentActivity {
+  id: string;
+  kind: 'analysis' | 'guard' | 'tool' | 'result' | 'progress';
+  title: string;
+  detail: string;
+  status: 'pending' | 'running' | 'done' | 'blocked';
+  timestamp: string;
+}
+
+export interface ApiPentestDraft {
+  name: string;
+  target: string;
+  description: string;
+  businessBackground: string;
+  extraUserRequirements: string;
+  testProfile: 'safe' | 'standard' | 'aggressive';
+  allowExploit: boolean;
+  allowDestructiveActions: boolean;
+  maxDurationSeconds: number;
+}
+
+export interface ApiTaskAgentDraft {
+  status: 'NEEDS_CLARIFICATION' | 'NEEDS_CONFIRMATION' | 'REJECTED' | 'READY';
+  conversationId: string;
+  draftId?: string | null;
+  confirmationToken?: string | null;
+  draft?: ApiPentestDraft | null;
+  missingFields: string[];
+  warnings: string[];
+  assistantMessage: string;
+  activities: ApiAgentActivity[];
+}
+
+export interface ApiTaskAgentConfirmation {
+  conversationId?: string | null;
+  draftId?: string | null;
+  task: ApiTask;
+  started: boolean;
+  activities: ApiAgentActivity[];
+}
+
 export interface ApiEvent {
+  eventId?: string;
   taskId: string;
   timestamp: string;
   eventType: string;
@@ -178,6 +220,33 @@ export async function createTask(params: {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(params),
+  });
+}
+
+export async function createTaskAgentDraft(
+  message: string,
+  conversationId?: string,
+): Promise<ApiTaskAgentDraft> {
+  return apiFetch<ApiTaskAgentDraft>('/api/v1/task-agent/draft', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message, conversationId }),
+  });
+}
+
+export async function confirmTaskAgentDraft(
+  confirmationToken: string,
+  options?: { start?: boolean; maxTicks?: number; idempotencyKey?: string },
+): Promise<ApiTaskAgentConfirmation> {
+  return apiFetch<ApiTaskAgentConfirmation>('/api/v1/task-agent/confirm', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      confirmationToken,
+      start: options?.start ?? true,
+      maxTicks: options?.maxTicks ?? 100,
+      idempotencyKey: options?.idempotencyKey,
+    }),
   });
 }
 

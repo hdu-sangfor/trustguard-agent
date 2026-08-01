@@ -68,6 +68,7 @@ const AuditPage = lazy(reloadOnChunkError(() => import("@/features/audit/AuditPa
 const KnowledgePage = lazy(reloadOnChunkError(() => import("@/features/knowledge/KnowledgePage")));
 const KnowledgeCollectionPage = lazy(reloadOnChunkError(() => import("@/features/knowledge-collection/KnowledgeCollectionPage")));
 const KnowledgeReviewPage = lazy(reloadOnChunkError(() => import("@/features/knowledge-review/KnowledgeReviewPage")));
+const TaskAgentPage = lazy(reloadOnChunkError(() => import("@/features/agent/TaskAgentPage")));
 import { AppSessionProvider } from "@/shared/context/AppSessionContext";
 import { SENTINEL_ORBIT_TASKS_KEY, ORBIT_TASKS_UPDATED_EVENT, type StoredOrbitTask } from "@/shared/constants/orbitTasksStorage";
 
@@ -205,6 +206,7 @@ const App = () => {
                 <Route path="/knowledge" element={<KnowledgePage />} />
                 <Route path="/knowledge/collect" element={<KnowledgeCollectionPage />} />
                 <Route path="/knowledge/collect/review/:jobId" element={<KnowledgeReviewPage />} />
+                <Route path="/agent" element={<TaskAgentPage />} />
                 <Route path="/testbench" element={<Navigate to="/tasks" replace />} />
                 <Route path="*" element={<NotFound />} />
               </Routes>
