@@ -56,6 +56,25 @@ CREATE TABLE IF NOT EXISTS tg_trace_events (
     INDEX idx_task_ts (task_id, ts)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- Evidence：结构化 CoT 推理步骤（与 tg_trace_events 并行；step_type 为字符串以便扩展）
+CREATE TABLE IF NOT EXISTS tg_reasoning_steps (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    task_id VARCHAR(64) NOT NULL,
+    trace_id VARCHAR(64) NOT NULL COMMENT '与 task_id 1:1，取值相等',
+    step_id VARCHAR(64) NOT NULL,
+    step_type VARCHAR(64) NOT NULL,
+    status VARCHAR(32) NOT NULL,
+    started_at VARCHAR(64) NULL,
+    finished_at VARCHAR(64) NULL,
+    duration_ms BIGINT NULL,
+    summary TEXT NULL,
+    payload JSON,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_step_id (step_id),
+    INDEX idx_rs_task_id (task_id),
+    INDEX idx_rs_trace_started (trace_id, started_at, id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- Evidence：任务上下文（编排器更新，供后续读取）
 CREATE TABLE IF NOT EXISTS tg_task_context (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,

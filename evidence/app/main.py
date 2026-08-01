@@ -13,8 +13,9 @@ import pymysql
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 from pymysql.cursors import DictCursor
+from contextlib import asynccontextmanager
 
 
 log = logging.getLogger("trustguard.evidence")
@@ -26,7 +27,56 @@ MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "trustguard")
 MYSQL_DATABASE = os.getenv("MYSQL_DATABASE", "trustguard_agent")
 WORKSPACE_ROOT = Path(os.getenv("WORKSPACE_ROOT", "/data/workspace")).resolve()
 
-app = FastAPI(title="TrustGuard Evidence", version="1.0.0")
+# 与编排器 reasoning_steps 注册表保持一致；Evidence 侧独立副本避免跨服务 import
+_STEP_TYPES = frozenset(
+    {
+        "TASK_UNDERSTANDING",
+        "TASK_PLANNING",
+        "RAG_RETRIEVAL",
+        "TOOL_CALL",
+        "RESULT_OBSERVATION",
+        "EVIDENCE_JUDGMENT",
+        "REPLANNING",
+        "FINAL_CONCLUSION",
+    }
+)
+_STEP_STATUSES = frozenset({"RUNNING", "SUCCEEDED", "FAILED", "SKIPPED"})
+
+_REASONING_STEPS_DDL = """
+CREATE TABLE IF NOT EXISTS tg_reasoning_steps (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    task_id VARCHAR(64) NOT NULL,
+    trace_id VARCHAR(64) NOT NULL,
+    step_id VARCHAR(64) NOT NULL,
+    step_type VARCHAR(64) NOT NULL,
+    status VARCHAR(32) NOT NULL,
+    started_at VARCHAR(64) NULL,
+    finished_at VARCHAR(64) NULL,
+    duration_ms BIGINT NULL,
+    summary TEXT NULL,
+    payload JSON,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_step_id (step_id),
+    INDEX idx_rs_task_id (task_id),
+    INDEX idx_rs_trace_started (trace_id, started_at, id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+"""
+
+
+def _ensure_reasoning_steps_table() -> None:
+    try:
+        _execute(_REASONING_STEPS_DDL)
+    except Exception:
+        log.exception("failed to ensure tg_reasoning_steps table")
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    _ensure_reasoning_steps_table()
+    yield
+
+
+app = FastAPI(title="TrustGuard Evidence", version="1.0.0", lifespan=_lifespan)
 
 
 def _conn():
@@ -173,6 +223,37 @@ class EventIn(BaseModel):
     run_started_at: str | None = Field(default=None, validation_alias=AliasChoices("run_started_at", "runStartedAt"))
     run_finished_at: str | None = Field(default=None, validation_alias=AliasChoices("run_finished_at", "runFinishedAt"))
     run_duration_ms: int | None = Field(default=None, validation_alias=AliasChoices("run_duration_ms", "runDurationMs"))
+
+
+class ReasoningStepIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    task_id: str = Field(validation_alias=AliasChoices("task_id", "taskId"), min_length=1)
+    trace_id: str | None = Field(default=None, validation_alias=AliasChoices("trace_id", "traceId"))
+    step_id: str | None = Field(default=None, validation_alias=AliasChoices("step_id", "stepId"))
+    step_type: str = Field(validation_alias=AliasChoices("step_type", "stepType"), min_length=1)
+    status: str = Field(min_length=1)
+    started_at: str | None = Field(default=None, validation_alias=AliasChoices("started_at", "startedAt"))
+    finished_at: str | None = Field(default=None, validation_alias=AliasChoices("finished_at", "finishedAt"))
+    duration_ms: int | None = Field(default=None, validation_alias=AliasChoices("duration_ms", "durationMs"))
+    summary: str = ""
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("step_type")
+    @classmethod
+    def _check_step_type(cls, v: str) -> str:
+        u = (v or "").strip().upper()
+        if u not in _STEP_TYPES:
+            raise ValueError(f"invalid step_type: {v}")
+        return u
+
+    @field_validator("status")
+    @classmethod
+    def _check_status(cls, v: str) -> str:
+        u = (v or "").strip().upper()
+        if u not in _STEP_STATUSES:
+            raise ValueError(f"invalid status: {v}")
+        return u
 
 
 class CheckpointIn(BaseModel):
@@ -389,6 +470,81 @@ def list_task_events(task_id: str, limit: int = 500) -> list[dict[str, Any]]:
             "run_started_at": row.get("run_started_at") or "",
             "run_finished_at": row.get("run_finished_at") or "",
             "run_duration_ms": row.get("run_duration_ms") or 0,
+        }
+        for row in rows
+    ]
+
+
+@app.post("/v1/reasoning-steps")
+def ingest_reasoning_step(step: ReasoningStepIn) -> dict[str, Any]:
+    task_id = step.task_id.strip()
+    trace_id = (step.trace_id or task_id).strip() or task_id
+    # 契约：trace_id == task_id；若调用方传了不同值，以 task_id 为准并写入一致值
+    if trace_id != task_id:
+        log.warning(
+            "reasoning step trace_id=%s != task_id=%s; forcing equality",
+            trace_id,
+            task_id,
+        )
+        trace_id = task_id
+    step_id = (step.step_id or "").strip() or ("rst-" + uuid.uuid4().hex[:16])
+    try:
+        _execute(
+            """
+            INSERT INTO tg_reasoning_steps
+              (task_id, trace_id, step_id, step_type, status,
+               started_at, finished_at, duration_ms, summary, payload, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+            """,
+            (
+                task_id,
+                trace_id,
+                step_id,
+                step.step_type,
+                step.status,
+                step.started_at,
+                step.finished_at,
+                step.duration_ms,
+                step.summary or "",
+                _json_dumps(step.payload),
+            ),
+        )
+        return {"step_id": step_id, "trace_id": trace_id, "accepted": True}
+    except Exception:
+        log.exception(
+            "failed to ingest reasoning step task_id=%s step_type=%s",
+            task_id,
+            step.step_type,
+        )
+        return {"step_id": step_id, "trace_id": trace_id, "accepted": False}
+
+
+@app.get("/internal/tasks/{task_id}/reasoning-steps")
+def list_reasoning_steps(task_id: str, limit: int = 500) -> list[dict[str, Any]]:
+    max_rows = _limit(limit, 500)
+    rows = _query(
+        """
+        SELECT task_id, trace_id, step_id, step_type, status,
+               started_at, finished_at, duration_ms, summary, payload
+        FROM tg_reasoning_steps
+        WHERE task_id = %s
+        ORDER BY COALESCE(started_at, created_at) ASC, id ASC
+        LIMIT %s
+        """,
+        (task_id, max_rows),
+    )
+    return [
+        {
+            "task_id": row.get("task_id") or "",
+            "trace_id": row.get("trace_id") or "",
+            "step_id": row.get("step_id") or "",
+            "step_type": row.get("step_type") or "",
+            "status": row.get("status") or "",
+            "started_at": row.get("started_at") or "",
+            "finished_at": row.get("finished_at") or "",
+            "duration_ms": row.get("duration_ms"),
+            "summary": row.get("summary") or "",
+            "payload": _json_loads(row.get("payload")),
         }
         for row in rows
     ]

@@ -240,6 +240,21 @@ class TraceEvent(BaseModel):
     run_duration_ms: int | None = None
 
 
+class ReasoningStep(BaseModel):
+    """结构化 CoT 推理步骤（Issue #136）；与 TraceEvent 并行，trace_id == task_id。"""
+
+    trace_id: str
+    task_id: str
+    step_id: str
+    step_type: str
+    status: str
+    started_at: str | None = None
+    finished_at: str | None = None
+    duration_ms: int | None = None
+    summary: str = ""
+    payload: Dict[str, Any] = Field(default_factory=dict)
+
+
 class TaskState:
     def __init__(
         self,

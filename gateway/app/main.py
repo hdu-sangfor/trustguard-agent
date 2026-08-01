@@ -433,6 +433,60 @@ async def task_events(task_id: str, limit: int = 500) -> dict[str, Any]:
     return ok(data or [])
 
 
+@app.get("/api/v1/tasks/{task_id}/reasoning-steps")
+async def task_reasoning_steps(task_id: str, limit: int = 500) -> dict[str, Any]:
+    """结构化 CoT 推理步骤列表（Issue #136）；与 /events 运维轨迹并行。"""
+    try:
+        raw = await _evidence(
+            "GET",
+            f"/internal/tasks/{task_id}/reasoning-steps",
+            params={"limit": _limit(limit, 500)},
+        )
+        data = [
+            {
+                "traceId": e.get("trace_id"),
+                "taskId": e.get("task_id"),
+                "stepId": e.get("step_id"),
+                "stepType": e.get("step_type"),
+                "status": e.get("status"),
+                "startedAt": e.get("started_at"),
+                "finishedAt": e.get("finished_at"),
+                "durationMs": e.get("duration_ms"),
+                "summary": e.get("summary") or "",
+                "payload": e.get("payload") if isinstance(e.get("payload"), dict) else {},
+            }
+            for e in (raw or [])
+        ]
+    except Exception:
+        rows = _query(
+            """
+            SELECT task_id, trace_id, step_id, step_type, status,
+                   started_at, finished_at, duration_ms, summary, payload
+            FROM tg_reasoning_steps
+            WHERE task_id = %s
+            ORDER BY COALESCE(started_at, created_at) ASC, id ASC
+            LIMIT %s
+            """,
+            (task_id, _limit(limit, 500)),
+        )
+        data = [
+            {
+                "traceId": r.get("trace_id") or r.get("task_id"),
+                "taskId": r.get("task_id"),
+                "stepId": r.get("step_id"),
+                "stepType": r.get("step_type"),
+                "status": r.get("status"),
+                "startedAt": r.get("started_at") or "",
+                "finishedAt": r.get("finished_at") or "",
+                "durationMs": r.get("duration_ms"),
+                "summary": r.get("summary") or "",
+                "payload": _json_loads(r.get("payload")),
+            }
+            for r in rows
+        ]
+    return ok(data or [])
+
+
 @app.post("/api/v1/tasks/{task_id}/knowledge-chunks:batchGet", response_model=None)
 async def task_knowledge_chunks(
     task_id: str,
