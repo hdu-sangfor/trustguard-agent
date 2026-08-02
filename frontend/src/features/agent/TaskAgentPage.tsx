@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Check, ChevronDown, ChevronLeft, ChevronRight, Circle, Loader2, Send, ShieldCheck, Square, SquareTerminal } from 'lucide-react';
+import { Check, ChevronDown, ChevronLeft, ChevronRight, Circle, Loader2, Plus, RefreshCw, Send, ShieldCheck, Square, SquareTerminal } from 'lucide-react';
 import Header from '@/shared/components/Header';
 import { useAppSession } from '@/shared/context/AppSessionContext';
 import {
@@ -8,6 +8,7 @@ import {
   getTask,
   getTaskAgentConversation,
   getTaskEvents,
+  listTaskAgentConversations,
   streamTaskAgentDraft,
   streamTaskEvents,
   type ApiAgentActivity,
@@ -15,6 +16,7 @@ import {
   type ApiEvent,
   type ApiPentestDraft,
   type ApiTask,
+  type ApiTaskAgentConversationSummary,
 } from '@/shared/lib/api';
 
 const CONVERSATION_STORAGE_KEY = 'trustguard.agent.conversationId';
@@ -33,6 +35,37 @@ type ChatMessage = {
   confirmationToken?: string | null;
   streaming?: boolean;
 };
+
+function toChatMessage(message: ApiConversationMessage, confirmedTaskId?: string | null): ChatMessage {
+  return {
+    id: message.id,
+    role: message.role,
+    text: message.text,
+    activities: message.activities,
+    draft: message.draft,
+    confirmationToken: confirmedTaskId ? null : message.confirmationToken,
+  };
+}
+
+function conversationTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const now = new Date();
+  if (date.toDateString() === now.toDateString()) {
+    return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+  }
+  return date.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' });
+}
+
+function conversationStatus(status?: string | null): string {
+  const normalized = String(status ?? '').toUpperCase();
+  if (normalized === 'PENDING') return '待启动';
+  if (normalized === 'RUNNING') return '执行中';
+  if (normalized === 'DONE') return '已完成';
+  if (normalized === 'FAILED') return '失败';
+  if (normalized === 'CANCELLED') return '已取消';
+  return '';
+}
 
 const phases = ['RECON', 'THREAT_MODEL', 'VULN_SCAN', 'EXPLOIT', 'REPORT'];
 const terminalStatuses = new Set<ApiTask['status']>(['DONE', 'FAILED', 'CANCELLED']);
@@ -81,29 +114,29 @@ function ActivityList({ activities }: { activities: ApiAgentActivity[] }) {
   const visibleActivities = activities.slice((page - 1) * pageSize, page * pageSize);
   useEffect(() => setPage((current) => Math.min(current, totalPages)), [totalPages]);
   return (
-    <div style={{ marginTop: 13, border: '1px solid var(--tg-panel-border)', borderRadius: 10, overflow: 'hidden', background: 'rgba(5,12,24,.42)' }}>
-      <button type="button" onClick={() => setExpanded((value) => !value)} style={{ width: '100%', border: 0, background: 'transparent', color: 'var(--tg-text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '9px 12px', cursor: 'pointer', fontSize: 11, letterSpacing: '.08em', textTransform: 'uppercase' }}>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}><SquareTerminal size={13} /> 执行轨迹 · {activities.length} steps</span>
+    <div className="task-agent-activity-list">
+      <button type="button" onClick={() => setExpanded((value) => !value)} className="task-agent-activity-header">
+        <span><SquareTerminal size={14} /> 实时执行轨迹 <b>{activities.length}</b></span>
         <ChevronDown size={14} style={{ transform: expanded ? 'rotate(180deg)' : undefined, transition: 'transform .18s' }} />
       </button>
       {expanded && (
-        <div style={{ padding: '2px 12px 11px' }}>
+        <div className="task-agent-activity-body">
           {visibleActivities.map((activity) => (
-            <div key={activity.id} style={{ display: 'grid', gridTemplateColumns: '18px 1fr', gap: 7, padding: '8px 0', borderTop: '1px solid rgba(148,163,184,.09)' }}>
-              <span style={{ color: activity.status === 'blocked' ? '#fb7185' : activity.status === 'running' ? '#22d3ee' : '#34d399', paddingTop: 2 }}>
+            <div key={activity.id} className="task-agent-activity-item">
+              <span className={`task-agent-activity-state ${activity.status}`}>
                 {activity.status === 'running' ? <Loader2 size={13} className="tg-spin" /> : activity.status === 'blocked' ? <Circle size={10} fill="currentColor" /> : <Check size={13} />}
               </span>
               <span>
-                <span style={{ display: 'block', color: 'var(--tg-text)', fontSize: 12, fontWeight: 700 }}>{activity.title}</span>
-                {activity.detail && <span style={{ display: 'block', color: 'var(--tg-text-muted)', fontSize: 11, lineHeight: 1.5, marginTop: 2 }}>{activity.detail}</span>}
+                <strong>{activity.title}</strong>
+                {activity.detail && <small>{activity.detail}</small>}
               </span>
             </div>
           ))}
           {totalPages > 1 && (
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, paddingTop: 9, borderTop: '1px solid rgba(148,163,184,.09)' }}>
-              <button type="button" aria-label="上一页" onClick={() => setPage((current) => Math.max(1, current - 1))} disabled={page === 1} style={{ border: '1px solid var(--tg-panel-border)', borderRadius: 6, background: 'transparent', color: 'var(--tg-text)', padding: '4px 7px', cursor: page === 1 ? 'default' : 'pointer', opacity: page === 1 ? .4 : 1 }}><ChevronLeft size={13} /></button>
-              <span style={{ color: 'var(--tg-text-muted)', fontSize: 11 }}>第 {page} / {totalPages} 页 · 每页 {pageSize} 步</span>
-              <button type="button" aria-label="下一页" onClick={() => setPage((current) => Math.min(totalPages, current + 1))} disabled={page === totalPages} style={{ border: '1px solid var(--tg-panel-border)', borderRadius: 6, background: 'transparent', color: 'var(--tg-text)', padding: '4px 7px', cursor: page === totalPages ? 'default' : 'pointer', opacity: page === totalPages ? .4 : 1 }}><ChevronRight size={13} /></button>
+            <div className="task-agent-activity-pagination">
+              <button type="button" aria-label="上一页" onClick={() => setPage((current) => Math.max(1, current - 1))} disabled={page === 1}><ChevronLeft size={13} /></button>
+              <span>{page} / {totalPages}</span>
+              <button type="button" aria-label="下一页" onClick={() => setPage((current) => Math.min(totalPages, current + 1))} disabled={page === totalPages}><ChevronRight size={13} /></button>
             </div>
           )}
         </div>
@@ -114,15 +147,15 @@ function ActivityList({ activities }: { activities: ApiAgentActivity[] }) {
 
 function DraftCard({ draft, onConfirm, busy }: { draft: ApiPentestDraft; onConfirm: () => void; busy: boolean }) {
   return (
-    <div style={{ marginTop: 14, border: '1px solid rgba(34,211,238,.36)', background: 'rgba(8,47,73,.22)', borderRadius: 12, padding: 14 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#67e8f9', fontWeight: 800, fontSize: 13 }}><ShieldCheck size={15} /> 任务草稿</div>
-      <div style={{ display: 'grid', gridTemplateColumns: '72px 1fr', gap: '7px 12px', marginTop: 12, fontSize: 12 }}>
-        <span style={{ color: 'var(--tg-text-muted)' }}>名称</span><span>{draft.name}</span>
-        <span style={{ color: 'var(--tg-text-muted)' }}>目标</span><span style={{ wordBreak: 'break-all' }}>{draft.target}</span>
-        <span style={{ color: 'var(--tg-text-muted)' }}>策略</span><span>{draft.testProfile} · {draft.allowExploit ? '允许利用验证' : '默认不主动利用'}</span>
-        <span style={{ color: 'var(--tg-text-muted)' }}>时长</span><span>{Math.round(draft.maxDurationSeconds / 60)} 分钟</span>
+    <div className="task-agent-draft">
+      <div className="task-agent-draft-title"><ShieldCheck size={15} /> 任务草稿</div>
+      <div className="task-agent-draft-grid">
+        <span>名称</span><strong>{draft.name}</strong>
+        <span>目标</span><strong>{draft.target}</strong>
+        <span>策略</span><strong>{draft.testProfile} · {draft.allowExploit ? '允许利用验证' : '默认不主动利用'}</strong>
+        <span>时长</span><strong>{Math.round(draft.maxDurationSeconds / 60)} 分钟</strong>
       </div>
-      <button type="button" onClick={onConfirm} disabled={busy} style={{ marginTop: 14, width: '100%', border: 0, borderRadius: 7, background: 'linear-gradient(90deg,#06b6d4,#22d3ee)', color: '#03121d', fontWeight: 900, padding: '10px 12px', cursor: busy ? 'wait' : 'pointer', opacity: busy ? .65 : 1 }}>
+      <button type="button" onClick={onConfirm} disabled={busy}>
         {busy ? '正在创建并启动…' : '确认并启动渗透测试'}
       </button>
     </div>
@@ -139,32 +172,57 @@ export default function TaskAgentPage() {
   const [busy, setBusy] = useState(false);
   const [draftBusy, setDraftBusy] = useState(false);
   const [liveActivities, setLiveActivities] = useState<ApiAgentActivity[]>([]);
+  const [conversations, setConversations] = useState<ApiTaskAgentConversationSummary[]>([]);
+  const [conversationsLoading, setConversationsLoading] = useState(false);
+  const [conversationLoading, setConversationLoading] = useState(false);
+  const [conversationError, setConversationError] = useState('');
   const endRef = useRef<HTMLDivElement>(null);
   const draftAbortRef = useRef<AbortController | null>(null);
-
-  const appendMessage = (message: ChatMessage) => setMessages((items) => (
-    items.some((item) => item.id === message.id) ? items : [...items, message]
-  ));
-
-  const toChatMessage = (message: ApiConversationMessage, confirmedTaskId?: string | null): ChatMessage => ({
-    id: message.id,
-    role: message.role,
-    text: message.text,
-    activities: message.activities,
-    draft: message.draft,
-    confirmationToken: confirmedTaskId ? null : message.confirmationToken,
-  });
-
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, liveActivities]);
-  useEffect(() => () => draftAbortRef.current?.abort(), []);
+  const conversationLoadRef = useRef(0);
 
   useEffect(() => {
-    if (!loggedIn) return;
-    const savedConversationId = window.localStorage.getItem(CONVERSATION_STORAGE_KEY);
-    if (!savedConversationId) return;
-    let active = true;
-    void getTaskAgentConversation(savedConversationId).then(async (conversation) => {
-      if (!active) return;
+    document.documentElement.classList.add('task-agent-no-page-scroll');
+    document.body.classList.add('no-page-scroll');
+    return () => {
+      document.documentElement.classList.remove('task-agent-no-page-scroll');
+      document.body.classList.remove('no-page-scroll');
+    };
+  }, []);
+
+  const appendMessage = useCallback((message: ChatMessage) => setMessages((items) => (
+    items.some((item) => item.id === message.id) ? items : [...items, message]
+  )), []);
+
+  const refreshConversations = useCallback(async (): Promise<ApiTaskAgentConversationSummary[]> => {
+    setConversationsLoading(true);
+    try {
+      const items = await listTaskAgentConversations(50);
+      setConversations(items);
+      setConversationError('');
+      return items;
+    } catch (error) {
+      setConversationError(`会话列表加载失败：${error instanceof Error ? error.message : String(error)}`);
+      return [];
+    } finally {
+      setConversationsLoading(false);
+    }
+  }, []);
+
+  const loadConversation = useCallback(async (nextConversationId: string) => {
+    const requestId = ++conversationLoadRef.current;
+    draftAbortRef.current?.abort();
+    setBusy(false);
+    setDraftBusy(false);
+    setConversationLoading(true);
+    setConversationError('');
+    setConversationId(nextConversationId);
+    setTask(null);
+    setLiveActivities([]);
+    setMessages([WELCOME_MESSAGE]);
+    try {
+      const conversation = await getTaskAgentConversation(nextConversationId);
+      if (requestId !== conversationLoadRef.current) return;
+      window.localStorage.setItem(CONVERSATION_STORAGE_KEY, conversation.conversationId);
       setConversationId(conversation.conversationId);
       setMessages([
         WELCOME_MESSAGE,
@@ -173,17 +231,57 @@ export default function TaskAgentPage() {
       if (conversation.taskId) {
         try {
           const restoredTask = await getTask(conversation.taskId);
-          if (active) {
-            setTask(restoredTask);
-            if (terminalStatuses.has(restoredTask.status)) {
-              setMessages((items) => settleMessages(items));
-            }
+          if (requestId !== conversationLoadRef.current) return;
+          setTask(restoredTask);
+          if (terminalStatuses.has(restoredTask.status)) {
+            setMessages((items) => settleMessages(items));
           }
         } catch { /* conversation history remains useful when a task was removed */ }
       }
-    }).catch(() => { /* keep the welcome message during a transient restore failure */ });
-    return () => { active = false; };
-  }, [loggedIn]);
+    } catch (error) {
+      if (requestId !== conversationLoadRef.current) return;
+      setMessages([WELCOME_MESSAGE]);
+      setConversationError(`会话加载失败：${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      if (requestId === conversationLoadRef.current) setConversationLoading(false);
+    }
+  }, []);
+
+  const startNewConversation = useCallback(() => {
+    conversationLoadRef.current += 1;
+    draftAbortRef.current?.abort();
+    draftAbortRef.current = null;
+    window.localStorage.removeItem(CONVERSATION_STORAGE_KEY);
+    setConversationId(undefined);
+    setTask(null);
+    setMessages([WELCOME_MESSAGE]);
+    setLiveActivities([]);
+    setInput('');
+    setBusy(false);
+    setDraftBusy(false);
+    setConversationLoading(false);
+    setConversationError('');
+  }, []);
+
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, liveActivities]);
+  useEffect(() => () => draftAbortRef.current?.abort(), []);
+
+  useEffect(() => {
+    if (!loggedIn) return;
+    let active = true;
+    void refreshConversations().then((items) => {
+      if (!active || items.length === 0) return;
+      const savedConversationId = window.localStorage.getItem(CONVERSATION_STORAGE_KEY);
+      const initialId = items.some((item) => item.conversationId === savedConversationId)
+        ? savedConversationId
+        : items[0].conversationId;
+      if (initialId) void loadConversation(initialId);
+    });
+    return () => {
+      active = false;
+      conversationLoadRef.current += 1;
+    };
+  }, [loadConversation, loggedIn, refreshConversations]);
 
   useEffect(() => {
     if (!task?.taskId) return;
@@ -215,6 +313,7 @@ export default function TaskAgentPage() {
                 ? `渗透测试任务 ${task.taskId} 执行失败。你可以查看执行轨迹定位失败步骤。`
                 : `渗透测试任务 ${task.taskId} 已取消。`,
           });
+          void refreshConversations();
           if (interval !== undefined) window.clearInterval(interval);
         }
       } catch { /* keep the conversation usable during a transient API failure */ }
@@ -232,7 +331,10 @@ export default function TaskAgentPage() {
           }
         },
         onAssistant: (message) => {
-          if (active) appendMessage(toChatMessage(message, message.taskId));
+          if (active) {
+            appendMessage(toChatMessage(message, message.taskId));
+            void refreshConversations();
+          }
         },
         onDone: (result) => {
           if (!active) return;
@@ -243,6 +345,7 @@ export default function TaskAgentPage() {
               : [...settled, toChatMessage(result.message, result.taskId)];
           });
           setLiveActivities((items) => settleActivities(items) ?? []);
+          void refreshConversations();
         },
       },
       controller.signal,
@@ -257,7 +360,7 @@ export default function TaskAgentPage() {
       controller.abort();
       if (interval !== undefined) window.clearInterval(interval);
     };
-  }, [task?.taskId, conversationId]);
+  }, [appendMessage, conversationId, refreshConversations, task?.taskId]);
 
   const submit = async () => {
     const message = input.trim();
@@ -296,6 +399,7 @@ export default function TaskAgentPage() {
               draft: response.draft,
               confirmationToken: response.confirmationToken,
             } : item));
+            void refreshConversations();
           },
         },
         controller.signal,
@@ -330,6 +434,7 @@ export default function TaskAgentPage() {
           ? updated
           : [...updated, toChatMessage(response.message, response.task.taskId)];
       });
+      void refreshConversations();
     } catch (error) {
       setMessages((items) => [...items, { id: `e-${Date.now()}`, role: 'assistant', text: `确认失败：${error instanceof Error ? error.message : String(error)}` }]);
     } finally { setDraftBusy(false); }
@@ -339,24 +444,120 @@ export default function TaskAgentPage() {
     () => task?.status === 'DONE' ? phases.length : Math.max(0, phases.indexOf(task?.currentPhase ?? 'RECON')),
     [task?.currentPhase, task?.status],
   );
+  const traceActivities = useMemo(() => {
+    if (liveActivities.length > 0) return liveActivities;
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const activities = messages[index].activities;
+      if (activities && activities.length > 0) return activities;
+    }
+    return [];
+  }, [liveActivities, messages]);
+  const phaseLabels: Record<string, string> = {
+    RECON: '信息收集',
+    THREAT_MODEL: '威胁建模',
+    VULN_SCAN: '漏洞扫描',
+    EXPLOIT: '利用验证',
+    REPORT: '生成报告',
+  };
   if (!loggedIn) {
-    return <><Header /><main style={{ paddingTop: 110, maxWidth: 760, margin: '0 auto', paddingInline: 24 }}><h2>请先登录 Supervisor</h2><button type="button" onClick={() => navigate('/login')}>前往登录</button></main></>;
+    return <><Header /><main style={{ paddingTop: 110, maxWidth: 760, margin: '0 auto', paddingInline: 24 }}><h2>请先登录可信卫士</h2><button type="button" onClick={() => navigate('/login')}>前往登录</button></main></>;
   }
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--tg-page-gradient)', color: 'var(--tg-text)' }}>
+    <div className="task-agent-page">
       <Header />
-      <main className="task-agent-layout" style={{ paddingTop: 84, paddingBottom: 40, maxWidth: 1180, margin: '0 auto', paddingInline: 22, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 300px', gap: 20 }}>
-        <section style={{ minHeight: 'calc(100vh - 125px)', display: 'flex', flexDirection: 'column' }}>
-          <div style={{ padding: '10px 0 16px' }}><div style={{ color: '#67e8f9', fontSize: 11, letterSpacing: '.18em', textTransform: 'uppercase' }}>TrustGuard Supervisor</div><h1 style={{ margin: '5px 0 0', fontSize: 27, letterSpacing: '-.03em' }}>自然语言渗透测试</h1><p style={{ margin: '8px 0 0', color: 'var(--tg-text-muted)', fontSize: 13 }}>先理解和校验，再启动任务。下层工具的真实执行状态会回到这段对话。</p></div>
-          <div style={{ flex: 1, border: '1px solid var(--tg-panel-border)', borderRadius: 14, background: 'rgba(2,8,23,.5)', padding: '18px clamp(12px,3vw,32px)', overflow: 'hidden' }}>
-            {messages.map((message) => <div key={message.id} style={{ display: 'flex', justifyContent: message.role === 'user' ? 'flex-end' : 'flex-start', marginBottom: 18 }}><div style={{ maxWidth: message.role === 'user' ? '80%' : '92%', borderRadius: message.role === 'user' ? '14px 14px 4px 14px' : '4px 14px 14px 14px', padding: '11px 14px', background: message.role === 'user' ? 'rgba(8,145,178,.32)' : 'rgba(15,23,42,.82)', border: `1px solid ${message.role === 'user' ? 'rgba(34,211,238,.25)' : 'var(--tg-panel-border)'}`, fontSize: 13, lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{message.text || (message.streaming ? '正在分析任务' : '')}{message.streaming && <span className="tg-stream-cursor" aria-hidden="true" />}{message.activities && message.activities.length > 0 && <ActivityList activities={message.activities} />}{message.draft && message.confirmationToken && <DraftCard draft={message.draft} onConfirm={() => void confirm(message)} busy={draftBusy || Boolean(message.streaming)} />}</div></div>)}
-            {liveActivities.length > 0 && task && <div style={{ margin: '8px 0 18px', maxWidth: '92%' }}><div style={{ color: '#67e8f9', fontSize: 12, fontWeight: 800, marginBottom: 6 }}>实时 Pentest Workflow · {task.currentPhase} · {task.status}</div><ActivityList activities={liveActivities} /></div>}
+      <main className="task-agent-layout">
+        <nav className="task-agent-conversations" aria-label="可信卫士会话列表">
+          <div className="task-agent-conversations-header">
+            <span className="task-agent-product-name"><ShieldCheck size={17} /> 可信卫士</span>
+            <button type="button" onClick={() => void refreshConversations()} aria-label="刷新会话列表" title="刷新会话列表">
+              <RefreshCw size={13} className={conversationsLoading ? 'tg-spin' : undefined} />
+            </button>
+          </div>
+          <button type="button" className={`task-agent-new-conversation${conversationId ? '' : ' active'}`} onClick={startNewConversation}>
+            <Plus size={14} /> 新建会话
+          </button>
+          {conversationError && <div className="task-agent-conversation-error">{conversationError}</div>}
+          <div className="task-agent-conversation-list">
+            {!conversationsLoading && conversations.length === 0 && (
+              <div className="task-agent-conversation-empty">还没有历史会话。发送第一条消息后，会话会保存在这里。</div>
+            )}
+            {conversations.map((conversation) => {
+              const statusText = conversationStatus(conversation.taskStatus);
+              return (
+                <button
+                  type="button"
+                  key={conversation.conversationId}
+                  className={`task-agent-conversation-item${conversation.conversationId === conversationId ? ' active' : ''}`}
+                  onClick={() => {
+                    if (conversation.conversationId !== conversationId) void loadConversation(conversation.conversationId);
+                  }}
+                  title={conversation.title}
+                >
+                  <span className="task-agent-conversation-title">{conversation.title}</span>
+                  <span className="task-agent-conversation-preview">{conversation.preview || '暂无回复'}</span>
+                  <span className="task-agent-conversation-meta">
+                    <span>{conversationTime(conversation.updatedAt)}</span>
+                    {statusText && <span className={`status-${String(conversation.taskStatus).toLowerCase()}`}>{statusText}</span>}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </nav>
+        <section className="task-agent-chat" aria-label="对话">
+          <div className="task-agent-chat-scroll">
+            {conversationLoading && <div className="task-agent-conversation-loading"><Loader2 size={14} className="tg-spin" /> 正在恢复会话…</div>}
+            <div className="task-agent-message-column">
+              {messages.map((message) => (
+                <div key={message.id} className={`task-agent-message ${message.role}`}>
+                  {message.role === 'assistant' && <span className="task-agent-message-mark" aria-hidden="true"><ShieldCheck size={15} /></span>}
+                  <div className="task-agent-message-bubble">
+                    {message.text || (message.streaming ? '正在整理任务…' : '')}
+                    {message.streaming && <span className="tg-stream-cursor" aria-hidden="true" />}
+                    {message.draft && message.confirmationToken && <DraftCard draft={message.draft} onConfirm={() => void confirm(message)} busy={draftBusy || Boolean(message.streaming)} />}
+                  </div>
+                </div>
+              ))}
+            </div>
             <div ref={endRef} />
           </div>
-          <div style={{ marginTop: 13, display: 'flex', gap: 10, border: '1px solid var(--tg-panel-border)', background: 'var(--tg-panel-bg)', borderRadius: 12, padding: 9 }}><textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void submit(); } }} placeholder="例如：对 https://test.example.com 做非破坏性 Web 渗透，重点看未授权和 Struts2，运行 20 分钟" rows={2} style={{ flex: 1, resize: 'none', border: 0, outline: 0, background: 'transparent', color: 'var(--tg-text)', fontFamily: 'inherit', fontSize: 13, lineHeight: 1.5 }} /><button type="button" onClick={() => busy ? draftAbortRef.current?.abort() : void submit()} disabled={!busy && !input.trim()} aria-label={busy ? '停止生成' : '发送'} style={{ alignSelf: 'flex-end', width: 38, height: 38, border: 0, borderRadius: 9, background: 'var(--tg-accent)', color: '#03121d', cursor: 'pointer', opacity: !busy && !input.trim() ? .45 : 1 }}>{busy ? <Square size={13} fill="currentColor" /> : <Send size={16} />}</button></div>
+          <div className="task-agent-composer-wrap">
+            <div className="task-agent-composer">
+              <textarea value={input} disabled={conversationLoading} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void submit(); } }} placeholder="描述测试目标、范围和限制条件" rows={2} />
+              <button type="button" onClick={() => busy ? draftAbortRef.current?.abort() : void submit()} disabled={conversationLoading || (!busy && !input.trim())} aria-label={busy ? '停止生成' : '发送'}>{busy ? <Square size={13} fill="currentColor" /> : <Send size={16} />}</button>
+            </div>
+            <span className="task-agent-composer-hint">Enter 发送 · Shift + Enter 换行</span>
+          </div>
         </section>
-        <aside style={{ alignSelf: 'start', border: '1px solid var(--tg-panel-border)', borderRadius: 14, background: 'rgba(2,8,23,.52)', padding: 17, position: 'sticky', top: 82 }}><div style={{ color: 'var(--tg-text-muted)', fontSize: 11, letterSpacing: '.12em', textTransform: 'uppercase' }}>Workflow monitor</div>{task ? <><div style={{ marginTop: 12, fontSize: 12, color: 'var(--tg-text-muted)' }}>Task ID</div><div style={{ color: '#67e8f9', fontFamily: 'monospace', fontSize: 12, marginTop: 3, wordBreak: 'break-all' }}>{task.taskId}</div><div style={{ marginTop: 16, display: 'grid', gap: 9 }}>{phases.map((phase, index) => <div key={phase} style={{ display: 'flex', alignItems: 'center', gap: 9, color: index <= phaseIndex ? '#67e8f9' : 'var(--tg-text-muted)', fontSize: 12 }}><span style={{ width: 18, height: 18, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: `1px solid ${index <= phaseIndex ? '#22d3ee' : 'var(--tg-panel-border)'}`, background: index < phaseIndex ? 'rgba(34,211,238,.18)' : 'transparent' }}>{index < phaseIndex ? <Check size={11} /> : index === phaseIndex ? <Loader2 size={11} className="tg-spin" /> : <Circle size={7} />}</span>{phase}</div>)}</div>{(task.status === 'DONE' || task.status === 'FAILED') && <button type="button" onClick={() => navigate(`/reports?taskId=${task.taskId}`)} style={{ marginTop: 18, width: '100%', border: '1px solid var(--tg-panel-border)', background: 'transparent', color: 'var(--tg-text)', borderRadius: 7, padding: '8px 10px', cursor: 'pointer' }}>打开报告中心</button>}</> : <p style={{ color: 'var(--tg-text-muted)', fontSize: 12, lineHeight: 1.6 }}>尚未启动任务。确认草稿后，这里会显示 RECON、VULN_SCAN、EXPLOIT 和 REPORT 的实时进度。</p>}</aside>
+        <aside className="task-agent-monitor" aria-label="任务状态与执行轨迹">
+          <section className="task-agent-monitor-status">
+            <div className="task-agent-monitor-heading">
+              <span>任务状态</span>
+              {task && <b className={`status-${task.status.toLowerCase()}`}>{conversationStatus(task.status)}</b>}
+            </div>
+            {task ? (
+              <>
+                <div className="task-agent-id-label">任务 ID</div>
+                <div className="task-agent-id">{task.taskId}</div>
+                <div className="task-agent-phases">
+                  {phases.map((phase, index) => (
+                    <div key={phase} className={index <= phaseIndex ? 'active' : ''}>
+                      <span>{index < phaseIndex ? <Check size={11} /> : index === phaseIndex ? <Loader2 size={11} className="tg-spin" /> : <Circle size={7} />}</span>
+                      {phaseLabels[phase]}
+                    </div>
+                  ))}
+                </div>
+                {(task.status === 'DONE' || task.status === 'FAILED') && <button type="button" className="task-agent-report-button" onClick={() => navigate(`/reports?taskId=${task.taskId}`)}>打开报告中心</button>}
+              </>
+            ) : <p className="task-agent-monitor-empty">确认任务草稿后，这里会显示执行阶段和状态。</p>}
+          </section>
+          <section className="task-agent-monitor-trace">
+            {traceActivities.length > 0
+              ? <ActivityList activities={traceActivities} />
+              : <><div className="task-agent-activity-empty-heading"><SquareTerminal size={14} /> 实时执行轨迹</div><p>任务开始后，执行步骤会实时显示在这里。</p></>}
+          </section>
+        </aside>
       </main>
     </div>
   );

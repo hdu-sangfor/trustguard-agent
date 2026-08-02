@@ -142,6 +142,26 @@ async def test_task_agent_conversation_forwards_actor(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_task_agent_conversation_list_forwards_actor_and_limit(monkeypatch):
+    gw = _load_gateway_main()
+    captured = {}
+
+    async def fake_supervisor(method, path, **kwargs):
+        captured.update(method=method, path=path, **kwargs)
+        return [{"conversationId": "conv-1", "title": "scan target"}]
+
+    monkeypatch.setattr(gw, "_supervisor", fake_supervisor)
+    result = await gw.task_agent_conversations(25, _user(gw))
+
+    assert result["data"][0]["conversationId"] == "conv-1"
+    assert captured == {
+        "method": "GET",
+        "path": "/v1/conversations?limit=25",
+        "actor_id": "user-1",
+    }
+
+
+@pytest.mark.asyncio
 async def test_task_agent_stream_relays_sse_and_closes_upstream(monkeypatch):
     gw = _load_gateway_main()
     closed = {"response": False, "client": False}

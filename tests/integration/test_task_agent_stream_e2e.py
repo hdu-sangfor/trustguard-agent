@@ -110,6 +110,17 @@ def test_compose_task_agent_stream_confirmation_and_task_events(gateway_url: str
             for message in conversation["messages"]
         ) == 1
 
+        conversation_list = client.get(
+            f"{gateway_url}/api/v1/task-agent/conversations?limit=10",
+            headers=headers,
+        )
+        assert conversation_list.status_code == 200, conversation_list.text
+        summaries = conversation_list.json()["data"]
+        summary = next(item for item in summaries if item["conversationId"] == result["conversationId"])
+        assert summary["taskId"] == task_id
+        assert summary["messageCount"] >= 3
+        assert summary["title"].startswith("请对 https://test.example.com")
+
         with client.stream(
             "GET",
             f"{gateway_url}/api/v1/tasks/{task_id}/events/stream",

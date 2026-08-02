@@ -8,9 +8,46 @@ import logging
 import os
 from typing import Any, Callable, Protocol
 
-from app.domain.models import ConversationMessage
+from app.domain.models import ConversationMessage, ConversationSummary
 
 log = logging.getLogger("trustguard.supervisor.conversations")
+
+
+def _message_datetime(value: str) -> datetime:
+    try:
+        normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+        parsed = datetime.fromisoformat(normalized)
+        return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return datetime.now(timezone.utc)
+
+
+def _datetime_iso(value: Any) -> str:
+    if not isinstance(value, datetime):
+        return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    aware = value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+    return aware.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _compact_text(value: Any, limit: int) -> str:
+    return " ".join(str(value or "").split())[:limit]
+
+
+def _conversation_summary(item: "Conversation") -> ConversationSummary:
+    first_user = next((message.text for message in item.messages if message.role == "user"), "新会话")
+    latest = item.messages[-1] if item.messages else None
+    task_message = next((message for message in reversed(item.messages) if message.task_id), None)
+    status_message = next((message for message in reversed(item.messages) if message.task_status), None)
+    return ConversationSummary(
+        conversation_id=item.conversation_id,
+        title=_compact_text(first_user, 200) or "新会话",
+        preview=_compact_text(latest.text if latest else "", 500),
+        task_id=task_message.task_id if task_message else None,
+        task_status=status_message.task_status if status_message else None,
+        message_count=len(item.messages),
+        created_at=_datetime_iso(item.created_at),
+        updated_at=_datetime_iso(item.updated_at),
+    )
 
 
 @dataclass
@@ -18,13 +55,17 @@ class Conversation:
     conversation_id: str
     actor_id: str
     messages: list[ConversationMessage] = field(default_factory=list)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_order: int = 0
 
 
 class ConversationStore(Protocol):
     backend: str
 
     def get(self, conversation_id: str, actor_id: str) -> Conversation | None: ...
+
+    def list(self, actor_id: str, limit: int = 50) -> list[ConversationSummary]: ...
 
     def append_message(
         self, conversation_id: str, actor_id: str, message: ConversationMessage
@@ -36,6 +77,7 @@ class InMemoryConversationStore:
 
     def __init__(self) -> None:
         self._items: dict[tuple[str, str], Conversation] = {}
+        self._update_order = 0
 
     def get_or_create(self, conversation_id: str, actor_id: str) -> Conversation:
         key = (actor_id, conversation_id)
@@ -48,6 +90,14 @@ class InMemoryConversationStore:
     def get(self, conversation_id: str, actor_id: str) -> Conversation | None:
         return self._items.get((actor_id, conversation_id))
 
+    def list(self, actor_id: str, limit: int = 50) -> list[ConversationSummary]:
+        items = sorted(
+            (item for (owner, _conversation_id), item in self._items.items() if owner == actor_id),
+            key=lambda item: (item.updated_at, item.updated_order),
+            reverse=True,
+        )[:limit]
+        return [_conversation_summary(item) for item in items]
+
     def append_message(
         self, conversation_id: str, actor_id: str, message: ConversationMessage
     ) -> Conversation:
@@ -56,6 +106,8 @@ class InMemoryConversationStore:
             item.messages.append(message)
         item.messages = item.messages[-200:]
         item.updated_at = datetime.now(timezone.utc)
+        self._update_order += 1
+        item.updated_order = self._update_order
         return item
 
 
@@ -91,6 +143,26 @@ class RedisConversationStore:
             actor_id=actor_id,
             messages=[self._decode(item) for item in raw_messages],
         )
+
+    def list(self, actor_id: str, limit: int = 50) -> list[ConversationSummary]:
+        prefix = f"supervisor:conversation:{actor_id}:"
+        suffix = ":messages"
+        conversations: list[Conversation] = []
+        for raw_key in self._client.scan_iter(match=f"{prefix}*{suffix}", count=max(50, limit * 2)):
+            key = raw_key.decode() if isinstance(raw_key, bytes) else str(raw_key)
+            if not key.startswith(prefix) or not key.endswith(suffix):
+                continue
+            conversation_id = key[len(prefix):-len(suffix)]
+            item = self.get(conversation_id, actor_id)
+            if item is None:
+                continue
+            timestamps = [_message_datetime(message.created_at) for message in item.messages]
+            if timestamps:
+                item.created_at = min(timestamps)
+                item.updated_at = max(timestamps)
+            conversations.append(item)
+        conversations.sort(key=lambda item: item.updated_at, reverse=True)
+        return [_conversation_summary(item) for item in conversations[:limit]]
 
     def append_message(
         self, conversation_id: str, actor_id: str, message: ConversationMessage
@@ -225,6 +297,60 @@ class MySqlConversationStore:
         ]
         return Conversation(conversation_id=conversation_id, actor_id=actor_id, messages=messages)
 
+    def list(self, actor_id: str, limit: int = 50) -> list[ConversationSummary]:
+        with self._connection_factory() as conn, conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT c.conversation_id, c.task_id, c.created_at, c.updated_at,
+                       COUNT(m.id) AS message_count,
+                       COALESCE((
+                           SELECT first_user.message_text
+                           FROM tg_agent_conversation_message first_user
+                           WHERE first_user.actor_id = c.actor_id
+                             AND first_user.conversation_id = c.conversation_id
+                             AND first_user.role = 'user'
+                           ORDER BY first_user.id ASC LIMIT 1
+                       ), '新会话') AS title,
+                       COALESCE((
+                           SELECT latest.message_text
+                           FROM tg_agent_conversation_message latest
+                           WHERE latest.actor_id = c.actor_id
+                             AND latest.conversation_id = c.conversation_id
+                           ORDER BY latest.id DESC LIMIT 1
+                       ), '') AS preview,
+                       (
+                           SELECT latest_status.task_status
+                           FROM tg_agent_conversation_message latest_status
+                           WHERE latest_status.actor_id = c.actor_id
+                             AND latest_status.conversation_id = c.conversation_id
+                             AND latest_status.task_status IS NOT NULL
+                           ORDER BY latest_status.id DESC LIMIT 1
+                       ) AS task_status
+                FROM tg_agent_conversation c
+                LEFT JOIN tg_agent_conversation_message m
+                  ON m.actor_id = c.actor_id AND m.conversation_id = c.conversation_id
+                WHERE c.actor_id = %s
+                GROUP BY c.id, c.conversation_id, c.actor_id, c.task_id, c.created_at, c.updated_at
+                ORDER BY c.updated_at DESC, c.id DESC
+                LIMIT %s
+                """,
+                (actor_id, limit),
+            )
+            rows = list(cursor.fetchall() or [])
+        return [
+            ConversationSummary(
+                conversation_id=str(row.get("conversation_id") or ""),
+                title=_compact_text(row.get("title"), 200) or "新会话",
+                preview=_compact_text(row.get("preview"), 500),
+                task_id=row.get("task_id"),
+                task_status=row.get("task_status"),
+                message_count=int(row.get("message_count") or 0),
+                created_at=_datetime_iso(row.get("created_at")),
+                updated_at=_datetime_iso(row.get("updated_at")),
+            )
+            for row in rows
+        ]
+
     def append_message(
         self, conversation_id: str, actor_id: str, message: ConversationMessage
     ) -> Conversation:
@@ -291,6 +417,15 @@ class MirroredConversationStore:
             return durable
         # One-time compatibility migration for conversations created before MySQL persistence.
         return self._migrate_cached(conversation_id, actor_id)
+
+    def list(self, actor_id: str, limit: int = 50) -> list[ConversationSummary]:
+        durable = self._durable.list(actor_id, limit)
+        durable_ids = {item.conversation_id for item in durable}
+        cached = self._cache.list(actor_id, limit)
+        missing_ids = [item.conversation_id for item in cached if item.conversation_id not in durable_ids]
+        for conversation_id in missing_ids:
+            self._migrate_cached(conversation_id, actor_id)
+        return self._durable.list(actor_id, limit) if missing_ids else durable
 
     def append_message(
         self, conversation_id: str, actor_id: str, message: ConversationMessage

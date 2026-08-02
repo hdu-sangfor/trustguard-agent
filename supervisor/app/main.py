@@ -21,6 +21,7 @@ from app.domain.models import (
     ConversationMessage,
     ConversationMessageRequest,
     ConversationResponse,
+    ConversationSummary,
     DraftRequest,
     DraftResponse,
     HealthResponse,
@@ -201,6 +202,14 @@ async def create_draft_stream(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@app.get("/v1/conversations", response_model=list[ConversationSummary])
+def list_conversations(
+    limit: int = 50,
+    x_actor_id: str | None = Header(default=None),
+) -> list[ConversationSummary]:
+    return _conversations.list(_actor_id(x_actor_id), max(1, min(limit, 100)))
 
 
 @app.get("/v1/conversations/{conversation_id}", response_model=ConversationResponse)

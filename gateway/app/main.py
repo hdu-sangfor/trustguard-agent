@@ -594,6 +594,19 @@ async def task_agent_draft_stream(
     )
 
 
+@app.get("/api/v1/task-agent/conversations")
+async def task_agent_conversations(
+    limit: int = Query(default=50, ge=1, le=100),
+    user: CurrentUser = Depends(require_roles("ADMIN", "OPERATOR")),
+) -> dict[str, Any]:
+    body = await _supervisor(
+        "GET",
+        f"/v1/conversations?limit={limit}",
+        actor_id=user.user_id,
+    )
+    return ok(body)
+
+
 @app.get("/api/v1/task-agent/conversations/{conversation_id}")
 async def task_agent_conversation(
     conversation_id: str,

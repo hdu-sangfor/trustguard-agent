@@ -82,6 +82,17 @@ export interface ApiTaskAgentConversation {
   taskId?: string | null;
 }
 
+export interface ApiTaskAgentConversationSummary {
+  conversationId: string;
+  title: string;
+  preview: string;
+  taskId?: string | null;
+  taskStatus?: string | null;
+  messageCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ApiTaskTerminalResult {
   taskId: string;
   status: ApiTask['status'];
@@ -374,6 +385,14 @@ export async function getTaskAgentConversation(
 ): Promise<ApiTaskAgentConversation> {
   return apiFetch<ApiTaskAgentConversation>(
     `/api/v1/task-agent/conversations/${encodeURIComponent(conversationId)}`,
+  );
+}
+
+export async function listTaskAgentConversations(
+  limit = 50,
+): Promise<ApiTaskAgentConversationSummary[]> {
+  return apiFetch<ApiTaskAgentConversationSummary[]>(
+    `/api/v1/task-agent/conversations?limit=${Math.max(1, Math.min(limit, 100))}`,
   );
 }
 

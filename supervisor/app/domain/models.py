@@ -84,6 +84,17 @@ class ConversationResponse(ApiModel):
     task_id: str | None = None
 
 
+class ConversationSummary(ApiModel):
+    conversation_id: str
+    title: str = Field(max_length=200)
+    preview: str = Field(default="", max_length=500)
+    task_id: str | None = Field(default=None, max_length=128)
+    task_status: str | None = Field(default=None, max_length=32)
+    message_count: int = Field(default=0, ge=0)
+    created_at: str
+    updated_at: str
+
+
 class ProgressSummaryRequest(ApiModel):
     task_id: str = Field(min_length=1, max_length=128)
     task_status: str = Field(default="RUNNING", max_length=32)
