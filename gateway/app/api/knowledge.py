@@ -610,7 +610,7 @@ async def review_knowledge_crawler_job(
     result = await rag_client.request(
         "POST",
         f"/v1/crawler/jobs/{quote(job_id, safe='')}/review",
-        json_body=request.model_dump(),
+        json_body={**request.model_dump(), "reviewer": actor.username},
         timeout=120.0,
     )
     record_audit(

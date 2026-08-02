@@ -465,5 +465,6 @@ def test_crawler_review_approval_is_scoped_and_audited(monkeypatch):
     assert captured[1][2]["json_body"] == {
         "action": "approve",
         "item_ids": ["review-1", "review-2"],
+        "reviewer": "tester",
     }
     assert audits[0][0] == "KNOWLEDGE_CRAWLER_REVIEW_APPROVE"

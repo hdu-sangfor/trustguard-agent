@@ -1200,7 +1200,7 @@ export interface ApiKnowledgeCrawlerJobList {
 
 export interface ApiKnowledgeCrawlerReviewItem {
   id: string;
-  status: 'pending' | 'processing' | 'approved' | 'rejected';
+  status: 'pending' | 'processing' | 'rejecting' | 'approved' | 'rejected';
   knowledge_base_id: string;
   title: string;
   source_uri: string;
@@ -1213,6 +1213,13 @@ export interface ApiKnowledgeCrawlerReviewItem {
   reviewer?: 'human' | 'agent' | null;
   review_reason?: string | null;
   review_confidence?: number | null;
+  agent_decision?: 'approve' | 'reject' | 'manual_review' | null;
+  manual_reviewer?: string | null;
+  manual_reviewed_at?: string | null;
+  rejected_at?: string | null;
+  review_content_expires_at?: string | null;
+  review_content_expired_at?: string | null;
+  review_content_available: boolean;
 }
 
 export interface ApiKnowledgeCrawlerReview {

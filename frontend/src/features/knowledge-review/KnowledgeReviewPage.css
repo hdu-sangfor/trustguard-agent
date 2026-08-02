@@ -32,6 +32,8 @@
 .review-agent-result { margin-top: 7px; padding: 6px 7px; display: grid; grid-template-columns: auto minmax(0,1fr) auto; gap: 5px; align-items: start; border: 1px solid rgba(167,139,250,.16); border-radius: 5px; background: rgba(139,92,246,.07); color: #a78bfa; }
 .review-agent-result span { color: var(--tg-text-faint); font-size: 8px; line-height: 1.45; }
 .review-agent-result b { color: #a78bfa; font: 700 8px monospace; }
+.review-retention { margin-top: 6px; display: flex; align-items: center; gap: 4px; color: var(--tg-warning); font-size: 8px; }
+.review-retention.expired { color: var(--tg-text-faint); }
 .review-content-panel { display: flex; flex-direction: column; min-width: 0; }
 .review-content-panel > header { padding: 15px 17px; border-bottom: 1px solid var(--tg-panel-border); display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .review-content-panel header > div > span { color: var(--tg-accent); font: 700 9px monospace; }
@@ -42,6 +44,7 @@
 .review-agent-banner strong { display: block; font: 700 9px monospace; }
 .review-agent-banner span { display: block; margin-top: 3px; color: var(--tg-text-muted); font-size: 9px; line-height: 1.5; }
 .review-agent-banner > b { font: 700 10px monospace; }
+.review-retention-banner { padding: 9px 17px; display: flex; align-items: center; gap: 7px; border-bottom: 1px solid rgba(250,204,21,.18); background: var(--tg-warning-soft); color: var(--tg-warning); font-size: 9px; line-height: 1.5; }
 .review-content-panel pre { flex: 1; min-height: 0; max-height: 610px; overflow: auto; margin: 0; padding: 18px; background: var(--tg-code-bg); color: var(--tg-terminal-text); white-space: pre-wrap; word-break: break-word; font: 11px/1.75 monospace; }
 .review-placeholder { height: 100%; min-height: 240px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 9px; color: var(--tg-text-faint); font-size: 11px; text-align: center; }
 .review-placeholder strong { color: var(--tg-text-muted); font: 600 11px monospace; }
