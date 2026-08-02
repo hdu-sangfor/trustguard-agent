@@ -440,6 +440,11 @@ export default function KnowledgeCollectionPage() {
                 const percent = job.status === "succeeded" ? 100 : Math.min(99, Math.round((fetched / maxPages) * 100));
                 const presetId = Array.isArray(job.config.preset_ids) ? String(job.config.preset_ids[0] ?? "") : "";
                 const preset = presets.find((item) => item.id === presetId);
+                const awaitingReview = job.status === "succeeded"
+                  && job.progress.review_status === "pending"
+                  && pendingReview > 0;
+                const reviewCompleted = job.status === "succeeded"
+                  && job.progress.review_status === "completed";
                 return (
                   <article className="collection-job" key={job.id}>
                     <div className="job-main">
@@ -474,8 +479,10 @@ export default function KnowledgeCollectionPage() {
                     </div>
                     {canManage && (
                       <div className="job-actions">
-                        {job.status === "succeeded" && job.progress.review_status === "pending" && pendingReview > 0 && (
-                          <button type="button" onClick={() => navigate(`/knowledge/collect/review/${job.id}?knowledge_base_id=${encodeURIComponent(job.knowledge_base_id)}`)}><ClipboardCheck size={13} /> 审核</button>
+                        {(awaitingReview || reviewCompleted) && (
+                          <button type="button" onClick={() => navigate(`/knowledge/collect/review/${job.id}?knowledge_base_id=${encodeURIComponent(job.knowledge_base_id)}`)}>
+                            <ClipboardCheck size={13} /> {awaitingReview ? "审核" : "查看审核结果"}
+                          </button>
                         )}
                         {job.status === "running" && <button type="button" onClick={() => void controlJob(job, "pause")} disabled={controllingId === job.id}><Pause size={13} /> 暂停</button>}
                         {(job.status === "paused" || job.status === "failed") && <button type="button" onClick={() => void controlJob(job, "resume")} disabled={controllingId === job.id}><Play size={13} /> 恢复</button>}

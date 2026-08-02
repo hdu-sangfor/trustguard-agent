@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Bot, CheckCircle2, ClipboardCheck, Database, ShieldCheck, XCircle } from "lucide-react";
 
@@ -21,29 +21,51 @@ import "./TaskCompletionDialogSystem.css";
 
 const SEEN_KEY = "sentinel_completion_notices_v1";
 
-function canReview(): boolean {
+interface ReviewerSession {
+  identity: string;
+  storageKey: string;
+}
+
+function currentReviewer(): ReviewerSession | null {
   try {
     const raw = localStorage.getItem("sentinel_session_v1");
-    const role = raw ? String((JSON.parse(raw) as { role?: string }).role || "") : "";
-    return ["ADMIN", "OPERATOR"].includes(role.toUpperCase());
+    const session = raw
+      ? JSON.parse(raw) as { username?: string; role?: string }
+      : null;
+    const username = String(session?.username || "").trim().toLowerCase();
+    const role = String(session?.role || "").toUpperCase();
+    if (!username || !["ADMIN", "OPERATOR"].includes(role)) return null;
+    return {
+      identity: username,
+      storageKey: `${SEEN_KEY}:${encodeURIComponent(username)}`,
+    };
   } catch {
-    return false;
+    return null;
   }
 }
 
-function readSeen(): Set<string> {
+function readSeen(storageKey: string): { exists: boolean; values: Set<string> } {
   try {
-    const parsed = JSON.parse(localStorage.getItem(SEEN_KEY) || "[]") as unknown;
-    return new Set(Array.isArray(parsed) ? parsed.map(String) : []);
+    const raw = localStorage.getItem(storageKey);
+    if (raw === null) return { exists: false, values: new Set() };
+    const parsed = JSON.parse(raw) as unknown;
+    return {
+      exists: true,
+      values: new Set(Array.isArray(parsed) ? parsed.map(String) : []),
+    };
   } catch {
-    return new Set();
+    return { exists: false, values: new Set() };
   }
 }
 
-function markSeen(jobId: string) {
-  const seen = readSeen();
+function writeSeen(storageKey: string, seen: Set<string>) {
+  localStorage.setItem(storageKey, JSON.stringify([...seen].slice(-300)));
+}
+
+function markSeen(storageKey: string, jobId: string) {
+  const seen = readSeen(storageKey).values;
   seen.add(`crawler:${jobId}`);
-  localStorage.setItem(SEEN_KEY, JSON.stringify([...seen].slice(-300)));
+  writeSeen(storageKey, seen);
 }
 
 function numberValue(value: unknown): number {
@@ -53,27 +75,48 @@ function numberValue(value: unknown): number {
 interface CompletionNotice {
   job: ApiKnowledgeCrawlerJob;
   review: ApiKnowledgeCrawlerReview | null;
+  seenStorageKey: string;
 }
 
 export default function TaskCompletionDialogSystem() {
   const navigate = useNavigate();
   const { loggedIn } = useAppSession();
   const [notice, setNotice] = useState<CompletionNotice | null>(null);
+  const initializedReviewer = useRef<string | null>(null);
 
   const checkCompletions = useCallback(async () => {
-    if (!loggedIn || !canReview() || notice) return;
+    if (!loggedIn || notice) return;
+    const reviewer = currentReviewer();
+    if (!reviewer) return;
     try {
       const result = await listKnowledgeCrawlerJobs({ limit: 50 });
-      const seen = readSeen();
-      const candidate = (result.items ?? []).find((job) => {
+      const eligibleJobs = (result.items ?? []).filter((job) => {
         const awaitingHumanReview = job.progress.review_status === "pending"
           && numberValue(job.progress.pending_review) > 0;
         const agentReviewCompleted = job.config.review_mode === "agent"
           && job.progress.review_status === "completed";
         return job.status === "succeeded"
-          && (awaitingHumanReview || agentReviewCompleted)
-          && !seen.has(`crawler:${job.id}`);
+          && (awaitingHumanReview || agentReviewCompleted);
       });
+
+      const seenState = readSeen(reviewer.storageKey);
+      if (initializedReviewer.current !== reviewer.identity) {
+        initializedReviewer.current = reviewer.identity;
+        if (!seenState.exists) {
+          // Establish a per-account baseline so deploying the watcher does not
+          // replay every historical completion. Running jobs remain unseen and
+          // will notify normally when a later poll observes their completion.
+          writeSeen(
+            reviewer.storageKey,
+            new Set(eligibleJobs.map((job) => `crawler:${job.id}`)),
+          );
+          return;
+        }
+      }
+
+      const candidate = eligibleJobs.find(
+        (job) => !seenState.values.has(`crawler:${job.id}`),
+      );
       if (candidate) {
         let review: ApiKnowledgeCrawlerReview | null = null;
         try {
@@ -81,7 +124,7 @@ export default function TaskCompletionDialogSystem() {
         } catch {
           // The job progress still contains enough information for a useful notice.
         }
-        setNotice({ job: candidate, review });
+        setNotice({ job: candidate, review, seenStorageKey: reviewer.storageKey });
       }
     } catch {
       // Completion notifications are best effort and must not block the app.
@@ -91,6 +134,7 @@ export default function TaskCompletionDialogSystem() {
   useEffect(() => {
     if (!loggedIn) {
       setNotice(null);
+      initializedReviewer.current = null;
       return;
     }
     void checkCompletions();
@@ -99,13 +143,13 @@ export default function TaskCompletionDialogSystem() {
   }, [checkCompletions, loggedIn]);
 
   const close = () => {
-    if (notice) markSeen(notice.job.id);
+    if (notice) markSeen(notice.seenStorageKey, notice.job.id);
     setNotice(null);
   };
 
   const review = () => {
     if (!notice) return;
-    markSeen(notice.job.id);
+    markSeen(notice.seenStorageKey, notice.job.id);
     const path = `/knowledge/collect/review/${encodeURIComponent(notice.job.id)}?knowledge_base_id=${encodeURIComponent(notice.job.knowledge_base_id)}`;
     setNotice(null);
     navigate(path);
