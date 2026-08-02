@@ -818,6 +818,21 @@ html[data-theme="light"] .nav-link {
   animation: tg-spin 0.9s linear infinite;
 }
 
+@keyframes tg-stream-blink {
+  0%, 45% { opacity: 1; }
+  46%, 100% { opacity: 0; }
+}
+
+.tg-stream-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1.05em;
+  margin-left: 3px;
+  vertical-align: -0.14em;
+  background: #67e8f9;
+  animation: tg-stream-blink 0.9s steps(1, end) infinite;
+}
+
 @media (max-width: 860px) {
   .task-agent-layout {
     grid-template-columns: minmax(0, 1fr) !important;

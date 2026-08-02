@@ -35,3 +35,26 @@ def test_confirmation_token_rejects_tampering(monkeypatch):
 
     with pytest.raises(HTTPException):
         store.consume(tampered, "actor-1")
+
+
+def test_confirmation_claim_is_retryable_and_completion_is_replayable(monkeypatch):
+    monkeypatch.setenv("SUPERVISOR_CONFIRMATION_SECRET", "unit-test-secret")
+    store = DraftStore()
+    record, token = store.put("conv-1", "actor-1", _draft())
+
+    first = store.claim(token, "actor-1", "idem-1")
+    retry = store.claim(token, "actor-1", "idem-1")
+    completed = store.complete(record.draft_id, "actor-1", "idem-1", "task-1")
+    completed_retry = store.complete(record.draft_id, "actor-1", "idem-1", "task-1")
+    replay = store.claim(token, "actor-1", "idem-1")
+
+    assert first.confirmation_state == retry.confirmation_state == "CLAIMED"
+    assert completed.confirmation_state == "COMPLETED"
+    assert completed_retry.task_id == "task-1"
+    assert replay.task_id == "task-1"
+    with pytest.raises(HTTPException) as complete_exc:
+        store.complete(record.draft_id, "actor-1", "idem-1", "task-other")
+    assert complete_exc.value.status_code == 409
+    with pytest.raises(HTTPException) as exc:
+        store.claim(token, "actor-1", "idem-other")
+    assert exc.value.status_code == 409

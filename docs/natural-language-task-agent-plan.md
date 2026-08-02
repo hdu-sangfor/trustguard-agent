@@ -1,6 +1,6 @@
 # 自然语言渗透测试任务 Agent 改造计划
 
-> 状态：MVP 已实现，后续里程碑待推进
+> 状态：自然语言 Pentest Supervisor 及生产化加固已实现；告警研判 Workflow 待后续迭代
 > 分支：`feat/natural-language-task-agent-plan`
 > 原则：最小侵入、复用现有任务生命周期、禁止上层 Agent 直连 Executor。
 
@@ -10,7 +10,7 @@
 
 让用户可以用自然语言完成以下操作：
 
-1. 描述测试目标、授权范围、测试重点和限制条件；
+1. 描述测试目标、测试范围、测试重点和限制条件；
 2. 得到结构化任务草稿，并在缺少关键信息时被追问；
 3. 确认草稿后创建、启动、暂停、恢复任务；
 4. 查询阶段、进度、Trace、执行记录和报告；
@@ -57,7 +57,7 @@ Gateway.create_task()
 
 ### 2.1 当前 Workflow 是如何定义的
 
-当前没有统一的 `Workflow` 基类、`WorkflowSpec`、运行句柄或可执行 Workflow Registry。生产渗透 Workflow 是由多组 Python 结构共同定义的隐式工作流。
+Orchestrator 内部仍由多组 Python 结构共同定义生产渗透 Workflow，没有迁移成通用 `WorkflowSpec`。上层 Supervisor 已增加最小 `WorkflowAdapter` 与 `WorkflowRegistry`，当前只注册 `workflow_id=pentest`，负责自然语言意图到现有渗透任务生命周期的路由，不介入底层阶段执行。
 
 #### 第一层：任务生命周期循环
 
@@ -93,7 +93,7 @@ PENDING
 {
     RECON: {THREAT_MODEL, VULN_SCAN},
     THREAT_MODEL: {VULN_SCAN},
-    VULN_SCAN: {EXPLOIT, REPORT},
+    VULN_SCAN: {EXPLOIT, REPORT},  # allow_exploit=false 时 EXPLOIT 被硬重定向到 REPORT
     EXPLOIT: {REPORT},
     REPORT: {DONE},
 }
@@ -493,7 +493,7 @@ POST /api/v1/task-agent/draft
 
 `status` 至少包括：
 
-- `NEEDS_CLARIFICATION`：缺少目标、授权或关键限制；
+- `NEEDS_CLARIFICATION`：缺少目标或目标格式无效；当前版本不要求单独填写授权声明字段；
 - `NEEDS_CONFIRMATION`：草稿完整，等待用户确认；
 - `REJECTED`：目标或要求违反策略；
 - `READY`：兼容内部调用，表示可以进入确认流程。
@@ -566,7 +566,7 @@ LLM 输出必须先经过 Pydantic 校验，再经过确定性策略校验。自
 
 1. Gateway 任务创建、启动、停止、恢复接口增加 `get_current_user` 和角色限制；至少要求 `OPERATOR`/`ADMIN`。
 2. 增加一次性确认字段，避免自然语言 Agent 无确认直接启动高风险测试。
-3. 对 `target` 做 URL/host/CIDR 规范化和显式授权校验。
+3. 对 `target` 做 URL/host/CIDR 规范化和范围校验；不再要求单独的 `authorization` 字段。
 4. 生产环境将用户字段注入策略从默认 `tag` 调整为 `reject` 或增加更严格的 Agent 专用清洗策略。
 5. 所有查询、停止、恢复和报告工具都校验任务归属或管理员权限，不能只凭 `taskId` 操作他人任务。
 
@@ -644,7 +644,7 @@ AND execution_policy.allow_exploit == true
 
 1. 输入自然语言；
 2. 展示结构化草稿；
-3. 展示授权、风险模式和目标范围警告；
+3. 展示风险模式和目标范围警告；
 4. 用户确认；
 5. 调用现有任务列表和运行状态页面。
 
@@ -751,7 +751,7 @@ conversation_id
 ### 单元测试
 
 - 自然语言输出 JSON/Pydantic 解析；
-- 缺少 target、授权、风险级别时的追问；
+- 缺少 target 或目标格式无效时的追问；
 - URL、host、CIDR 规范化；
 - 注入文本拒绝和截断；
 - `safe` 模式禁止 EXPLOIT；
@@ -834,23 +834,30 @@ orchestrator/app/core/execution_dispatcher.py
 evidence/
 ```
 
-## 13. 当前 MVP 实现状态
+## 13. 当前实现状态
 
-截至当前分支，第一阶段已经完成：
+截至当前分支，自然语言 Pentest Supervisor 及约定的生产化加固已经完成：
 
 - 新增独立 `supervisor/` 服务，使用内嵌 LangGraph 完成意图解析、字段校验和草稿生成；
-- 新增 HMAC 草稿确认令牌，并绑定操作者、有效期和草稿摘要；
+- 新增 HMAC 草稿确认令牌，并绑定操作者、有效期和草稿摘要；确认采用 `AVAILABLE → CLAIMED → COMPLETED` 状态机、租约和幂等键，同一请求可安全恢复和重放；
 - Gateway 新增 draft/confirm 接口，确认后复用现有任务创建与 `_run_lifecycle`；
 - 前端新增 `/agent` 对话页，展示可审计的推理摘要、阶段进度、工具活动和门禁事件；
-- 权限相关字段只接受用户显式表述，LLM 不能自行确认授权、利用或破坏性权限；
-- 默认 Pentest Workflow、Executor 和 Evidence 链路保持不变。
+- 草稿回答使用 SSE 从 Supervisor 经 Gateway 端到端透传；OpenAI-compatible Provider 原生 token 流只读取公开 `delta.content`，支持活动事件、文本增量、最终结果、心跳、确定性降级和用户中止；
+- 原非流式 draft 接口继续保留，供旧客户端和自动化调用兼容；
+- 利用与破坏性权限只接受用户显式表述，LLM 不能自行开启；任务草稿不再要求单独的 `authorization` 字段；
+- Conversation 与 Draft 使用 Redis 持久化，Supervisor 重启后多轮上下文和待确认草稿仍可恢复；
+- Gateway 将执行策略持久化到 MySQL，Orchestrator 将其持久化到 Redis TaskStore、`target_context` 和 checkpoint；`allow_exploit=false` 时阶段门禁不会进入 `EXPLOIT`；
+- Gateway 提供任务/Evidence SSE，前端优先订阅实时事件，只在流异常断开时降级轮询；
+- Supervisor 提供 Workflow Registry 与 `/v1/workflows` capability 列表，`auto` 当前路由到现有 `pentest` Adapter；
+- Compose 级集成测试覆盖登录、草稿 SSE、确认幂等、执行策略、任务事件 SSE、Redis 后端和 Workflow capability；
+- 默认 Pentest Workflow、Executor 和 Evidence 链路保持不变，Supervisor 不直连 Executor。
 
-当前仍属于 MVP，后续迭代项：
+后续迭代项：
 
-- Conversation、Draft 和 Gateway 幂等映射当前为进程内存，服务重启后不会保留；
-- `allow_exploit` 当前用于草稿风险提示和规则说明，尚未形成 Orchestrator 的独立持久化硬门禁；
-- 破坏性权限不会下发执行器；
-- 尚未实现 Redis 会话存储、Workflow Registry 和未来的 `alert-triage/` 服务。
+- 实现独立的 `alert-triage/` 告警研判服务、领域模型和 Adapter，并注册到 Supervisor；
+- 当 Workflow 数量超过一个时，为 `auto` 增加可审计的意图匹配器和冲突澄清；
+- 破坏性权限继续不由自然语言入口下发；如果未来开放，必须另设审批与 Executor 级硬门禁；
+- 视跨 Workflow 契约稳定程度，再决定是否抽取 `contracts/workflows/` 或极小的 `packages/agent_runtime/`，不提前搬迁现有 Orchestrator。
 
 前端所称“执行轨迹”仅包括结构化意图摘要、安全检查、阶段切换、工具调用和结果事件，
 不保存或展示模型私有逐字思维链。

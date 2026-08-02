@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS tg_task (
     description VARCHAR(512),
     business_background TEXT COMMENT '业务背景（注入决策上下文前需安全校验）',
     extra_user_requirements TEXT COMMENT '用户额外需求（注入前需安全校验）',
+    execution_policy JSON COMMENT '结构化执行权限；由 Orchestrator 硬门禁消费',
     target VARCHAR(512) NOT NULL COMMENT '靶机 URL，必填',
     status VARCHAR(32),
     current_phase VARCHAR(32),
@@ -84,3 +85,33 @@ CREATE TABLE IF NOT EXISTS tg_task_checkpoint (
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     UNIQUE KEY uk_task_id (task_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Supervisor Agent 会话：MySQL 为长期事实源，Redis 仅保留热数据镜像。
+CREATE TABLE IF NOT EXISTS tg_agent_conversation (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    conversation_id VARCHAR(128) NOT NULL,
+    actor_id VARCHAR(128) NOT NULL,
+    task_id VARCHAR(128) NULL,
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+    UNIQUE KEY uk_agent_conversation_actor (actor_id, conversation_id),
+    INDEX idx_agent_conversation_task (task_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Supervisor Agent 会话';
+
+CREATE TABLE IF NOT EXISTS tg_agent_conversation_message (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    message_id VARCHAR(160) NOT NULL,
+    conversation_id VARCHAR(128) NOT NULL,
+    actor_id VARCHAR(128) NOT NULL,
+    role VARCHAR(16) NOT NULL,
+    message_text MEDIUMTEXT NOT NULL,
+    activities_json JSON NULL,
+    draft_json JSON NULL,
+    confirmation_token TEXT NULL,
+    task_id VARCHAR(128) NULL,
+    task_status VARCHAR(32) NULL,
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    UNIQUE KEY uk_agent_message_actor (actor_id, conversation_id, message_id),
+    INDEX idx_agent_message_conversation (actor_id, conversation_id, id),
+    INDEX idx_agent_message_task (task_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Supervisor Agent 结构化消息';
