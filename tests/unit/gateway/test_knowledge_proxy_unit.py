@@ -309,3 +309,162 @@ def test_knowledge_router_dependency_rejects_viewer_write():
 
     assert response.status_code == 403
     assert response.json()["message"] == "当前角色没有执行此操作的权限"
+
+
+def test_crawler_presets_only_expose_agent_categories(monkeypatch):
+    knowledge, _schemas, auth = _load_gateway_modules()
+
+    async def fake_rag(method, path, **_kwargs):
+        assert (method, path) == ("GET", "/v1/crawler/presets")
+        return {
+            "items": [
+                {"id": "agent_01_asset_fingerprint", "kind": "category"},
+                {"id": "international_security_news", "kind": "source"},
+            ]
+        }
+
+    monkeypatch.setattr(knowledge.rag_client, "request", fake_rag)
+    response = asyncio.run(
+        knowledge.knowledge_crawler_presets(_user(auth, "VIEWER"))
+    )
+
+    assert response["data"]["items"] == [
+        {"id": "agent_01_asset_fingerprint", "kind": "category"}
+    ]
+
+
+def test_create_crawler_job_forwards_bounded_agent_payload(monkeypatch):
+    knowledge, schemas, auth = _load_gateway_modules()
+    captured = []
+
+    async def fake_rag(method, path, **kwargs):
+        captured.append((method, path, kwargs))
+        return {
+            "id": "crawl-1",
+            "knowledge_base_id": "kb-assets",
+            "status": "queued",
+        }
+
+    monkeypatch.setattr(knowledge.rag_client, "request", fake_rag)
+    monkeypatch.setattr(knowledge, "record_audit", lambda *_args: None)
+    request = schemas.KnowledgeCrawlerCreateRequest(
+        knowledge_base_id="kb-assets",
+        preset_ids=["agent_01_asset_fingerprint"],
+        keywords=["CPE fingerprint"],
+        max_total_pages=60,
+    )
+
+    response = asyncio.run(
+        knowledge.create_knowledge_crawler_job(request, _user(auth))
+    )
+
+    assert response["data"]["id"] == "crawl-1"
+    method, path, kwargs = captured[0]
+    assert (method, path) == ("POST", "/v1/crawler/jobs")
+    assert kwargs["json_body"]["preset_ids"] == [
+        "agent_01_asset_fingerprint"
+    ]
+    assert kwargs["json_body"]["max_total_pages"] == 60
+    assert kwargs["json_body"]["require_review"] is True
+    assert kwargs["json_body"]["review_mode"] == "human"
+    assert "structured_sources" not in kwargs["json_body"]
+
+
+def test_create_crawler_job_forwards_agent_review_criteria(monkeypatch):
+    knowledge, schemas, auth = _load_gateway_modules()
+    captured = []
+
+    async def fake_rag(method, path, **kwargs):
+        captured.append((method, path, kwargs))
+        return {"id": "crawl-agent", "knowledge_base_id": "kb-vuln", "status": "queued"}
+
+    monkeypatch.setattr(knowledge.rag_client, "request", fake_rag)
+    monkeypatch.setattr(knowledge, "record_audit", lambda *_args: None)
+    request = schemas.KnowledgeCrawlerCreateRequest(
+        knowledge_base_id="kb-vuln",
+        preset_ids=["agent_02_vulnerability_weakness"],
+        review_mode="agent",
+        review_criteria="必须包含漏洞标识、影响范围和修复信息",
+    )
+
+    asyncio.run(knowledge.create_knowledge_crawler_job(request, _user(auth)))
+
+    payload = captured[0][2]["json_body"]
+    assert payload["require_review"] is True
+    assert payload["review_mode"] == "agent"
+    assert payload["review_criteria"] == "必须包含漏洞标识、影响范围和修复信息"
+
+
+def test_crawler_job_control_rejects_cross_base_job(monkeypatch):
+    knowledge, _schemas, auth = _load_gateway_modules()
+    calls = []
+
+    async def fake_rag(method, path, **kwargs):
+        calls.append((method, path, kwargs))
+        return {"id": "crawl-1", "knowledge_base_id": "kb-other"}
+
+    monkeypatch.setattr(knowledge.rag_client, "request", fake_rag)
+
+    try:
+        asyncio.run(
+            knowledge.pause_knowledge_crawler_job(
+                "crawl-1",
+                _user(auth),
+                knowledge_base_id="kb-assets",
+            )
+        )
+    except knowledge.HTTPException as exc:
+        assert exc.status_code == 404
+    else:
+        raise AssertionError("cross-base crawler control must be rejected")
+
+    assert len(calls) == 1
+
+
+def test_crawler_review_approval_is_scoped_and_audited(monkeypatch):
+    knowledge, schemas, auth = _load_gateway_modules()
+    captured = []
+    audits = []
+
+    async def fake_rag(method, path, **kwargs):
+        captured.append((method, path, kwargs))
+        if method == "GET":
+            return {"id": "crawl-1", "knowledge_base_id": "kb-assets"}
+        return {
+            "job_id": "crawl-1",
+            "review_status": "completed",
+            "items": [],
+            "pending": 0,
+            "approved": 2,
+            "rejected": 0,
+        }
+
+    monkeypatch.setattr(knowledge.rag_client, "request", fake_rag)
+    monkeypatch.setattr(
+        knowledge,
+        "record_audit",
+        lambda *args: audits.append(args),
+    )
+    response = asyncio.run(
+        knowledge.review_knowledge_crawler_job(
+            "crawl-1",
+            schemas.KnowledgeCrawlerReviewRequest(
+                action="approve",
+                item_ids=["review-1", "review-2"],
+            ),
+            _user(auth),
+            knowledge_base_id="kb-assets",
+        )
+    )
+
+    assert response["data"]["approved"] == 2
+    assert captured[1][0:2] == (
+        "POST",
+        "/v1/crawler/jobs/crawl-1/review",
+    )
+    assert captured[1][2]["json_body"] == {
+        "action": "approve",
+        "item_ids": ["review-1", "review-2"],
+        "reviewer": "tester",
+    }
+    assert audits[0][0] == "KNOWLEDGE_CRAWLER_REVIEW_APPROVE"

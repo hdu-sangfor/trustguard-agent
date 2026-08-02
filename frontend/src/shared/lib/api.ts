@@ -1180,8 +1180,230 @@ export interface ApiKnowledgeIngestCreated {
   embedding_dim?: number | null;
 }
 
+export interface ApiKnowledgeCrawlerPreset {
+  id: string;
+  name: string;
+  description: string;
+  kind: 'category';
+  category_name?: string | null;
+  site_urls: string[];
+  keywords: string[];
+  structured_sources: string[];
+  domain_category?: string | null;
+  kb_tier?: string | null;
+  phases: string[];
+  topic_tags: string[];
+  priority?: string | null;
+  review_criteria: string;
+}
+
+export interface ApiKnowledgeCrawlerDefaults {
+  max_results_per_keyword: number;
+  max_pages_per_site: number;
+  max_total_pages: number;
+  min_content_chars: number;
+  fetch_delay_seconds: number;
+  max_retries: number;
+  retry_base_seconds: number;
+  agent_review_available: boolean;
+  agent_review_model?: string | null;
+}
+
+export interface ApiKnowledgeCrawlerJob {
+  id: string;
+  knowledge_base_id: string;
+  status: 'queued' | 'running' | 'paused' | 'succeeded' | 'failed' | 'cancelled';
+  config: Record<string, unknown>;
+  progress: Record<string, unknown>;
+  ingest_job_ids: string[];
+  error_message?: string | null;
+  attempt: number;
+  cancel_requested: boolean;
+  pause_requested: boolean;
+  created_at?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface ApiKnowledgeCrawlerJobList {
+  items: ApiKnowledgeCrawlerJob[];
+  total: number;
+}
+
+export interface ApiKnowledgeCrawlerReviewItem {
+  id: string;
+  status: 'pending' | 'processing' | 'rejecting' | 'approved' | 'rejected';
+  knowledge_base_id: string;
+  title: string;
+  source_uri: string;
+  source_type: string;
+  original_filename: string;
+  content_preview: string;
+  content_chars: number;
+  created_at: string;
+  ingest_job_id?: string | null;
+  reviewer?: 'human' | 'agent' | null;
+  review_reason?: string | null;
+  review_confidence?: number | null;
+  agent_decision?: 'approve' | 'reject' | 'manual_review' | null;
+  manual_reviewer?: string | null;
+  manual_reviewed_at?: string | null;
+  rejected_at?: string | null;
+  review_content_expires_at?: string | null;
+  review_content_expired_at?: string | null;
+  review_content_available: boolean;
+}
+
+export interface ApiKnowledgeCrawlerReview {
+  job_id: string;
+  review_status: 'pending' | 'completed';
+  review_mode: 'human' | 'agent';
+  review_criteria: string;
+  items: ApiKnowledgeCrawlerReviewItem[];
+  pending: number;
+  approved: number;
+  rejected: number;
+}
+
+export interface ApiKnowledgeCrawlerReviewContent {
+  item: ApiKnowledgeCrawlerReviewItem;
+  content: string;
+}
+
 export async function getRagHealth(): Promise<ApiRagHealth> {
   return apiFetch<ApiRagHealth>('/api/v1/knowledge/health');
+}
+
+export async function listKnowledgeCrawlerPresets(): Promise<{ items: ApiKnowledgeCrawlerPreset[] }> {
+  return apiFetch<{ items: ApiKnowledgeCrawlerPreset[] }>('/api/v1/knowledge/crawler/presets');
+}
+
+export async function getKnowledgeCrawlerDefaults(): Promise<ApiKnowledgeCrawlerDefaults> {
+  return apiFetch<ApiKnowledgeCrawlerDefaults>('/api/v1/knowledge/crawler/defaults');
+}
+
+export async function listKnowledgeCrawlerJobs(params?: {
+  knowledgeBaseId?: string;
+  offset?: number;
+  limit?: number;
+}): Promise<ApiKnowledgeCrawlerJobList> {
+  const search = new URLSearchParams({
+    offset: String(params?.offset ?? 0),
+    limit: String(params?.limit ?? 30),
+  });
+  if (params?.knowledgeBaseId) search.set('knowledge_base_id', params.knowledgeBaseId);
+  return apiFetch<ApiKnowledgeCrawlerJobList>(`/api/v1/knowledge/crawler/jobs?${search.toString()}`);
+}
+
+export async function getKnowledgeCrawlerJob(
+  jobId: string,
+  knowledgeBaseId?: string,
+): Promise<ApiKnowledgeCrawlerJob> {
+  const search = new URLSearchParams();
+  if (knowledgeBaseId) search.set('knowledge_base_id', knowledgeBaseId);
+  const suffix = search.size ? `?${search.toString()}` : '';
+  return apiFetch<ApiKnowledgeCrawlerJob>(
+    `/api/v1/knowledge/crawler/jobs/${encodeURIComponent(jobId)}${suffix}`,
+  );
+}
+
+export async function createKnowledgeCrawlerJob(params: {
+  knowledgeBaseId: string;
+  presetIds?: string[];
+  urls?: string[];
+  keywords?: string[];
+  siteUrls?: string[];
+  maxResultsPerKeyword: number;
+  maxPagesPerSite: number;
+  maxTotalPages: number;
+  minContentChars: number;
+  fetchDelaySeconds: number;
+  maxRetries: number;
+  retryBaseSeconds: number;
+  force: boolean;
+  reviewMode: 'human' | 'agent';
+  reviewCriteria: string;
+}): Promise<ApiKnowledgeCrawlerJob> {
+  return apiFetch<ApiKnowledgeCrawlerJob>('/api/v1/knowledge/crawler/jobs', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      knowledge_base_id: params.knowledgeBaseId,
+      preset_ids: params.presetIds ?? [],
+      urls: params.urls ?? [],
+      keywords: params.keywords ?? [],
+      site_urls: params.siteUrls ?? [],
+      max_results_per_keyword: params.maxResultsPerKeyword,
+      max_pages_per_site: params.maxPagesPerSite,
+      max_total_pages: params.maxTotalPages,
+      min_content_chars: params.minContentChars,
+      fetch_delay_seconds: params.fetchDelaySeconds,
+      max_retries: params.maxRetries,
+      retry_base_seconds: params.retryBaseSeconds,
+      force: params.force,
+      review_mode: params.reviewMode,
+      review_criteria: params.reviewCriteria,
+    }),
+  });
+}
+
+export async function controlKnowledgeCrawlerJob(
+  jobId: string,
+  action: 'pause' | 'resume' | 'stop',
+  knowledgeBaseId?: string,
+): Promise<ApiKnowledgeCrawlerJob> {
+  const search = new URLSearchParams();
+  if (knowledgeBaseId) search.set('knowledge_base_id', knowledgeBaseId);
+  const suffix = search.size ? `?${search.toString()}` : '';
+  return apiFetch<ApiKnowledgeCrawlerJob>(
+    `/api/v1/knowledge/crawler/jobs/${encodeURIComponent(jobId)}/${action}${suffix}`,
+    { method: 'POST' },
+  );
+}
+
+export async function getKnowledgeCrawlerReview(
+  jobId: string,
+  knowledgeBaseId?: string,
+): Promise<ApiKnowledgeCrawlerReview> {
+  const search = new URLSearchParams();
+  if (knowledgeBaseId) search.set('knowledge_base_id', knowledgeBaseId);
+  const suffix = search.size ? `?${search.toString()}` : '';
+  return apiFetch<ApiKnowledgeCrawlerReview>(
+    `/api/v1/knowledge/crawler/jobs/${encodeURIComponent(jobId)}/review${suffix}`,
+  );
+}
+
+export async function getKnowledgeCrawlerReviewContent(
+  jobId: string,
+  itemId: string,
+  knowledgeBaseId?: string,
+): Promise<ApiKnowledgeCrawlerReviewContent> {
+  const search = new URLSearchParams();
+  if (knowledgeBaseId) search.set('knowledge_base_id', knowledgeBaseId);
+  const suffix = search.size ? `?${search.toString()}` : '';
+  return apiFetch<ApiKnowledgeCrawlerReviewContent>(
+    `/api/v1/knowledge/crawler/jobs/${encodeURIComponent(jobId)}/review/items/${encodeURIComponent(itemId)}${suffix}`,
+  );
+}
+
+export async function reviewKnowledgeCrawlerItems(
+  jobId: string,
+  action: 'approve' | 'reject',
+  itemIds: string[],
+  knowledgeBaseId?: string,
+): Promise<ApiKnowledgeCrawlerReview> {
+  const search = new URLSearchParams();
+  if (knowledgeBaseId) search.set('knowledge_base_id', knowledgeBaseId);
+  const suffix = search.size ? `?${search.toString()}` : '';
+  return apiFetch<ApiKnowledgeCrawlerReview>(
+    `/api/v1/knowledge/crawler/jobs/${encodeURIComponent(jobId)}/review${suffix}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, item_ids: itemIds }),
+    },
+  );
 }
 
 export async function listKnowledgeBases(): Promise<ApiKnowledgeBaseList> {

@@ -14,6 +14,8 @@ from app.schemas.knowledge import (
     KnowledgeBaseCreateRequest,
     KnowledgeBaseUpdateRequest,
     KnowledgeDocumentUpdateRequest,
+    KnowledgeCrawlerCreateRequest,
+    KnowledgeCrawlerReviewRequest,
     RagAnswerRequest,
     RagSearchRequest,
 )
@@ -80,6 +82,22 @@ async def _get_scoped_ingest_job(
         or job.get("knowledge_base_id") != knowledge_base_id
     ):
         raise HTTPException(status_code=404, detail="入库任务不属于当前知识库")
+    return job
+
+
+async def _get_scoped_crawler_job(
+    job_id: str,
+    knowledge_base_id: str | None = None,
+) -> dict[str, Any]:
+    job = await rag_client.request(
+        "GET",
+        f"/v1/crawler/jobs/{quote(job_id, safe='')}",
+        timeout=10.0,
+    )
+    if not isinstance(job, dict):
+        raise HTTPException(status_code=502, detail="RAG 返回了无效采集任务")
+    if knowledge_base_id and job.get("knowledge_base_id") != knowledge_base_id:
+        raise HTTPException(status_code=404, detail="采集任务不属于当前知识库")
     return job
 
 
@@ -461,4 +479,197 @@ async def knowledge_answer(
             },
             timeout=90.0,
         )
+    )
+
+
+@router.get("/crawler/presets")
+async def knowledge_crawler_presets(
+    _user: KnowledgeReader,
+) -> dict[str, Any]:
+    result = await rag_client.request(
+        "GET",
+        "/v1/crawler/presets",
+        timeout=10.0,
+    )
+    if isinstance(result, dict) and isinstance(result.get("items"), list):
+        result = {
+            **result,
+            "items": [
+                item
+                for item in result["items"]
+                if isinstance(item, dict) and item.get("kind") == "category"
+            ],
+        }
+    return ok(result)
+
+
+@router.get("/crawler/defaults")
+async def knowledge_crawler_defaults(
+    _user: KnowledgeReader,
+) -> dict[str, Any]:
+    return ok(
+        await rag_client.request(
+            "GET",
+            "/v1/crawler/defaults",
+            timeout=10.0,
+        )
+    )
+
+
+@router.get("/crawler/jobs")
+async def knowledge_crawler_jobs(
+    _user: KnowledgeReader,
+    knowledge_base_id: str | None = Query(default=None, max_length=36),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=30, ge=1, le=100),
+) -> dict[str, Any]:
+    params: dict[str, Any] = {"offset": offset, "limit": limit}
+    if knowledge_base_id:
+        params["knowledge_base_id"] = knowledge_base_id
+    return ok(
+        await rag_client.request(
+            "GET",
+            "/v1/crawler/jobs",
+            params=params,
+            timeout=10.0,
+        )
+    )
+
+
+@router.get("/crawler/jobs/{job_id}")
+async def knowledge_crawler_job(
+    job_id: str,
+    _user: KnowledgeReader,
+    knowledge_base_id: str | None = Query(default=None, max_length=36),
+) -> dict[str, Any]:
+    return ok(await _get_scoped_crawler_job(job_id, knowledge_base_id))
+
+
+@router.post("/crawler/jobs")
+async def create_knowledge_crawler_job(
+    request: KnowledgeCrawlerCreateRequest,
+    actor: KnowledgeManager,
+) -> dict[str, Any]:
+    result = await rag_client.request(
+        "POST",
+        "/v1/crawler/jobs",
+        json_body={**request.model_dump(), "require_review": True},
+        timeout=30.0,
+    )
+    job_id = str(result.get("id") or "") if isinstance(result, dict) else ""
+    record_audit(
+        "KNOWLEDGE_CRAWLER_JOB_CREATED",
+        actor.username,
+        job_id,
+        f"{request.knowledge_base_id};review_mode={request.review_mode}",
+    )
+    return ok(result)
+
+
+@router.get("/crawler/jobs/{job_id}/review")
+async def knowledge_crawler_review(
+    job_id: str,
+    _user: KnowledgeReader,
+    knowledge_base_id: str | None = Query(default=None, max_length=36),
+) -> dict[str, Any]:
+    await _get_scoped_crawler_job(job_id, knowledge_base_id)
+    return ok(
+        await rag_client.request(
+            "GET",
+            f"/v1/crawler/jobs/{quote(job_id, safe='')}/review",
+            timeout=15.0,
+        )
+    )
+
+
+@router.get("/crawler/jobs/{job_id}/review/items/{item_id}")
+async def knowledge_crawler_review_content(
+    job_id: str,
+    item_id: str,
+    _user: KnowledgeReader,
+    knowledge_base_id: str | None = Query(default=None, max_length=36),
+) -> dict[str, Any]:
+    await _get_scoped_crawler_job(job_id, knowledge_base_id)
+    return ok(
+        await rag_client.request(
+            "GET",
+            f"/v1/crawler/jobs/{quote(job_id, safe='')}/review/items/{quote(item_id, safe='')}",
+            timeout=15.0,
+        )
+    )
+
+
+@router.post("/crawler/jobs/{job_id}/review")
+async def review_knowledge_crawler_job(
+    job_id: str,
+    request: KnowledgeCrawlerReviewRequest,
+    actor: KnowledgeManager,
+    knowledge_base_id: str | None = Query(default=None, max_length=36),
+) -> dict[str, Any]:
+    await _get_scoped_crawler_job(job_id, knowledge_base_id)
+    result = await rag_client.request(
+        "POST",
+        f"/v1/crawler/jobs/{quote(job_id, safe='')}/review",
+        json_body={**request.model_dump(), "reviewer": actor.username},
+        timeout=120.0,
+    )
+    record_audit(
+        f"KNOWLEDGE_CRAWLER_REVIEW_{request.action.upper()}",
+        actor.username,
+        job_id,
+        f"items={len(request.item_ids)}",
+    )
+    return ok(result)
+
+
+async def _control_knowledge_crawler_job(
+    job_id: str,
+    action: str,
+    actor: CurrentUser,
+    knowledge_base_id: str | None,
+) -> dict[str, Any]:
+    await _get_scoped_crawler_job(job_id, knowledge_base_id)
+    result = await rag_client.request(
+        "POST",
+        f"/v1/crawler/jobs/{quote(job_id, safe='')}/{action}",
+        timeout=20.0,
+    )
+    record_audit(
+        f"KNOWLEDGE_CRAWLER_JOB_{action.upper()}",
+        actor.username,
+        job_id,
+    )
+    return ok(result)
+
+
+@router.post("/crawler/jobs/{job_id}/pause")
+async def pause_knowledge_crawler_job(
+    job_id: str,
+    actor: KnowledgeManager,
+    knowledge_base_id: str | None = Query(default=None, max_length=36),
+) -> dict[str, Any]:
+    return await _control_knowledge_crawler_job(
+        job_id, "pause", actor, knowledge_base_id
+    )
+
+
+@router.post("/crawler/jobs/{job_id}/resume")
+async def resume_knowledge_crawler_job(
+    job_id: str,
+    actor: KnowledgeManager,
+    knowledge_base_id: str | None = Query(default=None, max_length=36),
+) -> dict[str, Any]:
+    return await _control_knowledge_crawler_job(
+        job_id, "resume", actor, knowledge_base_id
+    )
+
+
+@router.post("/crawler/jobs/{job_id}/stop")
+async def stop_knowledge_crawler_job(
+    job_id: str,
+    actor: KnowledgeManager,
+    knowledge_base_id: str | None = Query(default=None, max_length=36),
+) -> dict[str, Any]:
+    return await _control_knowledge_crawler_job(
+        job_id, "stop", actor, knowledge_base_id
     )
