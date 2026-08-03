@@ -15,7 +15,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
@@ -1190,8 +1190,21 @@ async def task_observation(task_id: str, artifactsSummaryLimit: int = 500) -> di
         "artifacts_summary": artifacts,
         "generated_at": _now_iso(),
     }
+    # ── FP 摘要：从 orchestrator 获取误报判定概况 ──
+    try:
+        fp = await _orch("GET", f"/v1/orchestrator/tasks/{task_id}/fp-findings", timeout=3.0)
+        data["fp_summary"] = {
+            "total": fp.get("total", 0),
+            "unverified": fp.get("unverified", 0),
+            "suspicious": fp.get("suspicious", 0),
+            "false_positives": fp.get("falsePositives", 0),
+            "true_positives": fp.get("truePositives", 0),
+            "inconclusive": fp.get("inconclusive", 0),
+            "false_positive_rate": fp.get("falsePositiveRate", 0.0),
+        }
+    except Exception:
+        pass
     return ok(data)
-
 
 @app.get("/api/v1/tasks/{task_id}/todos")
 async def task_todos(task_id: str) -> dict[str, Any]:
@@ -1219,6 +1232,49 @@ async def task_full(task_id: str, events_limit: int = 100) -> dict[str, Any] | J
             "generatedAt": _now_iso(),
         }
     )
+
+
+# ── 误报追踪 API ────────────────────────────────────────
+
+@app.get("/api/v1/tasks/{task_id}/fp-findings", response_model=None)
+async def task_fp_findings(task_id: str) -> dict[str, Any] | JSONResponse:
+    """获取任务的 FP 判定汇总，代理到 orchestrator。"""
+    try:
+        data = await _orch("GET", f"/v1/orchestrator/tasks/{task_id}/fp-findings", timeout=5.0)
+    except Exception:
+        data = {
+            "taskId": task_id, "total": 0, "unverified": 0,
+            "falsePositives": 0, "truePositives": 0, "inconclusive": 0,
+            "falsePositiveRate": 0.0, "findings": [],
+        }
+    return ok(data)
+
+
+@app.post("/api/v1/tasks/{task_id}/fp-feedback", response_model=None)
+async def task_fp_feedback(
+    task_id: str,
+    fpId: str = Body(...),
+    humanVerdict: str = Body(...),
+    feedback: str | None = Body(None),
+) -> dict[str, Any] | JSONResponse:
+    """提交人工 FP 判定反馈，代理到 orchestrator。"""
+    try:
+        result = await _orch("POST", f"/v1/orchestrator/tasks/{task_id}/fp-feedback",
+                            json_body={"fpId": fpId, "humanVerdict": humanVerdict, "feedback": feedback},
+                            timeout=5.0)
+    except Exception as exc:
+        return fail(f"反馈提交失败: {exc}", code="ORCHESTRATOR_ERROR")
+    return ok(result)
+
+
+@app.post("/api/v1/tasks/{task_id}/fp-findings/deep-audit", response_model=None)
+async def task_fp_deep_audit(task_id: str) -> dict[str, Any] | JSONResponse:
+    """触发 T2 深度离线审计，代理到 orchestrator。"""
+    try:
+        result = await _orch("POST", f"/v1/orchestrator/tasks/{task_id}/fp-findings:deep-audit", timeout=60.0)
+    except Exception as exc:
+        return fail(f"深度审计失败: {exc}", code="ORCHESTRATOR_ERROR")
+    return ok(result)
 
 
 def _read_payload(event: dict[str, Any]) -> dict[str, Any]:
@@ -1414,6 +1470,69 @@ async def task_report(task_id: str) -> dict[str, Any] | JSONResponse:
         if isinstance(item, dict)
     ]
     exec_items = executions.get("executions") or executions.get("items") or []
+
+    # ── FP 数据注入：为每个 finding 标记误报判定状态 ──
+    fp_data = None
+    try:
+        fp_raw = await _orch("GET", f"/v1/orchestrator/tasks/{task_id}/fp-findings", timeout=3.0)
+        if isinstance(fp_raw, dict) and fp_raw.get("findings"):
+            fp_data = fp_raw
+    except Exception:
+        pass
+
+    # 为 findings 注入 fpVerdict（三级 fallback 匹配）
+    if fp_data:
+        fp_map: dict[str, str] = {}  # url → verdict
+        fp_records = fp_data.get("findings", [])
+        for fpr in fp_records:
+            url = (fpr.get("url") or "").strip()
+            verdict = (fpr.get("currentVerdict") or "").strip()
+            if url and verdict:
+                fp_map[url.lower()] = verdict
+        for finding in findings:
+            # Level 1: 字符串 evidence 精确匹配
+            raw = finding.get("evidence") or finding.get("url") or ""
+            if isinstance(raw, list):
+                raw = raw[0] if raw else ""
+            evidence = str(raw).strip().lower()
+            matched_verdict = fp_map.get(evidence)
+
+            # Level 2: URL 子串 + title 匹配
+            if not matched_verdict:
+                title = (finding.get("title") or "").lower()
+                for fp_url, fp_verdict in fp_map.items():
+                    if fp_url in evidence or evidence in fp_url or fp_url in title:
+                        matched_verdict = fp_verdict
+                        break
+
+            # Level 3: template_id 模糊匹配
+            if not matched_verdict:
+                title = (finding.get("title") or "").lower()
+                for fpr in fp_records:
+                    tid = (fpr.get("templateId") or "").lower()
+                    if tid and len(tid) > 10 and tid in title:
+                        matched_verdict = fpr.get("currentVerdict", "")
+                        break
+
+            finding["fpVerdict"] = matched_verdict or None
+
+    fp_summary = None
+    if fp_data:
+        from collections import Counter
+        vc = Counter(f.get("fpVerdict") for f in findings)
+        fp_c = vc.get("FALSE_POSITIVE", 0)
+        tp_c = vc.get("TRUE_POSITIVE", 0)
+        r = fp_c + tp_c
+        fp_summary = {
+            "totalFindings": len(findings),
+            "unverified": vc.get("UNVERIFIED", 0),
+            "suspicious": vc.get("SUSPICIOUS", 0),
+            "falsePositives": fp_c,
+            "truePositives": tp_c,
+            "inconclusive": vc.get("INCONCLUSIVE", 0),
+            "falsePositiveRate": round(fp_c / r, 4) if r > 0 else 0.0,
+        }
+
     report = {
         "taskId": task_id,
         "target": row.get("target") or "",
@@ -1428,6 +1547,7 @@ async def task_report(task_id: str) -> dict[str, Any] | JSONResponse:
         "services": ctx.get("vulnerable_services", []) if isinstance(ctx, dict) else [],
         "severityHistogram": hist,
         "riskLevel": risk,
+        "fpSummary": fp_summary,
         "executions": [
             {
                 "phase": e.get("phase"),

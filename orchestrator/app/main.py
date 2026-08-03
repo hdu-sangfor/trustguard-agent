@@ -21,6 +21,8 @@ from pydantic import BaseModel
 
 from app.models import (
     CreateTaskPayload,
+    FPFeedbackRequest,
+    FPFindingsResponse,
     OrchestratorTaskStateResponse,
     Phase,
     TaskState,
@@ -1406,6 +1408,142 @@ async def resume_task(task_id: str) -> OrchestratorTaskStateResponse:
     await _TASK_STORE.update_task(state.to_task_record())
     await _emit_task_resumed(state, reason="用户请求续跑，已从 checkpoint 恢复并重置阶段计时。")
     return state.to_response()
+
+
+# ── 误报追踪 API ────────────────────────────────────────
+
+@app.get("/v1/orchestrator/tasks/{task_id}/fp-findings")
+async def get_fp_findings(task_id: str) -> dict[str, Any]:
+    """获取任务的 FP 判定汇总，供前端「误报审核」面板使用。
+    优先从内存读取；若无内存数据则回退 MySQL。"""
+    state = _TASKS.get(task_id)
+    if state is not None:
+        try:
+            from app.core.fp_tracker import get_fp_summary
+            summary = get_fp_summary(state)
+            # 有数据或任务正在运行 → 直接返回（运行中 total=0 是正常的，不回退 DB）
+            if summary.get("total", 0) > 0 or not state.is_terminal():
+                return summary
+        except Exception:
+            pass  # fall through to DB
+
+    # 任务不在内存、或已结束且内存中无 FP 数据 → 回退 MySQL
+    try:
+        from app.core.fp_tracker import load_fp_from_db
+        from app.core.fp_persistence import build_summary_from_db
+        records = load_fp_from_db(task_id)
+        if records:
+            return build_summary_from_db(task_id, records)
+    except Exception:
+        pass
+
+    return {
+        "taskId": task_id,
+        "total": 0,
+        "unverified": 0,
+        "suspicious": 0,
+        "falsePositives": 0,
+        "truePositives": 0,
+        "inconclusive": 0,
+        "falsePositiveRate": 0.0,
+        "findings": [],
+    }
+
+
+@app.post("/v1/orchestrator/tasks/{task_id}/fp-feedback")
+async def submit_fp_feedback(task_id: str, req: FPFeedbackRequest) -> dict[str, Any]:
+    """提交人工 FP 判定反馈。"""
+    state = _TASKS.get(task_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="task not found")
+
+    ctx = state.target_context or {}
+    records = ctx.get("_fp_records")
+    if not isinstance(records, list):
+        raise HTTPException(status_code=404, detail="no fp records for this task")
+
+    matched = None
+    for r in records:
+        if r.get("fp_id") == req.fpId:
+            matched = r
+            break
+    if matched is None:
+        raise HTTPException(status_code=404, detail=f"fp record {req.fpId} not found")
+
+    old_verdict = matched.get("current_verdict")
+    matched["current_verdict"] = req.humanVerdict
+    matched["verification_source"] = "HUMAN"
+    if req.feedback:
+        matched["verification_reasoning"] = req.feedback
+    from datetime import datetime, timezone
+    matched["verified_at"] = datetime.now(timezone.utc).isoformat()
+
+    # ── 同步 MySQL + Qdrant KB ──
+    try:
+        from app.core.fp_persistence import upsert_fp_record
+        upsert_fp_record(dict(matched))
+    except Exception:
+        pass
+    try:
+        from app.core.fp_tracker import upsert_to_fp_kb
+        await upsert_to_fp_kb(dict(matched))
+    except Exception:
+        pass
+
+    # 写入 confirmed_facts 作为人类校正记录
+    fact = f"[HumanCorrected_{req.humanVerdict}] {req.fpId}: {matched.get('template_id')} on {matched.get('url')}"
+    if req.feedback:
+        fact += f" — {req.feedback}"
+    existing = [str(x).strip() for x in (state.confirmed_facts or []) if isinstance(x, str) and x.strip()]
+    if fact not in existing:
+        existing.append(fact)
+        state.confirmed_facts = existing[-120:]
+
+    # 发射 trace event
+    try:
+        await _emit_trace(TraceEvent(
+            task_id=task_id,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            event_type="FP_HUMAN_FEEDBACK",
+            source_module="fp_tracker",
+            payload={
+                "fp_id": req.fpId,
+                "old_verdict": old_verdict,
+                "new_verdict": req.humanVerdict,
+                "feedback": req.feedback or "",
+            },
+        ))
+    except Exception:
+        pass
+
+    logger.info("fp_feedback: %s %s → %s (human)", req.fpId, old_verdict, req.humanVerdict)
+    return {"fpId": req.fpId, "accepted": True, "verdict": req.humanVerdict}
+
+
+# ── T2 深度审计 API ─────────────────────────────────────
+
+@app.post("/v1/orchestrator/tasks/{task_id}/fp-findings:deep-audit")
+async def trigger_fp_deep_audit(task_id: str) -> dict[str, Any]:
+    """触发 T2 深度离线审计。
+    优先使用内存 TaskState；若任务已结束则从 DB 回退。"""
+    state = _TASKS.get(task_id)
+    if state is not None:
+        try:
+            from app.core.fp_tracker import call_fp_t2_deep_audit
+            return await call_fp_t2_deep_audit(state)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    # 任务不在内存，从 DB 加载 INCONCLUSIVE 记录做离线审计
+    try:
+        from app.core.fp_tracker import load_fp_from_db, call_fp_t2_deep_audit_db
+        records = load_fp_from_db(task_id)
+        inconclusive = [r for r in records if r.get("current_verdict") == "INCONCLUSIVE"]
+        if not inconclusive:
+            return {"audited": 0, "message": "no INCONCLUSIVE records found in DB"}
+        return await call_fp_t2_deep_audit_db(task_id, inconclusive)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/health")

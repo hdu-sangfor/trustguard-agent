@@ -269,6 +269,44 @@ class ReasoningStep(BaseModel):
     payload: Dict[str, Any] = Field(default_factory=dict)
 
 
+# ── 误报追踪 API 模型 ────────────────────────────────────────
+
+class FPRecordResponse(BaseModel):
+    """单条 FP 判定记录的 API 响应模型（camelCase）。"""
+    fpId: str
+    taskId: str
+    templateId: str
+    url: str
+    title: str
+    severity: str
+    sourceSkillId: str
+    sourcePhase: str
+    currentVerdict: str               # UNVERIFIED | FALSE_POSITIVE | TRUE_POSITIVE | INCONCLUSIVE
+    verificationSource: str | None = None
+    verificationReasoning: str | None = None
+    detectedAt: str
+    verifiedAt: str | None = None
+
+
+class FPFindingsResponse(BaseModel):
+    """任务 FP 判定汇总的 API 响应模型。"""
+    taskId: str
+    total: int
+    unverified: int
+    falsePositives: int
+    truePositives: int
+    inconclusive: int
+    falsePositiveRate: float
+    findings: list[FPRecordResponse] = Field(default_factory=list)
+
+
+class FPFeedbackRequest(BaseModel):
+    """人工 FP 反馈的请求体。"""
+    fpId: str
+    humanVerdict: str                # FALSE_POSITIVE | TRUE_POSITIVE | INCONCLUSIVE
+    feedback: str | None = None
+
+
 class TaskState:
     def __init__(
         self,

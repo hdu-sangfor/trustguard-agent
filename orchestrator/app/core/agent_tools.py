@@ -979,6 +979,18 @@ class SkillExecutor:
                             continue
                         fact = f"[Scanner_Unverified] {tid} detected on: {', '.join(urls_list)}"
                         add_tier1_fact(state, fact)
+                        # ── FP 追踪：同步创建 FPRecord ──
+                        try:
+                            from app.core.fp_tracker import ensure_fp_record, emit_finding_registered_events
+                            for url in urls_list:
+                                ensure_fp_record(
+                                    state, template_id=tid, url=url, severity=sev,
+                                    source_skill_id="nuclei",
+                                    source_phase=state.current_phase.value if state.current_phase else "",
+                                )
+                            await emit_finding_registered_events(state, tid, urls_list)
+                        except Exception:
+                            pass
             except Exception:
                 # 升级失败不应影响主流程
                 pass
@@ -1018,6 +1030,32 @@ class SkillExecutor:
                     resolved_artifacts["fallback_alias"] = True
                     resolved_artifacts["fallback_baseline_slot"] = alias.get("baseline_slot")
                     resolved_artifacts["fallback_alias_tag"] = "[FALLBACK_ALIAS_DETECTED]"
+                    # ── T0 启发式: 创建 FPRecord(SUSPICIOUS) ──
+                    try:
+                        from app.core.fp_tracker import ensure_fp_record
+                        ensure_fp_record(
+                            state,
+                            template_id="heuristic:fallback_alias",
+                            url=call_ctx.target,
+                            severity="info",
+                            source_skill_id="heuristic",
+                            source_phase=state.current_phase.value if state.current_phase else "",
+                            title=f"[FALLBACK_ALIAS] {call_ctx.target} matches baseline hash ({alias.get('baseline_slot')})",
+                        )
+                        # 标记为 SUSPICIOUS 而非 UNVERIFIED
+                        records = state.target_context.get("_fp_records", []) if isinstance(state.target_context, dict) else []
+                        for r in records:
+                            if r.get("template_id") == "heuristic:fallback_alias" and r.get("url") == call_ctx.target:
+                                r["current_verdict"] = "SUSPICIOUS"
+                                r["verification_source"] = "HEURISTIC"
+                                # 同步 DB
+                                try:
+                                    from app.core.fp_tracker import _do_upsert
+                                    _do_upsert(dict(r))
+                                except Exception:
+                                    pass
+                    except Exception:
+                        pass
 
         ledger_row = {}
         if not skip_blackboard_update:
