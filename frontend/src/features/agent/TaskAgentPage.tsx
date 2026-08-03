@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Check, ChevronDown, ChevronLeft, ChevronRight, Circle, Loader2, Plus, RefreshCw, Send, ShieldCheck, Square, SquareTerminal } from 'lucide-react';
+import { Check, ChevronDown, ChevronLeft, ChevronRight, Circle, Clock, Loader2, Plus, RefreshCw, Send, ShieldCheck, Square, SquareTerminal } from 'lucide-react';
 import Header from '@/shared/components/Header';
 import { useAppSession } from '@/shared/context/AppSessionContext';
 import {
@@ -32,6 +32,7 @@ type ChatMessage = {
   id: string;
   role: 'user' | 'assistant';
   text: string;
+  taskId?: string | null;
   activities?: ApiAgentActivity[];
   draft?: ApiPentestDraft | null;
   confirmationToken?: string | null;
@@ -43,6 +44,7 @@ function toChatMessage(message: ApiConversationMessage, confirmedTaskId?: string
     id: message.id,
     role: message.role,
     text: message.text,
+    taskId: message.taskId,
     activities: message.activities,
     draft: message.draft,
     confirmationToken: confirmedTaskId ? null : message.confirmationToken,
@@ -73,8 +75,15 @@ const phases = ['RECON', 'THREAT_MODEL', 'VULN_SCAN', 'EXPLOIT', 'REPORT'];
 const terminalStatuses = new Set<ApiTask['status']>(['DONE', 'FAILED', 'CANCELLED']);
 
 function settleActivities(activities: ApiAgentActivity[] | undefined): ApiAgentActivity[] | undefined {
+  const finishedAt = new Date().toISOString();
+  const now = Date.now();
   return activities?.map((activity) => activity.status === 'running'
-    ? { ...activity, status: 'done' }
+    ? {
+        ...activity,
+        status: 'done',
+        finishedAt,
+        durationMs: activityDurationMs(activity, now),
+      }
     : activity);
 }
 
@@ -108,6 +117,35 @@ function eventActivity(event: ApiEvent, index: number): ApiAgentActivity {
   };
 }
 
+function parsedTime(value?: string | null): number | null {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function activityDurationMs(activity: ApiAgentActivity, now: number): number | null {
+  if (typeof activity.durationMs === 'number' && Number.isFinite(activity.durationMs) && activity.durationMs >= 0) {
+    return activity.durationMs;
+  }
+  const started = parsedTime(activity.startedAt ?? activity.timestamp);
+  if (started === null) return null;
+  const finished = parsedTime(activity.finishedAt);
+  if (finished !== null) return Math.max(0, finished - started);
+  if (activity.status === 'running') return Math.max(0, now - started);
+  return null;
+}
+
+function formatDuration(durationMs: number | null): string {
+  if (durationMs === null) return '—';
+  if (durationMs < 1000) return `${Math.max(0, Math.round(durationMs))} 毫秒`;
+  const seconds = durationMs / 1000;
+  if (seconds < 10) return `${seconds.toFixed(1)} 秒`;
+  if (seconds < 60) return `${Math.round(seconds)} 秒`;
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = Math.floor(seconds % 60);
+  return `${minutes} 分 ${String(remainingSeconds).padStart(2, '0')} 秒`;
+}
+
 const reasoningLabels: Record<string, string> = {
   TASK_UNDERSTANDING: '任务理解',
   TASK_PLANNING: '任务规划',
@@ -121,6 +159,7 @@ const reasoningLabels: Record<string, string> = {
 
 function reasoningActivity(step: ApiReasoningStep, index: number): ApiAgentActivity {
   const status = String(step.status ?? '').toUpperCase();
+  const startedAt = step.startedAt ?? new Date().toISOString();
   return {
     id: step.stepId || `reasoning-${index}`,
     kind: step.stepType === 'TOOL_CALL' ? 'tool' : step.stepType === 'EVIDENCE_JUDGMENT' ? 'guard' : 'analysis',
@@ -129,8 +168,124 @@ function reasoningActivity(step: ApiReasoningStep, index: number): ApiAgentActiv
     // the redacted summary produced by Orchestrator.
     detail: String(step.summary ?? '').slice(0, 500),
     status: status === 'RUNNING' ? 'running' : status === 'FAILED' ? 'blocked' : 'done',
-    timestamp: step.startedAt ?? new Date().toISOString(),
+    timestamp: startedAt,
+    startedAt,
+    finishedAt: step.finishedAt,
+    durationMs: step.durationMs,
+    correlationId: typeof step.payload?.request_id === 'string' ? step.payload.request_id : null,
   };
+}
+
+function mergeReasoningStep(
+  items: ApiAgentActivity[],
+  step: ApiReasoningStep,
+  index: number,
+): ApiAgentActivity[] {
+  const activity = reasoningActivity(step, index);
+  let merged = items;
+  if (step.stepType === 'RESULT_OBSERVATION' && activity.correlationId) {
+    merged = merged.map((item) => (
+      item.kind === 'tool' && item.status === 'running' && item.correlationId === activity.correlationId
+        ? {
+            ...item,
+            status: activity.status === 'blocked' ? 'blocked' : 'done',
+            finishedAt: activity.finishedAt ?? activity.startedAt,
+            durationMs: activity.durationMs,
+          }
+        : item
+    ));
+  }
+  const existing = merged.findIndex((item) => item.id === activity.id);
+  return existing < 0
+    ? [...merged, activity]
+    : merged.map((item, itemIndex) => itemIndex === existing ? activity : item);
+}
+
+function reasoningStepActivities(steps: ApiReasoningStep[]): ApiAgentActivity[] {
+  return steps.reduce<ApiAgentActivity[]>(
+    (activities, step, index) => mergeReasoningStep(activities, step, index),
+    [],
+  );
+}
+
+function InlineReasoningTrace({ activities }: { activities: ApiAgentActivity[] }) {
+  const [expanded, setExpanded] = useState(true);
+  const [page, setPage] = useState(1);
+  const hasRunning = activities.some((activity) => activity.status === 'running');
+  const [now, setNow] = useState(() => Date.now());
+  const pageSize = 8;
+  const totalPages = Math.max(1, Math.ceil(activities.length / pageSize));
+  const visibleActivities = activities.slice((page - 1) * pageSize, page * pageSize);
+
+  useEffect(() => {
+    if (!hasRunning) return undefined;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 500);
+    return () => window.clearInterval(timer);
+  }, [hasRunning]);
+  useEffect(() => setPage(totalPages), [activities.length, totalPages]);
+
+  const startedTimes = activities
+    .map((activity) => parsedTime(activity.startedAt ?? activity.timestamp))
+    .filter((value): value is number => value !== null);
+  const firstStartedAt = startedTimes.length > 0 ? Math.min(...startedTimes) : null;
+  const finishedTimes = activities
+    .map((activity) => parsedTime(activity.finishedAt))
+    .filter((value): value is number => value !== null);
+  const lastFinishedAt = finishedTimes.length > 0 ? Math.max(...finishedTimes) : null;
+  const totalDuration = firstStartedAt === null
+    ? null
+    : Math.max(0, (hasRunning ? now : lastFinishedAt ?? now) - firstStartedAt);
+  const runningActivity = [...activities].reverse().find((activity) => activity.status === 'running');
+
+  return (
+    <div className="task-agent-inline-reasoning">
+      <button
+        type="button"
+        className="task-agent-inline-reasoning-header"
+        onClick={() => setExpanded((value) => !value)}
+        aria-expanded={expanded}
+      >
+        <span className={`task-agent-inline-reasoning-icon${hasRunning ? ' running' : ''}`}>
+          {hasRunning ? <Loader2 size={14} className="tg-spin" /> : <Check size={14} />}
+        </span>
+        <span className="task-agent-inline-reasoning-title">
+          <strong>{hasRunning ? `正在执行：${runningActivity?.title ?? '结构化推理'}` : `已执行 ${activities.length} 个推理步骤`}</strong>
+          <small><Clock size={11} /> {formatDuration(totalDuration)}</small>
+        </span>
+        <ChevronDown size={14} className={expanded ? 'expanded' : undefined} />
+      </button>
+      {expanded && (
+        <div className="task-agent-inline-reasoning-body">
+          {visibleActivities.map((activity) => (
+            <div key={activity.id} className={`task-agent-inline-step ${activity.status}`}>
+              <span className="task-agent-inline-step-state">
+                {activity.status === 'running'
+                  ? <Loader2 size={12} className="tg-spin" />
+                  : activity.status === 'blocked'
+                    ? <Circle size={9} fill="currentColor" />
+                    : <Check size={12} />}
+              </span>
+              <span className="task-agent-inline-step-content">
+                <span className="task-agent-inline-step-heading">
+                  <strong>{activity.title}</strong>
+                  <time>{formatDuration(activityDurationMs(activity, now))}</time>
+                </span>
+                {activity.detail && <small>{activity.detail}</small>}
+              </span>
+            </div>
+          ))}
+          {totalPages > 1 && (
+            <div className="task-agent-activity-pagination task-agent-inline-reasoning-pagination">
+              <button type="button" aria-label="上一页推理步骤" onClick={() => setPage((current) => Math.max(1, current - 1))} disabled={page === 1}><ChevronLeft size={13} /></button>
+              <span>步骤 {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, activities.length)} / {activities.length}</span>
+              <button type="button" aria-label="下一页推理步骤" onClick={() => setPage((current) => Math.min(totalPages, current + 1))} disabled={page === totalPages}><ChevronRight size={13} /></button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function ActivityList({ activities, label = '实时执行轨迹' }: { activities: ApiAgentActivity[]; label?: string }) {
@@ -326,11 +481,7 @@ export default function TaskAgentPage() {
         : items.map((item, index) => index === existing ? activity : item);
     });
     const mergeReasoning = (step: ApiReasoningStep) => setReasoningActivities((items) => {
-      const activity = reasoningActivity(step, items.length);
-      const existing = items.findIndex((item) => item.id === activity.id);
-      return existing < 0
-        ? [...items, activity]
-        : items.map((item, index) => index === existing ? activity : item);
+      return mergeReasoningStep(items, step, items.length);
     });
     const pollFallback = async () => {
       try {
@@ -342,7 +493,7 @@ export default function TaskAgentPage() {
         if (!active) return;
         setTask(latest);
         setLiveActivities(events.map(eventActivity));
-        setReasoningActivities(reasoningSteps.map(reasoningActivity));
+        setReasoningActivities(reasoningStepActivities(reasoningSteps));
         if (terminalStatuses.has(latest.status)) {
           setMessages((items) => settleMessages(items));
           setLiveActivities((items) => settleActivities(items) ?? []);
@@ -500,6 +651,13 @@ export default function TaskAgentPage() {
     }
     return [];
   }, [liveActivities, messages]);
+  const reasoningAnchorMessageId = useMemo(() => {
+    if (reasoningActivities.length === 0) return undefined;
+    const taskMessage = task?.taskId
+      ? messages.find((message) => message.taskId === task.taskId)
+      : undefined;
+    return taskMessage?.id;
+  }, [messages, reasoningActivities.length, task?.taskId]);
   const phaseLabels: Record<string, string> = {
     RECON: '信息收集',
     THREAT_MODEL: '威胁建模',
@@ -558,15 +716,19 @@ export default function TaskAgentPage() {
             {conversationLoading && <div className="task-agent-conversation-loading"><Loader2 size={14} className="tg-spin" /> 正在恢复会话…</div>}
             <div className="task-agent-message-column">
               {messages.map((message) => (
-                <div key={message.id} className={`task-agent-message ${message.role}`}>
-                  {message.role === 'assistant' && <span className="task-agent-message-mark" aria-hidden="true"><ShieldCheck size={15} /></span>}
-                  <div className="task-agent-message-bubble">
-                    {message.text || (message.streaming ? '正在整理任务…' : '')}
-                    {message.streaming && <span className="tg-stream-cursor" aria-hidden="true" />}
-                    {message.draft && message.confirmationToken && <DraftCard draft={message.draft} onConfirm={() => void confirm(message)} busy={draftBusy || Boolean(message.streaming)} />}
+                <Fragment key={message.id}>
+                  <div className={`task-agent-message ${message.role}`}>
+                    {message.role === 'assistant' && <span className="task-agent-message-mark" aria-hidden="true"><ShieldCheck size={15} /></span>}
+                    <div className="task-agent-message-bubble">
+                      {message.text || (message.streaming ? '正在整理任务…' : '')}
+                      {message.streaming && <span className="tg-stream-cursor" aria-hidden="true" />}
+                      {message.draft && message.confirmationToken && <DraftCard draft={message.draft} onConfirm={() => void confirm(message)} busy={draftBusy || Boolean(message.streaming)} />}
+                    </div>
                   </div>
-                </div>
+                  {message.id === reasoningAnchorMessageId && <InlineReasoningTrace activities={reasoningActivities} />}
+                </Fragment>
               ))}
+              {reasoningActivities.length > 0 && !reasoningAnchorMessageId && <InlineReasoningTrace activities={reasoningActivities} />}
             </div>
             <div ref={endRef} />
           </div>
@@ -601,14 +763,11 @@ export default function TaskAgentPage() {
             ) : <p className="task-agent-monitor-empty">确认任务草稿后，这里会显示执行阶段和状态。</p>}
           </section>
           <section className="task-agent-monitor-trace">
-            {reasoningActivities.length > 0 && (
-              <ActivityList activities={reasoningActivities} label="结构化推理轨迹" />
-            )}
             {traceActivities.length > 0 && (
               <ActivityList activities={traceActivities} label="实时执行轨迹" />
             )}
-            {reasoningActivities.length === 0 && traceActivities.length === 0 && (
-              <><div className="task-agent-activity-empty-heading"><SquareTerminal size={14} /> 任务轨迹</div><p>任务开始后，推理步骤与执行事件会分别显示在这里。</p></>
+            {traceActivities.length === 0 && (
+              <><div className="task-agent-activity-empty-heading"><SquareTerminal size={14} /> 执行轨迹</div><p>任务开始后，技能调用与状态事件会显示在这里；结构化推理步骤会出现在中间对话中。</p></>
             )}
           </section>
         </aside>

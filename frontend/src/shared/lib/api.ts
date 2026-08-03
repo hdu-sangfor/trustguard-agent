@@ -28,6 +28,10 @@ export interface ApiAgentActivity {
   detail: string;
   status: 'pending' | 'running' | 'done' | 'blocked';
   timestamp: string;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  durationMs?: number | null;
+  correlationId?: string | null;
 }
 
 export interface ApiPentestDraft {
