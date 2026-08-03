@@ -470,6 +470,7 @@ async def create_task(payload: CreateTaskPayload) -> None:
         description=payload.description,
         business_background=payload.businessBackground,
         extra_user_requirements=payload.extraUserRequirements,
+        execution_policy=(payload.executionPolicy.model_dump() if payload.executionPolicy else {}),
     )
     await _TASK_STORE.create_task(record)
     _TASKS[payload.taskId] = TaskState.from_task_record(record)
@@ -773,6 +774,7 @@ class RestoreTaskPayload(BaseModel):
     description: str | None = None
     businessBackground: str | None = None
     extraUserRequirements: str | None = None
+    executionPolicy: dict[str, Any] | None = None
 
 
 @app.post("/v1/orchestrator/tasks/{task_id}/restore", response_model=OrchestratorTaskStateResponse)
@@ -799,6 +801,11 @@ async def restore_task(task_id: str, payload: RestoreTaskPayload | None = None) 
             description=checkpoint.get("description"),
             business_background=rc.get("business_background") if isinstance(rc.get("business_background"), str) else None,
             extra_user_requirements=rc.get("extra_user_requirements") if isinstance(rc.get("extra_user_requirements"), str) else None,
+            execution_policy=(
+                rc.get("execution_policy")
+                if isinstance(rc.get("execution_policy"), dict)
+                else (store_rec.execution_policy if store_rec is not None else None)
+            ),
         )
         _TASKS[task_id] = state
         try:
@@ -813,6 +820,8 @@ async def restore_task(task_id: str, payload: RestoreTaskPayload | None = None) 
             restored_context["target"] = state.target
         if "task_background" not in restored_context:
             restored_context["task_background"] = f"本任务为经授权的渗透测试，仅对 {state.target} 进行安全测试，禁止越权。"
+        if "execution_policy" not in restored_context:
+            restored_context["execution_policy"] = dict(state.execution_policy)
         state.target_context = restored_context
         state.history_summary = checkpoint.get("history_summary") or ""
         state.coverage_attempted = state.target_context.get("_coverage_attempted") or []
@@ -830,6 +839,7 @@ async def restore_task(task_id: str, payload: RestoreTaskPayload | None = None) 
             description=payload.description,
             business_background=payload.businessBackground,
             extra_user_requirements=payload.extraUserRequirements,
+            execution_policy=payload.executionPolicy,
         )
         _TASKS[task_id] = state
         await _TASK_STORE.create_task(state.to_task_record())
@@ -1359,6 +1369,11 @@ async def resume_task(task_id: str) -> OrchestratorTaskStateResponse:
             description=checkpoint.get("description"),
             business_background=rc.get("business_background") if isinstance(rc.get("business_background"), str) else None,
             extra_user_requirements=rc.get("extra_user_requirements") if isinstance(rc.get("extra_user_requirements"), str) else None,
+            execution_policy=(
+                rc.get("execution_policy")
+                if isinstance(rc.get("execution_policy"), dict)
+                else (store_rec.execution_policy if store_rec is not None else None)
+            ),
         )
         _TASKS[task_id] = state
     try:
@@ -1373,6 +1388,8 @@ async def resume_task(task_id: str) -> OrchestratorTaskStateResponse:
         restored_context["target"] = state.target
     if "task_background" not in restored_context:
         restored_context["task_background"] = f"本任务为经授权的渗透测试，仅对 {state.target} 进行安全测试，禁止越权。"
+    if "execution_policy" not in restored_context:
+        restored_context["execution_policy"] = dict(state.execution_policy)
     state.target_context = restored_context
     _bg = restored_context.get("business_background")
     if isinstance(_bg, str):

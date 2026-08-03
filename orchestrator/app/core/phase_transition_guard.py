@@ -241,6 +241,29 @@ def guard_next_phase(state: TaskState, desired_phase: Phase) -> GuardDecision:
             blocked=True,
         )
 
+    if desired_phase == Phase.EXPLOIT:
+        policy = _ctx(state).get("execution_policy")
+        allow_exploit = True
+        if isinstance(policy, dict):
+            allow_exploit = _truthy(policy.get("allow_exploit", policy.get("allowExploit", True)))
+        if not allow_exploit:
+            if needs_vuln_scan_before_report(state):
+                return GuardDecision(
+                    allow=False,
+                    phase=Phase.VULN_SCAN,
+                    reason="exploit disabled by execution policy; vulnerability scanner coverage still required",
+                    missing=["vuln_scan_coverage(nuclei|nikto-scan|web-vuln-pipeline)"],
+                    blocked=True,
+                    forced=True,
+                )
+            return GuardDecision(
+                allow=True,
+                phase=Phase.REPORT,
+                reason="exploit skipped by execution policy",
+                missing=[],
+                forced=True,
+            )
+
     if desired_phase == Phase.EXPLOIT and not _has_confirmed_cves(state):
         return GuardDecision(
             allow=False,
