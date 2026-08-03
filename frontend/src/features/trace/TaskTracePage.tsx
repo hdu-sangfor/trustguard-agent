@@ -1335,7 +1335,8 @@ export default function TaskTracePage() {
                               <div>
                                 <button type="button" onClick={() => {
                                   const next = new Set(fpExpanded);
-                                  next.has(fp.fpId) ? next.delete(fp.fpId) : next.add(fp.fpId);
+                                  if (next.has(fp.fpId)) next.delete(fp.fpId);
+                                  else next.add(fp.fpId);
                                   setFpExpanded(next);
                                 }}
                                   style={{
