@@ -34,6 +34,7 @@ from app.models import (
 from app.clients.llm_client import LLMCallFailed, call_plan_list_decision_engine
 from app.clients.executor_client import fetch_skills_for_phase
 from app.clients.trace_client import emit_trace
+from app.core.reasoning_emit import emit_cot_step
 from app.clients.evidence_client import put_context, put_artifacts_summary
 from app.core.loop_guard import canonical_params, artifact_hash, update_loop_guard
 from app.core.workspace_store import write_artifact, write_task_context
@@ -540,6 +541,24 @@ async def _emit(event: TraceEvent) -> None:
     await emit_trace(event)
 
 
+async def _emit_final_conclusion_cot(state: TaskState, *, reason: str | None = None) -> None:
+    payload: Dict[str, Any] = {
+        "final_status": state.status.value,
+        "phase": state.current_phase.value,
+    }
+    if reason:
+        payload["reason"] = reason
+    await emit_cot_step(
+        task_id=state.task_id,
+        step_type="FINAL_CONCLUSION",
+        status="SUCCEEDED" if state.status == TaskStatus.DONE else "FAILED",
+        summary=f"Task {state.status.value}" + (f": {reason}" if reason else ""),
+        payload=payload,
+        started_at=_ts(),
+        finished_at=_ts(),
+    )
+
+
 def _ts() -> str:
     return datetime.utcnow().isoformat() + "Z"
 
@@ -690,6 +709,15 @@ async def _maybe_enforce_phase_plan_round_cap(state: TaskState) -> None:
         payload=pl,
         reason=reason,
     )
+
+
+async def _try_t2_deep_audit(state: TaskState) -> None:
+    """T2 自动触发：对 INCONCLUSIVE 记录做深度审计（fire-and-forget）。"""
+    try:
+        from app.core.fp_tracker import call_fp_t2_deep_audit
+        await call_fp_t2_deep_audit(state)
+    except Exception:
+        pass
 
 
 def _accumulate_finops_from_exec(
@@ -850,6 +878,20 @@ async def _handle_plan_list_decision_path(
             source_module="orchestrator",
             payload=payload,
         )
+    )
+    await emit_cot_step(
+        task_id=state.task_id,
+        step_type="TASK_PLANNING",
+        status="SUCCEEDED",
+        summary=f"PlanList persisted: {n_items} item(s), batch_id={plan_list.batch_id!r}",
+        payload={
+            "phase": state.current_phase.value,
+            "batch_id": plan_list.batch_id,
+            "item_count": n_items,
+            "skill_ids": skill_ids,
+        },
+        started_at=_ts(),
+        finished_at=_ts(),
     )
     note = (
         f"\n[PLAN_LIST] Persisted {n_items} plan item(s) "
@@ -1221,6 +1263,12 @@ async def _apply_decision_memory_updates(
                 payload={"phase": state.current_phase.value, "facts": added[:20]},
             )
         )
+        # ── FP 专用 trace event ──
+        try:
+            from app.core.fp_tracker import emit_fp_trace_events
+            await emit_fp_trace_events(state, added)
+        except Exception:
+            pass
     if removed:
         await _emit(
             TraceEvent(
@@ -1424,6 +1472,21 @@ async def _run_actions_and_merge_results(
                 run_started_at=started_ts,
             )
         )
+        await emit_cot_step(
+            task_id=state.task_id,
+            step_type="TOOL_CALL",
+            status="RUNNING",
+            summary=f"Invoke skill {resolved_skill_id}",
+            payload={
+                "phase": state.current_phase.value,
+                "tool_name": resolved_skill_id,
+                "target": target,
+                "params": params,
+                "request_id": call_ctx.request_id,
+            },
+            started_at=started_ts,
+            source_module="orchestrator",
+        )
         executor_request_payload: Dict[str, Any] = {
             "phase": state.current_phase.value,
             "skill_id": resolved_skill_id,
@@ -1486,6 +1549,20 @@ async def _run_actions_and_merge_results(
                     source_module="orchestrator",
                     payload=skipped,
                 )
+            )
+            await emit_cot_step(
+                task_id=state.task_id,
+                step_type="RESULT_OBSERVATION",
+                status="SKIPPED",
+                summary=f"Skill {ctx.skill_id} skipped (executor disabled)",
+                payload={
+                    "phase": state.current_phase.value,
+                    "tool_name": ctx.skill_id,
+                    "status": "SKIPPED_EXECUTOR_DISABLED",
+                    "request_id": ctx.request_id,
+                },
+                started_at=_ts(),
+                finished_at=_ts(),
             )
             state.coverage_attempted.append(
                 {
@@ -1599,6 +1676,33 @@ async def _run_actions_and_merge_results(
                 run_duration_ms=duration_ms if duration_ms is not None and duration_ms >= 0 else None,
             )
         )
+        obs_status = "SUCCEEDED"
+        status_u = str(effective_status or "").strip().upper()
+        if status_u in {"FAILED", "TIMEOUT", "ERROR"}:
+            obs_status = "FAILED"
+        elif status_u.startswith("SKIPPED"):
+            obs_status = "SKIPPED"
+        artifact_preview = ""
+        try:
+            artifact_preview = json.dumps(resolved_artifacts or {}, ensure_ascii=False)[:800]
+        except (TypeError, ValueError):
+            artifact_preview = str(resolved_artifacts)[:800]
+        await emit_cot_step(
+            task_id=state.task_id,
+            step_type="RESULT_OBSERVATION",
+            status=obs_status,
+            summary=f"Skill {ctx.skill_id} finished: {effective_status}",
+            payload={
+                "phase": state.current_phase.value,
+                "tool_name": ctx.skill_id,
+                "status": effective_status,
+                "request_id": ctx.request_id,
+                "result_summary": artifact_preview,
+            },
+            started_at=call_started_ts[i] if i < len(call_started_ts) else finished_ts,
+            finished_at=finished_ts,
+            duration_ms=duration_ms if duration_ms is not None and duration_ms >= 0 else None,
+        )
         exec_result = applied.get("exec_result")
         executor_response_payload: Dict[str, Any] = {
             "phase": state.current_phase.value,
@@ -1656,6 +1760,18 @@ async def _run_actions_and_merge_results(
                     state.recent_summary_chunks = state.recent_summary_chunks[-20:]
         except Exception:
             pass
+        # ── T1: VULN_SCAN 阶段扫描器完成后触发 FP 轻量判定 ──
+        if state.current_phase == Phase.VULN_SCAN:
+            try:
+                import logging
+                _t1log = logging.getLogger(__name__)
+                _t1log.info("T1: attempting mini-judge for task %s phase %s", state.task_id, state.current_phase.value)
+                from app.core.fp_tracker import call_fp_t1_mini_judge
+                result = await call_fp_t1_mini_judge(state)
+                _t1log.info("T1: mini-judge result=%s", result)
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning("T1: mini-judge failed: %s", e)
         loop_signature = "|".join(
             [
                 str(ctx.skill_id or ""),
@@ -1761,6 +1877,7 @@ async def _run_actions_and_merge_results(
                         payload={"final_status": state.status.value, "reason": "loop break finish"},
                     )
                 )
+                await _emit_final_conclusion_cot(state, reason="loop break finish")
     state.updated_at = datetime.utcnow()
 
     return effective_status_by_skill
@@ -1898,6 +2015,12 @@ async def tick(state: TaskState, *, enable_executor: bool) -> None:
             write_task_context(state.task_id, state.target_context)
         except Exception:
             pass
+        # ── T2 自动触发: 对 INCONCLUSIVE 记录做深度审计 ──
+        try:
+            from app.core.fp_tracker import call_fp_t2_deep_audit
+            asyncio.ensure_future(_try_t2_deep_audit(state))
+        except Exception:
+            pass
         coverage_overview = getattr(state, "coverage_attempted", None) or []
         coverage_gaps = await compute_report_coverage_gaps(coverage_overview)
         if await _enforce_report_finish_gate(state, coverage_gaps):
@@ -1943,6 +2066,7 @@ async def tick(state: TaskState, *, enable_executor: bool) -> None:
                 payload={"final_status": state.status.value},
             )
         )
+        await _emit_final_conclusion_cot(state)
         return
 
     # RUNNING 且非 REPORT：先注入聚类/路径轮廓，再跑 THREAT_MODEL 框架硬规则（硬规则可消费 asset_path_profile）
@@ -2312,6 +2436,7 @@ async def tick_manager(
                 payload={"final_status": state.status.value},
             )
         )
+        await _emit_final_conclusion_cot(state)
         return
 
     # RUNNING 且非 REPORT：维护 TodoList，注入当前 Todo，再决策

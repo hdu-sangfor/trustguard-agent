@@ -72,6 +72,47 @@ def test_ingest_event(client):
     assert "event_id" in data
 
 
+def test_ingest_reasoning_step(client):
+    """POST /v1/reasoning-steps 接收 CoT 步骤并返回 accepted。"""
+    r = client.post(
+        "/v1/reasoning-steps",
+        json={
+            "task_id": "task-abc",
+            "trace_id": "task-abc",
+            "step_type": "TASK_PLANNING",
+            "status": "SUCCEEDED",
+            "summary": "planned",
+            "payload": {"item_count": 2},
+            "started_at": "2025-01-01T00:00:00Z",
+            "finished_at": "2025-01-01T00:00:01Z",
+            "duration_ms": 1000,
+        },
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data.get("accepted") is True
+    assert data.get("trace_id") == "task-abc"
+    assert "step_id" in data
+
+
+def test_ingest_reasoning_step_rejects_bad_type(client):
+    r = client.post(
+        "/v1/reasoning-steps",
+        json={
+            "task_id": "task-abc",
+            "step_type": "NOT_A_REAL_TYPE",
+            "status": "SUCCEEDED",
+        },
+    )
+    assert r.status_code == 422
+
+
+def test_list_reasoning_steps_empty(client):
+    r = client.get("/internal/tasks/task-xyz/reasoning-steps")
+    assert r.status_code == 200
+    assert r.json() == []
+
+
 def test_get_context_empty(client):
     """GET /internal/tasks/{id}/context 无数据时返回空对象。"""
     r = client.get("/internal/tasks/task-xyz/context")

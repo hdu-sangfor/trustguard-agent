@@ -54,6 +54,47 @@ def test_exploit_entry_requires_confirmed_cves():
     assert d.phase == Phase.VULN_SCAN
 
 
+def test_exploit_entry_is_hard_rerouted_to_report_when_policy_denies_it():
+    from app.enums import Phase
+    from app.core.phase_transition_guard import guard_next_phase
+
+    s = _state(
+        "VULN_SCAN",
+        {
+            "framework_target": "struts2",
+            "confirmed_cves": ["CVE-2024-0001"],
+            "execution_policy": {"allow_exploit": False},
+        },
+    )
+    s.coverage_attempted = [{"target": s.target, "skill_id": "nuclei"}]
+
+    d = guard_next_phase(s, Phase.EXPLOIT)
+
+    assert d.allow
+    assert d.forced
+    assert d.phase == Phase.REPORT
+    assert "execution policy" in d.reason
+
+
+def test_exploit_entry_remains_available_when_policy_explicitly_allows_it():
+    from app.enums import Phase
+    from app.core.phase_transition_guard import guard_next_phase
+
+    s = _state(
+        "VULN_SCAN",
+        {
+            "framework_target": "struts2",
+            "confirmed_cves": ["CVE-2024-0001"],
+            "execution_policy": {"allow_exploit": True},
+        },
+    )
+
+    d = guard_next_phase(s, Phase.EXPLOIT)
+
+    assert d.allow
+    assert d.phase == Phase.EXPLOIT
+
+
 def test_finish_from_vuln_scan_requires_scanner_coverage_for_web_target():
     from app.core.phase_transition_guard import guard_finish_phase
 

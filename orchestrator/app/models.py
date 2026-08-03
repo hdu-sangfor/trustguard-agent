@@ -1,10 +1,10 @@
 import json
 import os
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 from collections import deque
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
 
 from app.enums import Phase, TaskStatus
 from app.core.task_store import TaskRecord
@@ -71,6 +71,19 @@ class TodoStatusUpdate(BaseModel):
     reason: Optional[str] = None
 
 
+class ExecutionPolicy(BaseModel):
+    allow_exploit: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("allow_exploit", "allowExploit"),
+        serialization_alias="allowExploit",
+    )
+    allow_destructive_actions: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("allow_destructive_actions", "allowDestructiveActions"),
+        serialization_alias="allowDestructiveActions",
+    )
+
+
 class CreateTaskPayload(BaseModel):
     taskId: str
     name: str
@@ -78,6 +91,7 @@ class CreateTaskPayload(BaseModel):
     description: str | None = None
     businessBackground: str | None = None
     extraUserRequirements: str | None = None
+    executionPolicy: ExecutionPolicy | None = None
 
 
 class OrchestratorTaskStateResponse(BaseModel):
@@ -240,6 +254,59 @@ class TraceEvent(BaseModel):
     run_duration_ms: int | None = None
 
 
+class ReasoningStep(BaseModel):
+    """结构化 CoT 推理步骤（Issue #136）；与 TraceEvent 并行，trace_id == task_id。"""
+
+    trace_id: str
+    task_id: str
+    step_id: str
+    step_type: str
+    status: str
+    started_at: str | None = None
+    finished_at: str | None = None
+    duration_ms: int | None = None
+    summary: str = ""
+    payload: Dict[str, Any] = Field(default_factory=dict)
+
+
+# ── 误报追踪 API 模型 ────────────────────────────────────────
+
+class FPRecordResponse(BaseModel):
+    """单条 FP 判定记录的 API 响应模型（camelCase）。"""
+    fpId: str
+    taskId: str
+    templateId: str
+    url: str
+    title: str
+    severity: str
+    sourceSkillId: str
+    sourcePhase: str
+    currentVerdict: str               # UNVERIFIED | FALSE_POSITIVE | TRUE_POSITIVE | INCONCLUSIVE
+    verificationSource: str | None = None
+    verificationReasoning: str | None = None
+    detectedAt: str
+    verifiedAt: str | None = None
+
+
+class FPFindingsResponse(BaseModel):
+    """任务 FP 判定汇总的 API 响应模型。"""
+    taskId: str
+    total: int
+    unverified: int
+    falsePositives: int
+    truePositives: int
+    inconclusive: int
+    falsePositiveRate: float
+    findings: list[FPRecordResponse] = Field(default_factory=list)
+
+
+class FPFeedbackRequest(BaseModel):
+    """人工 FP 反馈的请求体。"""
+    fpId: str
+    humanVerdict: Literal["FALSE_POSITIVE", "TRUE_POSITIVE", "INCONCLUSIVE"]
+    feedback: str | None = None
+
+
 class TaskState:
     def __init__(
         self,
@@ -250,6 +317,7 @@ class TaskState:
         *,
         business_background: str | None = None,
         extra_user_requirements: str | None = None,
+        execution_policy: Dict[str, Any] | ExecutionPolicy | None = None,
     ):
         self.task_id = task_id
         self.name = name
@@ -257,6 +325,7 @@ class TaskState:
         self.target = target
         self.business_background = business_background
         self.extra_user_requirements = extra_user_requirements
+        self.execution_policy = ExecutionPolicy.model_validate(execution_policy or {}).model_dump()
         self.current_phase: Phase = Phase.RECON
         self.phase_start_at: Optional[datetime] = datetime.utcnow()
         self.current_phase_duration_limit_sec: Optional[int] = phase_wall_clock_limit_sec_from_env()
@@ -266,6 +335,7 @@ class TaskState:
         self.target_context: Dict[str, Any] = {
             "target": target,
             "task_background": f"本任务为经授权的渗透测试，仅对 {target} 进行安全测试，禁止越权。",
+            "execution_policy": dict(self.execution_policy),
         }
         apply_user_injected_context(
             self.target_context,
@@ -379,6 +449,7 @@ class TaskState:
             description=record.description,
             business_background=record.business_background,
             extra_user_requirements=record.extra_user_requirements,
+            execution_policy=record.execution_policy,
         )
         state.status = record.status
         anchor = record.phase_start_at if record.phase_start_at is not None else datetime.utcnow()
@@ -403,6 +474,7 @@ class TaskState:
             merged_context["task_background"] = base_context["task_background"]
         if "target" not in merged_context:
             merged_context["target"] = base_context["target"]
+        merged_context["execution_policy"] = dict(state.execution_policy)
         apply_user_injected_context(
             merged_context,
             business_background=record.business_background,
@@ -425,6 +497,7 @@ class TaskState:
             description=self.description,
             business_background=self.business_background,
             extra_user_requirements=self.extra_user_requirements,
+            execution_policy=dict(self.execution_policy),
             status=self.status,
             current_phase=self.current_phase,
             phase_start_at=self.phase_start_at,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -10,12 +11,12 @@ import sys
 import uuid
 from collections import Counter, OrderedDict
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from app.api.knowledge import router as knowledge_router
@@ -31,6 +32,7 @@ from app.security.auth import (
     get_user_by_username,
     hash_password,
     issue_token,
+    require_roles,
     verify_password,
 )
 
@@ -39,12 +41,14 @@ log = logging.getLogger("trustguard.gateway")
 ORCHESTRATOR_BASE_URL = os.getenv("ORCHESTRATOR_BASE_URL", "http://localhost:18081").rstrip("/")
 EVIDENCE_BASE_URL = os.getenv("EVIDENCE_BASE_URL", "http://localhost:18103").rstrip("/")
 EXECUTOR_BASE_URL = os.getenv("EXECUTOR_BASE_URL", "http://localhost:18102").rstrip("/")
+SUPERVISOR_BASE_URL = os.getenv("SUPERVISOR_BASE_URL", "http://localhost:18082").rstrip("/")
 MQ_BROKER_URL = os.getenv("MQ_BROKER_URL", "amqp://guest:guest@localhost:5672/")
 KB_QDRANT_URL = os.getenv("KB_QDRANT_URL", "http://localhost:6333").rstrip("/")
 
 START_TIME = datetime.now(timezone.utc)
 PHASE_ORDER = ["RECON", "THREAT_MODEL", "VULN_SCAN", "EXPLOIT", "REPORT", "DONE"]
 STATUS_VALUES = ["PENDING", "RUNNING", "PAUSED", "DONE", "FAILED", "CANCELLED"]
+_EXECUTION_POLICY_SCHEMA_READY = False
 
 app = FastAPI(title="TrustGuard Gateway", version="1.0.0")
 app.include_router(knowledge_router)
@@ -98,6 +102,17 @@ def _json_loads(value: Any, default: Any = None) -> Any:
         return default
 
 
+def _json_dumps(value: Any) -> str:
+    try:
+        return json.dumps(value if value is not None else {}, ensure_ascii=False, separators=(",", ":"))
+    except (TypeError, ValueError):
+        return "{}"
+
+
+def _encode_sse(event: str, data: Any) -> str:
+    return f"event: {event}\ndata: {_json_dumps(data)}\n\n"
+
+
 def _limit(value: int | None, default: int, max_value: int = 1000) -> int:
     if value is None or value <= 0:
         return default
@@ -115,6 +130,7 @@ def _task_row_to_api(row: dict[str, Any]) -> dict[str, Any]:
         "currentPhase": row.get("current_phase") or "RECON",
         "createdAt": _dt_iso(row.get("created_at")) or "",
         "updatedAt": _dt_iso(row.get("updated_at")) or "",
+        "executionPolicy": _json_loads(row.get("execution_policy"), {}),
     }
 
 
@@ -132,18 +148,33 @@ def _sync_task_state(task_id: str, state: dict[str, Any] | None) -> None:
         status = None
     if phase not in PHASE_ORDER:
         phase = None
-    if status or phase:
-        parts: list[str] = []
-        params: list[Any] = []
-        if status:
-            parts.append("status = %s")
-            params.append(status)
-        if phase:
-            parts.append("current_phase = %s")
-            params.append(phase)
-        parts.append("updated_at = NOW()")
-        params.append(task_id)
-        _execute(f"UPDATE tg_task SET {', '.join(parts)} WHERE task_id = %s", tuple(params))
+    if not (status or phase):
+        return
+
+    # This function runs while the UI polls task state.  Updating updated_at on
+    # every read turns it into a heartbeat, which makes completed/failed task
+    # durations keep growing.  Only stamp it when persisted task state changes.
+    row = _get_task_row(task_id)
+    if not row:
+        return
+    current_status = str(row.get("status") or "").upper()
+    current_phase = str(row.get("current_phase") or "").upper()
+    status_changed = status is not None and status != current_status
+    phase_changed = phase is not None and phase != current_phase
+    if not (status_changed or phase_changed):
+        return
+
+    parts: list[str] = []
+    params: list[Any] = []
+    if status_changed:
+        parts.append("status = %s")
+        params.append(status)
+    if phase_changed:
+        parts.append("current_phase = %s")
+        params.append(phase)
+    parts.append("updated_at = NOW()")
+    params.append(task_id)
+    _execute(f"UPDATE tg_task SET {', '.join(parts)} WHERE task_id = %s", tuple(params))
 
 
 async def _orch(method: str, path: str, *, json_body: Any = None, params: dict[str, Any] | None = None, headers: dict[str, str] | None = None, timeout: float = 30.0) -> Any:
@@ -153,6 +184,66 @@ async def _orch(method: str, path: str, *, json_body: Any = None, params: dict[s
         if resp.status_code == 204 or not resp.content:
             return None
         return resp.json()
+
+
+async def _supervisor(
+    method: str,
+    path: str,
+    *,
+    json_body: Any = None,
+    actor_id: str = "",
+    timeout: float = 20.0,
+) -> Any:
+    headers = {"X-Actor-Id": actor_id} if actor_id else None
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        resp = await client.request(
+            method,
+            f"{SUPERVISOR_BASE_URL}{path}",
+            json=json_body,
+            headers=headers,
+        )
+        if resp.status_code == 204:
+            return None
+        if resp.is_error:
+            try:
+                detail = resp.json().get("detail")
+            except Exception:
+                detail = resp.text
+            raise HTTPException(status_code=resp.status_code, detail=detail or "Supervisor request failed")
+        return resp.json() if resp.content else None
+
+
+async def _open_supervisor_stream(
+    path: str,
+    *,
+    json_body: Any,
+    actor_id: str,
+) -> tuple[httpx.AsyncClient, httpx.Response]:
+    client = httpx.AsyncClient(timeout=httpx.Timeout(20.0, read=None))
+    try:
+        request = client.build_request(
+            "POST",
+            f"{SUPERVISOR_BASE_URL}{path}",
+            json=json_body,
+            headers={"X-Actor-Id": actor_id},
+        )
+        response = await client.send(request, stream=True)
+        if response.is_error:
+            body = await response.aread()
+            try:
+                detail = json.loads(body).get("detail")
+            except Exception:
+                detail = body.decode("utf-8", errors="replace")
+            await response.aclose()
+            await client.aclose()
+            raise HTTPException(
+                status_code=response.status_code,
+                detail=detail or "Supervisor stream request failed",
+            )
+        return client, response
+    except Exception:
+        await client.aclose()
+        raise
 
 
 async def _evidence(method: str, path: str, *, json_body: Any = None, params: dict[str, Any] | None = None, timeout: float = 15.0) -> Any:
@@ -174,6 +265,7 @@ async def _restore_task(row: dict[str, Any]) -> dict[str, Any] | None:
         "description": row.get("description"),
         "businessBackground": row.get("business_background"),
         "extraUserRequirements": row.get("extra_user_requirements"),
+        "executionPolicy": _json_loads(row.get("execution_policy"), {}),
     }
     state = await _orch("POST", f"/v1/orchestrator/tasks/{task_id}/restore", json_body=payload, timeout=20.0)
     _sync_task_state(task_id, state)
@@ -202,6 +294,16 @@ def _user_to_api(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+class GatewayExecutionPolicy(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    allow_exploit: bool = Field(default=True, validation_alias=AliasChoices("allow_exploit", "allowExploit"))
+    allow_destructive_actions: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("allow_destructive_actions", "allowDestructiveActions"),
+    )
+
+
 class CreateTaskRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -210,6 +312,27 @@ class CreateTaskRequest(BaseModel):
     description: str | None = None
     business_background: str | None = Field(default=None, validation_alias=AliasChoices("business_background", "businessBackground"))
     extra_user_requirements: str | None = Field(default=None, validation_alias=AliasChoices("extra_user_requirements", "extraUserRequirements"))
+    execution_policy: GatewayExecutionPolicy | None = Field(
+        default=None,
+        validation_alias=AliasChoices("execution_policy", "executionPolicy"),
+    )
+
+
+class TaskAgentDraftRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    message: str = Field(min_length=1, max_length=8000)
+    conversation_id: str | None = Field(default=None, validation_alias=AliasChoices("conversation_id", "conversationId"))
+    workflow_id: str = Field(default="auto", validation_alias=AliasChoices("workflow_id", "workflowId"), max_length=64)
+
+
+class TaskAgentConfirmRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    confirmation_token: str = Field(validation_alias=AliasChoices("confirmation_token", "confirmationToken"), min_length=1)
+    start: bool = True
+    max_ticks: int = Field(default=100, validation_alias=AliasChoices("max_ticks", "maxTicks"), ge=1, le=1000)
+    idempotency_key: str | None = Field(default=None, validation_alias=AliasChoices("idempotency_key", "idempotencyKey"), max_length=128)
 
 
 class TaskKnowledgeChunksRequest(BaseModel):
@@ -252,21 +375,55 @@ async def http_exception_handler(_: Request, exc: HTTPException) -> JSONResponse
     return fail(detail, code="HTTP_ERROR", status_code=exc.status_code)
 
 
-@app.post("/api/v1/tasks")
-async def create_task(req: CreateTaskRequest) -> dict[str, Any]:
-    task_id = "task-" + uuid.uuid4().hex
+def _ensure_execution_policy_schema() -> None:
+    global _EXECUTION_POLICY_SCHEMA_READY
+    if _EXECUTION_POLICY_SCHEMA_READY:
+        return
+    columns = _query("SHOW COLUMNS FROM tg_task LIKE 'execution_policy'")
+    if not columns:
+        try:
+            _execute("ALTER TABLE tg_task ADD COLUMN execution_policy JSON NULL COMMENT 'structured execution policy'")
+        except Exception:
+            if not _query("SHOW COLUMNS FROM tg_task LIKE 'execution_policy'"):
+                raise
+    _EXECUTION_POLICY_SCHEMA_READY = True
+
+
+async def _create_task_impl(
+    req: CreateTaskRequest,
+    *,
+    actor: CurrentUser | None = None,
+    task_id: str | None = None,
+) -> dict[str, Any]:
+    _ensure_execution_policy_schema()
+    task_id = task_id or "task-" + uuid.uuid4().hex
     name = (req.name or "").strip() or "未命名任务"
     target = req.target.strip()
-    _execute(
-        """
-        INSERT INTO tg_task
-          (task_id, name, description, business_background, extra_user_requirements,
-           target, status, current_phase, created_at, updated_at)
-        VALUES (%s, %s, %s, %s, %s, %s, 'PENDING', 'RECON', NOW(), NOW())
-        """,
-        (task_id, name, req.description, req.business_background, req.extra_user_requirements, target),
-    )
+    execution_policy = req.execution_policy or GatewayExecutionPolicy()
     row = _get_task_row(task_id)
+    if row is None:
+        try:
+            _execute(
+                """
+                INSERT INTO tg_task
+                  (task_id, name, description, business_background, extra_user_requirements,
+                   execution_policy, target, status, current_phase, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, 'PENDING', 'RECON', NOW(), NOW())
+                """,
+                (
+                    task_id,
+                    name,
+                    req.description,
+                    req.business_background,
+                    req.extra_user_requirements,
+                    _json_dumps(execution_policy.model_dump()),
+                    target,
+                ),
+            )
+        except Exception:
+            if _get_task_row(task_id) is None:
+                raise
+        row = _get_task_row(task_id)
     try:
         await _orch(
             "POST",
@@ -278,12 +435,23 @@ async def create_task(req: CreateTaskRequest) -> dict[str, Any]:
                 "description": req.description,
                 "businessBackground": req.business_background,
                 "extraUserRequirements": req.extra_user_requirements,
+                "executionPolicy": {
+                    "allowExploit": execution_policy.allow_exploit,
+                    "allowDestructiveActions": execution_policy.allow_destructive_actions,
+                },
             },
             timeout=10.0,
         )
     except Exception as exc:
         log.warning("orchestrator create failed task_id=%s: %s", task_id, exc)
-    return ok(_task_row_to_api(row or {}))
+    if actor is not None:
+        _record_audit("TASK_CREATED", actor.user_id, task_id, f"source=task-agent target={target}")
+    return _task_row_to_api(row or {})
+
+
+@app.post("/api/v1/tasks")
+async def create_task(req: CreateTaskRequest) -> dict[str, Any]:
+    return ok(await _create_task_impl(req))
 
 
 @app.get("/api/v1/tasks")
@@ -377,6 +545,212 @@ async def resume_task(
     return result
 
 
+@app.post("/api/v1/task-agent/draft")
+async def task_agent_draft(
+    req: TaskAgentDraftRequest,
+    user: CurrentUser = Depends(require_roles("ADMIN", "OPERATOR")),
+) -> dict[str, Any]:
+    body = await _supervisor(
+        "POST",
+        "/v1/task-agent/draft",
+        json_body={
+            "message": req.message,
+            "conversationId": req.conversation_id,
+            "workflowId": req.workflow_id,
+        },
+        actor_id=user.user_id,
+    )
+    _record_audit(
+        "TASK_AGENT_DRAFT",
+        user.user_id,
+        str((body or {}).get("draftId") or "platform"),
+        f"status={(body or {}).get('status')}",
+    )
+    return ok(body)
+
+
+@app.post("/api/v1/task-agent/draft/stream")
+async def task_agent_draft_stream(
+    req: TaskAgentDraftRequest,
+    user: CurrentUser = Depends(require_roles("ADMIN", "OPERATOR")),
+) -> StreamingResponse:
+    client, response = await _open_supervisor_stream(
+        "/v1/task-agent/draft/stream",
+        json_body={
+            "message": req.message,
+            "conversationId": req.conversation_id,
+            "workflowId": req.workflow_id,
+        },
+        actor_id=user.user_id,
+    )
+    _record_audit(
+        "TASK_AGENT_DRAFT_STREAM",
+        user.user_id,
+        "platform",
+        "status=started",
+    )
+
+    async def relay():
+        try:
+            async for chunk in response.aiter_raw():
+                yield chunk
+        finally:
+            await response.aclose()
+            await client.aclose()
+
+    return StreamingResponse(
+        relay(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.get("/api/v1/task-agent/conversations")
+async def task_agent_conversations(
+    limit: int = Query(default=50, ge=1, le=100),
+    user: CurrentUser = Depends(require_roles("ADMIN", "OPERATOR")),
+) -> dict[str, Any]:
+    body = await _supervisor(
+        "GET",
+        f"/v1/conversations?limit={limit}",
+        actor_id=user.user_id,
+    )
+    return ok(body)
+
+
+@app.get("/api/v1/task-agent/conversations/{conversation_id}")
+async def task_agent_conversation(
+    conversation_id: str,
+    user: CurrentUser = Depends(require_roles("ADMIN", "OPERATOR")),
+) -> dict[str, Any]:
+    body = await _supervisor(
+        "GET",
+        f"/v1/conversations/{conversation_id}",
+        actor_id=user.user_id,
+    )
+    return ok(body)
+
+
+@app.post("/api/v1/task-agent/confirm")
+async def task_agent_confirm(
+    req: TaskAgentConfirmRequest,
+    user: CurrentUser = Depends(require_roles("ADMIN", "OPERATOR")),
+) -> dict[str, Any]:
+    idem = (req.idempotency_key or "").strip() or hashlib.sha256(
+        req.confirmation_token.encode()
+    ).hexdigest()[:32]
+
+    consumed = await _supervisor(
+        "POST",
+        "/v1/task-agent/drafts/consume",
+        json_body={"confirmationToken": req.confirmation_token, "idempotencyKey": idem},
+        actor_id=user.user_id,
+    )
+    draft = (consumed or {}).get("draft") or {}
+    target = str(draft.get("target") or "").strip()
+    if not target:
+        raise HTTPException(status_code=400, detail="Supervisor draft is missing target")
+    create_req = CreateTaskRequest(
+        name=str(draft.get("name") or "自然语言渗透测试"),
+        target=target,
+        description=str(draft.get("description") or ""),
+        business_background=str(draft.get("businessBackground") or draft.get("business_background") or ""),
+        extra_user_requirements=str(draft.get("extraUserRequirements") or draft.get("extra_user_requirements") or ""),
+        execution_policy=GatewayExecutionPolicy(
+            allowExploit=bool(draft.get("allowExploit") or draft.get("allow_exploit")),
+            # Destructive execution is not enabled by the natural-language
+            # workflow in this version, even when requested in prose.
+            allowDestructiveActions=False,
+        ),
+    )
+    draft_id = str((consumed or {}).get("draftId") or "")
+    if not draft_id:
+        raise HTTPException(status_code=400, detail="Supervisor response is missing draftId")
+    deterministic_task_id = "task-" + hashlib.sha256(draft_id.encode()).hexdigest()[:32]
+    task_id = str((consumed or {}).get("taskId") or deterministic_task_id)
+    task = await _create_task_impl(create_req, actor=user, task_id=task_id)
+    task_id = str(task.get("taskId") or "")
+    if str((consumed or {}).get("confirmationState") or "") != "COMPLETED":
+        await _supervisor(
+            "POST",
+            "/v1/task-agent/drafts/complete",
+            json_body={"draftId": draft_id, "idempotencyKey": idem, "taskId": task_id},
+            actor_id=user.user_id,
+        )
+    activity = [
+        {
+            "id": "confirm-1",
+            "kind": "tool",
+            "title": "创建渗透测试任务",
+            "detail": f"Gateway 已创建 {task_id}",
+            "status": "done",
+            "timestamp": _now_iso(),
+        }
+    ]
+    should_start = req.start and str(task.get("status") or "").upper() not in {"RUNNING", "DONE"}
+    if should_start:
+        max_duration = int(draft.get("maxDurationSeconds") or draft.get("max_duration_seconds") or 900)
+        result = await _run_lifecycle(
+            task_id,
+            "run",
+            max_ticks=req.max_ticks,
+            max_duration_seconds=max_duration,
+        )
+        if isinstance(result, JSONResponse):
+            raise HTTPException(status_code=502, detail="任务已创建，但启动失败")
+        activity.append(
+            {
+                "id": "confirm-2",
+                "kind": "progress",
+                "title": "启动 Pentest Workflow",
+                "detail": "Orchestrator 已接管任务；后续阶段和工具事件会持续回到当前对话。",
+                "status": "running",
+                "timestamp": _now_iso(),
+            }
+        )
+    conversation_id = str((consumed or {}).get("conversationId") or "")
+    started = bool(req.start and (should_start or str(task.get("status") or "").upper() in {"RUNNING", "DONE"}))
+    assistant_text = (
+        f"任务 {task_id} 已创建并启动。我会持续把 Orchestrator 的阶段和工具事件写入这段对话。"
+        if started
+        else f"任务 {task_id} 已创建，当前尚未启动。"
+    )
+    persisted_message = {
+        "id": f"confirm-{draft_id}",
+        "role": "assistant",
+        "text": assistant_text,
+        "activities": activity,
+        "taskId": task_id,
+        "taskStatus": str(task.get("status") or "PENDING"),
+        "createdAt": _now_iso(),
+    }
+    if conversation_id:
+        try:
+            persisted_message = await _supervisor(
+                "POST",
+                f"/v1/conversations/{conversation_id}/messages",
+                json_body=persisted_message,
+                actor_id=user.user_id,
+                timeout=5.0,
+            )
+        except Exception:
+            log.exception("failed to persist task-agent confirmation conversation_id=%s", conversation_id)
+    payload = {
+        "conversationId": conversation_id,
+        "draftId": (consumed or {}).get("draftId"),
+        "task": task,
+        "started": started,
+        "activities": activity,
+        "message": persisted_message,
+    }
+    _record_audit("TASK_AGENT_CONFIRMED", user.user_id, task_id, f"start={req.start}")
+    return ok(payload)
+
+
 @app.get("/api/v1/tasks/{task_id}/run-status")
 async def run_status(task_id: str) -> dict[str, Any]:
     try:
@@ -431,6 +805,300 @@ async def task_events(task_id: str, limit: int = 500) -> dict[str, Any]:
             for r in rows
         ]
     return ok(data or [])
+
+
+@app.get("/api/v1/tasks/{task_id}/reasoning-steps")
+async def task_reasoning_steps(task_id: str, limit: int = 500) -> dict[str, Any]:
+    """结构化 CoT 推理步骤列表（Issue #136）；与 /events 运维轨迹并行。"""
+    try:
+        raw = await _evidence(
+            "GET",
+            f"/internal/tasks/{task_id}/reasoning-steps",
+            params={"limit": _limit(limit, 500)},
+        )
+        data = [
+            {
+                "traceId": e.get("trace_id"),
+                "taskId": e.get("task_id"),
+                "stepId": e.get("step_id"),
+                "stepType": e.get("step_type"),
+                "status": e.get("status"),
+                "startedAt": e.get("started_at"),
+                "finishedAt": e.get("finished_at"),
+                "durationMs": e.get("duration_ms"),
+                "summary": e.get("summary") or "",
+                "payload": e.get("payload") if isinstance(e.get("payload"), dict) else {},
+            }
+            for e in (raw or [])
+        ]
+    except Exception:
+        rows = _query(
+            """
+            SELECT task_id, trace_id, step_id, step_type, status,
+                   started_at, finished_at, duration_ms, summary, payload
+            FROM tg_reasoning_steps
+            WHERE task_id = %s
+            ORDER BY COALESCE(started_at, created_at) ASC, id ASC
+            LIMIT %s
+            """,
+            (task_id, _limit(limit, 500)),
+        )
+        data = [
+            {
+                "traceId": r.get("trace_id") or r.get("task_id"),
+                "taskId": r.get("task_id"),
+                "stepId": r.get("step_id"),
+                "stepType": r.get("step_type"),
+                "status": r.get("status"),
+                "startedAt": r.get("started_at") or "",
+                "finishedAt": r.get("finished_at") or "",
+                "durationMs": r.get("duration_ms"),
+                "summary": r.get("summary") or "",
+                "payload": _json_loads(r.get("payload")),
+            }
+            for r in rows
+        ]
+    return ok(data or [])
+
+
+@app.get("/api/v1/tasks/{task_id}/events/stream")
+async def task_events_stream(
+    task_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    conversationId: str | None = Query(default=None, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$"),
+) -> StreamingResponse:
+    if not _get_task_row(task_id):
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    def is_meaningful(item: dict[str, Any]) -> bool:
+        event_type = str(item.get("eventType") or "").upper()
+        return (
+            event_type.startswith("PHASE_")
+            or event_type.startswith("SKILL_")
+            or event_type.startswith("PLAN_")
+            or event_type in {
+                "KNOWLEDGE_INJECTED",
+                "LOOP_BREAK",
+                "TASK_PAUSED",
+                "TASK_RESUMED",
+                "EXECUTION_BLOCKED",
+            }
+        )
+
+    def event_payload(item: dict[str, Any]) -> dict[str, Any]:
+        payload = item.get("payload")
+        return payload if isinstance(payload, dict) else {}
+
+    def project_event(item: dict[str, Any]) -> dict[str, Any]:
+        payload = event_payload(item)
+        return {
+            "eventType": item.get("eventType"),
+            "sourceModule": item.get("sourceModule"),
+            "timestamp": item.get("timestamp"),
+            "phase": payload.get("phase") or payload.get("previous_phase"),
+            "skillId": payload.get("skill_id") or payload.get("skillId"),
+            "status": payload.get("status"),
+            "detail": str(
+                payload.get("message")
+                or payload.get("reason")
+                or payload.get("detail")
+                or payload.get("next_phase")
+                or ""
+            )[:300],
+        }
+
+    async def progress_reply(
+        task: dict[str, Any],
+        recent: list[dict[str, Any]],
+        total_steps: int,
+    ) -> dict[str, Any]:
+        phase = str(task.get("currentPhase") or "RECON")
+        completed_skills = list(OrderedDict.fromkeys(
+            str(event_payload(item).get("skill_id") or "")
+            for item in recent
+            if str(item.get("eventType") or "").upper() == "SKILL_COMPLETED"
+            and str(event_payload(item).get("skill_id") or "")
+        ))
+        blocked = any(
+            any(token in str(item.get("eventType") or "").upper() for token in ("FAILED", "BLOCK", "REJECT", "BUDGET"))
+            for item in recent
+        )
+        skill_text = "、".join(completed_skills[-4:]) if completed_skills else "阶段分析"
+        fallback = (
+            f"阶段性进度：当前处于 {phase}，累计记录 {total_steps} 个执行步骤。"
+            f"最近完成了 {skill_text}；{'存在阻塞或失败事件，正在调整后续计划' if blocked else '暂未形成可确认漏洞，正在继续验证'}。"
+        )
+        try:
+            summary = await _supervisor(
+                "POST",
+                "/v1/task-agent/progress-summary",
+                json_body={
+                    "taskId": task_id,
+                    "taskStatus": task.get("status") or "RUNNING",
+                    "currentPhase": phase,
+                    "totalSteps": total_steps,
+                    "recentEvents": [project_event(item) for item in recent[-20:]],
+                    "fallbackMessage": fallback,
+                },
+                actor_id=user.user_id,
+                timeout=15.0,
+            )
+            text = str((summary or {}).get("assistantMessage") or fallback)
+        except Exception:
+            log.exception("failed to generate task progress summary task_id=%s", task_id)
+            text = fallback
+        checkpoint = str(recent[-1].get("eventId") or hashlib.sha256(
+            _json_dumps(project_event(recent[-1])).encode()
+        ).hexdigest()[:20])
+        message = {
+            "id": f"task-{task_id}-progress-{checkpoint}"[:160],
+            "role": "assistant",
+            "text": text,
+            "activities": [],
+            "taskId": task_id,
+            "taskStatus": str(task.get("status") or "RUNNING"),
+            "createdAt": _now_iso(),
+        }
+        if conversationId:
+            try:
+                message = await _supervisor(
+                    "POST",
+                    f"/v1/conversations/{conversationId}/messages",
+                    json_body=message,
+                    actor_id=user.user_id,
+                    timeout=5.0,
+                )
+            except Exception:
+                log.exception("failed to persist task progress reply task_id=%s", task_id)
+        return message
+
+    async def events():
+        seen: set[str] = set()
+        seen_reasoning: set[str] = set()
+        last_state = ""
+        last_summary_phase = ""
+        pending_summary_events: list[dict[str, Any]] = []
+        first_poll = True
+        summary_steps = max(5, int(os.getenv("TASK_AGENT_PROGRESS_SUMMARY_STEPS") or "10"))
+        last_heartbeat = asyncio.get_running_loop().time()
+        while True:
+            event_response = await task_events(task_id, 500)
+            event_items = event_response.get("data") or []
+            for index, item in enumerate(event_items):
+                event_id = str(item.get("eventId") or f"{item.get('timestamp')}:{item.get('eventType')}:{index}")
+                if event_id in seen:
+                    continue
+                seen.add(event_id)
+                if is_meaningful(item):
+                    pending_summary_events.append(item)
+                yield _encode_sse("event", item)
+
+            # ReasoningStep is the durable, user-facing reasoning trace. Keep it
+            # parallel to operational TraceEvent instead of projecting one into
+            # the other, so audit semantics and replay remain unambiguous.
+            try:
+                reasoning_response = await task_reasoning_steps(task_id, 500)
+                reasoning_items = reasoning_response.get("data") or []
+            except Exception:
+                reasoning_items = []
+            for index, item in enumerate(reasoning_items):
+                step_id = str(item.get("stepId") or f"{item.get('startedAt')}:{item.get('stepType')}:{index}")
+                if step_id in seen_reasoning:
+                    continue
+                seen_reasoning.add(step_id)
+                yield _encode_sse("reasoning", item)
+
+            try:
+                state = await _orch("GET", f"/v1/orchestrator/tasks/{task_id}", timeout=5.0)
+                _sync_task_state(task_id, state)
+            except Exception:
+                pass
+            row = _get_task_row(task_id) or {}
+            task = _task_row_to_api(row)
+            state_signature = f"{task.get('status')}:{task.get('currentPhase')}"
+            if state_signature != last_state:
+                last_state = state_signature
+                yield _encode_sse("status", task)
+
+            if str(task.get("status") or "").upper() in {"DONE", "FAILED", "CANCELLED"}:
+                status = str(task.get("status") or "").upper()
+                phase = str(task.get("currentPhase") or "")
+                detail = ""
+                if status == "FAILED":
+                    for item in reversed(event_items):
+                        event_type = str(item.get("eventType") or "").upper()
+                        if "FAIL" not in event_type and "ERROR" not in event_type:
+                            continue
+                        payload = item.get("payload") or {}
+                        detail = str(payload.get("message") or payload.get("reason") or payload.get("detail") or "").strip()[:500]
+                        if detail:
+                            break
+                if status == "DONE":
+                    text = f"渗透测试任务 {task_id} 已完成。Pentest Workflow 已执行完毕，可以打开报告中心查看测试结果。"
+                elif status == "FAILED":
+                    text = f"渗透测试任务 {task_id} 执行失败，停止在 {phase or '当前'} 阶段。"
+                    if detail:
+                        text += f" 原因：{detail}"
+                    text += " 你可以查看执行轨迹定位失败步骤。"
+                else:
+                    text = f"渗透测试任务 {task_id} 已取消。"
+                terminal_message = {
+                    "id": f"task-{task_id}-terminal",
+                    "role": "assistant",
+                    "text": text,
+                    "activities": [],
+                    "taskId": task_id,
+                    "taskStatus": status,
+                    "createdAt": _now_iso(),
+                }
+                if conversationId:
+                    try:
+                        terminal_message = await _supervisor(
+                            "POST",
+                            f"/v1/conversations/{conversationId}/messages",
+                            json_body=terminal_message,
+                            actor_id=user.user_id,
+                            timeout=5.0,
+                        )
+                    except Exception:
+                        log.exception("failed to persist terminal task reply task_id=%s", task_id)
+                yield _encode_sse(
+                    "done",
+                    {"taskId": task_id, "status": status, "message": terminal_message},
+                )
+                return
+
+            phase = str(task.get("currentPhase") or "")
+            phase_changed = bool(last_summary_phase and phase and phase != last_summary_phase)
+            should_summarize = bool(pending_summary_events) and (
+                len(pending_summary_events) >= summary_steps
+                or phase_changed
+                or (first_poll and len(pending_summary_events) >= summary_steps)
+            )
+            if should_summarize:
+                message = await progress_reply(task, pending_summary_events, len(seen))
+                yield _encode_sse("assistant", message)
+                pending_summary_events = []
+            if phase:
+                last_summary_phase = phase
+            first_poll = False
+
+            now = asyncio.get_running_loop().time()
+            if now - last_heartbeat >= 15.0:
+                last_heartbeat = now
+                yield ": keep-alive\n\n"
+            await asyncio.sleep(1.5)
+
+    _record_audit("TASK_EVENT_STREAM_OPENED", user.user_id, task_id, "")
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.post("/api/v1/tasks/{task_id}/knowledge-chunks:batchGet", response_model=None)
@@ -537,8 +1205,21 @@ async def task_observation(task_id: str, artifactsSummaryLimit: int = 500) -> di
         "artifacts_summary": artifacts,
         "generated_at": _now_iso(),
     }
+    # ── FP 摘要：从 orchestrator 获取误报判定概况 ──
+    try:
+        fp = await _orch("GET", f"/v1/orchestrator/tasks/{task_id}/fp-findings", timeout=3.0)
+        data["fp_summary"] = {
+            "total": fp.get("total", 0),
+            "unverified": fp.get("unverified", 0),
+            "suspicious": fp.get("suspicious", 0),
+            "false_positives": fp.get("falsePositives", 0),
+            "true_positives": fp.get("truePositives", 0),
+            "inconclusive": fp.get("inconclusive", 0),
+            "false_positive_rate": fp.get("falsePositiveRate", 0.0),
+        }
+    except Exception:
+        pass
     return ok(data)
-
 
 @app.get("/api/v1/tasks/{task_id}/todos")
 async def task_todos(task_id: str) -> dict[str, Any]:
@@ -566,6 +1247,53 @@ async def task_full(task_id: str, events_limit: int = 100) -> dict[str, Any] | J
             "generatedAt": _now_iso(),
         }
     )
+
+
+# ── 误报追踪 API ────────────────────────────────────────
+
+@app.get("/api/v1/tasks/{task_id}/fp-findings", response_model=None)
+async def task_fp_findings(task_id: str) -> dict[str, Any] | JSONResponse:
+    """获取任务的 FP 判定汇总，代理到 orchestrator。"""
+    try:
+        data = await _orch("GET", f"/v1/orchestrator/tasks/{task_id}/fp-findings", timeout=5.0)
+    except Exception:
+        data = {
+            "taskId": task_id, "total": 0, "unverified": 0,
+            "falsePositives": 0, "truePositives": 0, "inconclusive": 0,
+            "falsePositiveRate": 0.0, "findings": [],
+        }
+    return ok(data)
+
+
+@app.post("/api/v1/tasks/{task_id}/fp-feedback", response_model=None)
+async def task_fp_feedback(
+    task_id: str,
+    fpId: str = Body(...),
+    humanVerdict: Literal["FALSE_POSITIVE", "TRUE_POSITIVE", "INCONCLUSIVE"] = Body(...),
+    feedback: str | None = Body(None),
+    _user: CurrentUser = Depends(require_roles("ADMIN", "OPERATOR")),
+) -> dict[str, Any] | JSONResponse:
+    """提交人工 FP 判定反馈，代理到 orchestrator。"""
+    try:
+        result = await _orch("POST", f"/v1/orchestrator/tasks/{task_id}/fp-feedback",
+                            json_body={"fpId": fpId, "humanVerdict": humanVerdict, "feedback": feedback},
+                            timeout=5.0)
+    except Exception as exc:
+        return fail(f"反馈提交失败: {exc}", code="ORCHESTRATOR_ERROR")
+    return ok(result)
+
+
+@app.post("/api/v1/tasks/{task_id}/fp-findings/deep-audit", response_model=None)
+async def task_fp_deep_audit(
+    task_id: str,
+    _user: CurrentUser = Depends(require_roles("ADMIN", "OPERATOR")),
+) -> dict[str, Any] | JSONResponse:
+    """触发 T2 深度离线审计，代理到 orchestrator。"""
+    try:
+        result = await _orch("POST", f"/v1/orchestrator/tasks/{task_id}/fp-findings:deep-audit", timeout=60.0)
+    except Exception as exc:
+        return fail(f"深度审计失败: {exc}", code="ORCHESTRATOR_ERROR")
+    return ok(result)
 
 
 def _read_payload(event: dict[str, Any]) -> dict[str, Any]:
@@ -761,6 +1489,69 @@ async def task_report(task_id: str) -> dict[str, Any] | JSONResponse:
         if isinstance(item, dict)
     ]
     exec_items = executions.get("executions") or executions.get("items") or []
+
+    # ── FP 数据注入：为每个 finding 标记误报判定状态 ──
+    fp_data = None
+    try:
+        fp_raw = await _orch("GET", f"/v1/orchestrator/tasks/{task_id}/fp-findings", timeout=3.0)
+        if isinstance(fp_raw, dict) and fp_raw.get("findings"):
+            fp_data = fp_raw
+    except Exception:
+        pass
+
+    # 为 findings 注入 fpVerdict（三级 fallback 匹配）
+    if fp_data:
+        fp_map: dict[str, str] = {}  # url → verdict
+        fp_records = fp_data.get("findings", [])
+        for fpr in fp_records:
+            url = (fpr.get("url") or "").strip()
+            verdict = (fpr.get("currentVerdict") or "").strip()
+            if url and verdict:
+                fp_map[url.lower()] = verdict
+        for finding in findings:
+            # Level 1: 字符串 evidence 精确匹配
+            raw = finding.get("evidence") or finding.get("url") or ""
+            if isinstance(raw, list):
+                raw = raw[0] if raw else ""
+            evidence = str(raw).strip().lower()
+            matched_verdict = fp_map.get(evidence)
+
+            # Level 2: URL 子串 + title 匹配
+            if not matched_verdict:
+                title = (finding.get("title") or "").lower()
+                for fp_url, fp_verdict in fp_map.items():
+                    if fp_url in evidence or evidence in fp_url or fp_url in title:
+                        matched_verdict = fp_verdict
+                        break
+
+            # Level 3: template_id 模糊匹配
+            if not matched_verdict:
+                title = (finding.get("title") or "").lower()
+                for fpr in fp_records:
+                    tid = (fpr.get("templateId") or "").lower()
+                    if tid and len(tid) > 10 and tid in title:
+                        matched_verdict = fpr.get("currentVerdict", "")
+                        break
+
+            finding["fpVerdict"] = matched_verdict or None
+
+    fp_summary = None
+    if fp_data:
+        from collections import Counter
+        vc = Counter(f.get("fpVerdict") for f in findings)
+        fp_c = vc.get("FALSE_POSITIVE", 0)
+        tp_c = vc.get("TRUE_POSITIVE", 0)
+        r = fp_c + tp_c
+        fp_summary = {
+            "totalFindings": len(findings),
+            "unverified": vc.get("UNVERIFIED", 0),
+            "suspicious": vc.get("SUSPICIOUS", 0),
+            "falsePositives": fp_c,
+            "truePositives": tp_c,
+            "inconclusive": vc.get("INCONCLUSIVE", 0),
+            "falsePositiveRate": round(fp_c / r, 4) if r > 0 else 0.0,
+        }
+
     report = {
         "taskId": task_id,
         "target": row.get("target") or "",
@@ -775,6 +1566,7 @@ async def task_report(task_id: str) -> dict[str, Any] | JSONResponse:
         "services": ctx.get("vulnerable_services", []) if isinstance(ctx, dict) else [],
         "severityHistogram": hist,
         "riskLevel": risk,
+        "fpSummary": fp_summary,
         "executions": [
             {
                 "phase": e.get("phase"),
