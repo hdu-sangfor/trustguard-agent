@@ -24,6 +24,14 @@ from app.models import TaskState
 
 logger = logging.getLogger(__name__)
 
+
+def _t2_max_tokens() -> int:
+    try:
+        configured = int(os.getenv("ORCH_FP_T2_MAX_TOKENS_PER_TASK", "10000"))
+    except ValueError:
+        configured = 10000
+    return max(512, min(configured, 32768))
+
 # ── 数据模型 ──────────────────────────────────────────────
 
 @dataclass
@@ -664,7 +672,7 @@ async def call_fp_t2_deep_audit(state: TaskState) -> dict[str, Any]:
                 {"role": "user", "content": user_msg},
             ],
             "temperature": 0,
-            "max_tokens": 2048,
+            "max_tokens": _t2_max_tokens(),
             "stream": False,
         }
         data = await _post_chat_completions_json(cfg, headers, payload)
@@ -750,7 +758,7 @@ async def call_fp_t2_deep_audit_db(task_id: str, records: list[dict[str, Any]]) 
         headers = _build_llm_headers(cfg)
         payload = {"model": cfg.model_id, "messages": [
             {"role": "system", "content": system_msg}, {"role": "user", "content": user_msg}
-        ], "temperature": 0, "max_tokens": 1024, "stream": False}
+        ], "temperature": 0, "max_tokens": _t2_max_tokens(), "stream": False}
         data = await _post_chat_completions_json(cfg, headers, payload)
         if data:
             choices = data.get("choices") or []

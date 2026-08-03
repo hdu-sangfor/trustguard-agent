@@ -168,6 +168,13 @@ services:
       TOOLS_REGISTRY_YAML: /app/tools_registry.yaml
       ORCH_TASK_STORE_BACKEND: redis
       ORCH_DEFAULT_RUN_MAX_DURATION_SECONDS: ${ORCH_DEFAULT_RUN_MAX_DURATION_SECONDS:-900}
+      ORCH_FP_T1_ENABLED: ${ORCH_FP_T1_ENABLED:-false}
+      ORCH_FP_T2_MAX_TOKENS_PER_TASK: ${ORCH_FP_T2_MAX_TOKENS_PER_TASK:-10000}
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: ${MYSQL_USER:-trustguard}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-trustguard}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-trustguard_agent}
       ORCH_MAX_PLAN_ROUNDS_PER_PHASE: "10"
       ORCH_PHASE_WALL_CLOCK_LIMIT_SEC: "300"
       TRUSTGUARD_AGENT_MODE: deterministic
@@ -197,6 +204,7 @@ services:
       - ./docker/tools_registry.yaml:/app/tools_registry.yaml:ro
       - workspace:/data/workspace
     depends_on:
+      mysql: { condition: service_healthy }
       evidence: { condition: service_healthy }
       executor: { condition: service_started }
       redis: { condition: service_healthy }

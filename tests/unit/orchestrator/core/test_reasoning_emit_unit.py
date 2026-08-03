@@ -20,7 +20,7 @@ for _name in list(sys.modules):
     if _name == "app" or _name.startswith("app."):
         del sys.modules[_name]
 
-from app.core.reasoning_emit import emit_cot_step  # noqa: E402
+from app.core import reasoning_emit  # noqa: E402
 from app.reasoning_steps import (  # noqa: E402
     STEP_TYPES,
     is_valid_step_type,
@@ -41,9 +41,12 @@ async def test_emit_cot_step_redacts_token_in_payload():
     async def _capture(step):
         captured.append(step)
 
-    with patch("app.core.reasoning_emit.emit_reasoning_step", side_effect=_capture):
-        with patch("app.core.reasoning_emit.trace_redact_sensitive_enabled", return_value=True):
-            await emit_cot_step(
+    # Other service-isolation tests remove ``app.*`` from sys.modules. Patch
+    # the module object collected by this test instead of resolving the dotted
+    # path again, which could otherwise patch a newly imported copy.
+    with patch.object(reasoning_emit, "emit_reasoning_step", side_effect=_capture):
+        with patch.object(reasoning_emit, "trace_redact_sensitive_enabled", return_value=True):
+            await reasoning_emit.emit_cot_step(
                 task_id="task-1",
                 step_type="TOOL_CALL",
                 status="SUCCEEDED",
@@ -61,6 +64,6 @@ async def test_emit_cot_step_redacts_token_in_payload():
 
 @pytest.mark.asyncio
 async def test_emit_cot_step_skips_invalid_type():
-    with patch("app.core.reasoning_emit.emit_reasoning_step", new_callable=AsyncMock) as m:
-        await emit_cot_step(task_id="task-1", step_type="NOPE", status="SUCCEEDED")
+    with patch.object(reasoning_emit, "emit_reasoning_step", new_callable=AsyncMock) as m:
+        await reasoning_emit.emit_cot_step(task_id="task-1", step_type="NOPE", status="SUCCEEDED")
         m.assert_not_called()

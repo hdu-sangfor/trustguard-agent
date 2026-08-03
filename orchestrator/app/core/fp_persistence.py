@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+from datetime import datetime, timezone
+from threading import Lock
 from typing import Any
 
 import pymysql
@@ -22,6 +24,34 @@ MYSQL_PORT = int(os.getenv("MYSQL_PORT", "3306"))
 MYSQL_USER = os.getenv("MYSQL_USER", "trustguard")
 MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "trustguard")
 MYSQL_DATABASE = os.getenv("MYSQL_DATABASE", "trustguard_agent")
+
+_SCHEMA_READY = False
+_SCHEMA_LOCK = Lock()
+_CREATE_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS tg_fp_findings (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    fp_id VARCHAR(64) NOT NULL,
+    task_id VARCHAR(64) NOT NULL,
+    finding_signature VARCHAR(64) NOT NULL,
+    template_id VARCHAR(255),
+    url VARCHAR(2048),
+    title VARCHAR(512),
+    severity VARCHAR(32),
+    source_skill_id VARCHAR(128),
+    source_phase VARCHAR(32),
+    current_verdict VARCHAR(32) NOT NULL DEFAULT 'UNVERIFIED',
+    verification_source VARCHAR(32),
+    verification_reasoning TEXT,
+    detected_at DATETIME NOT NULL,
+    verified_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_fp_id (fp_id),
+    INDEX idx_task_id (task_id),
+    INDEX idx_verdict (current_verdict),
+    INDEX idx_template_id (template_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+"""
 
 
 def _conn():
@@ -50,9 +80,22 @@ def _query(sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
             return list(cur.fetchall() or [])
 
 
+def _ensure_schema() -> None:
+    """Create the FP table for upgraded deployments whose MySQL volume already exists."""
+    global _SCHEMA_READY
+    if _SCHEMA_READY:
+        return
+    with _SCHEMA_LOCK:
+        if _SCHEMA_READY:
+            return
+        _execute(_CREATE_SCHEMA_SQL)
+        _SCHEMA_READY = True
+
+
 def upsert_fp_record(record: dict[str, Any]) -> None:
     """写入或更新一条 FP 记录到 tg_fp_findings 表。"""
     try:
+        _ensure_schema()
         _execute(
             """
             INSERT INTO tg_fp_findings
@@ -91,6 +134,7 @@ def upsert_fp_record(record: dict[str, Any]) -> None:
 def load_fp_records(task_id: str) -> list[dict[str, Any]]:
     """从 MySQL 加载指定任务的所有 FP 记录。"""
     try:
+        _ensure_schema()
         return _query(
             """
             SELECT fp_id, task_id, finding_signature, template_id, url, title, severity,
@@ -111,7 +155,17 @@ def _to_dt(val: Any) -> Any:
     """确保 DATETIME 值可被 MySQL 接受；空字符串和 None 转为 NULL。"""
     if not val:
         return None
-    return str(val)
+    if isinstance(val, datetime):
+        parsed = val
+    else:
+        text = str(val).strip()
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return text
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
 
 
 def build_summary_from_db(task_id: str, records: list[dict[str, Any]]) -> dict[str, Any]:
