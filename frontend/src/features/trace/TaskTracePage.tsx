@@ -20,6 +20,7 @@ import {
   type ApiFPFindingsResponse, type ApiFPFinding,
 } from "@/shared/lib/api";
 import { readStoredOrbitTasks } from "@/shared/constants/orbitTasksStorage";
+import { elapsedForStatus, parseTimestampMs } from "@/shared/lib/time";
 
 // ─── FP 工具 ────────────────────────────────────────────────────────────────
 function _verdictLabel(v: string): string {
@@ -673,15 +674,22 @@ export default function TaskTracePage() {
 
   const elapsed = (() => {
     if (!task?.createdAt) return null;
-    const end = (task.status === "DONE" || task.status === "FAILED" || task.status === "CANCELLED")
-      ? new Date(task.updatedAt || task.createdAt).getTime()
-      : Date.now();
-    const secs = Math.floor((end - new Date(task.createdAt).getTime()) / 1000);
-    if (secs < 0) return null;
-    if (secs < 60) return `${secs}s`;
-    const mins = Math.floor(secs / 60);
-    if (mins < 60) return `${mins}m ${secs % 60}s`;
-    return `${Math.floor(mins / 60)}h ${mins % 60}m`;
+    const createdAt = parseTimestampMs(task.createdAt);
+    if (createdAt == null) return null;
+    const status = task.status === "DONE"
+      ? "finished"
+      : task.status === "FAILED" || task.status === "CANCELLED"
+        ? "failed"
+        : task.status === "PAUSED"
+          ? "paused"
+          : task.status === "RUNNING"
+            ? "running"
+            : "not_started";
+    return elapsedForStatus({
+      createdAt,
+      updatedAt: parseTimestampMs(task.updatedAt) ?? undefined,
+      status,
+    }) || null;
   })();
 
   const phaseColor = task?.currentPhase ? (PHASE_COLORS[task.currentPhase] ?? "#64748b") : "#64748b";

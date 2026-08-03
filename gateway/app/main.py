@@ -148,18 +148,33 @@ def _sync_task_state(task_id: str, state: dict[str, Any] | None) -> None:
         status = None
     if phase not in PHASE_ORDER:
         phase = None
-    if status or phase:
-        parts: list[str] = []
-        params: list[Any] = []
-        if status:
-            parts.append("status = %s")
-            params.append(status)
-        if phase:
-            parts.append("current_phase = %s")
-            params.append(phase)
-        parts.append("updated_at = NOW()")
-        params.append(task_id)
-        _execute(f"UPDATE tg_task SET {', '.join(parts)} WHERE task_id = %s", tuple(params))
+    if not (status or phase):
+        return
+
+    # This function runs while the UI polls task state.  Updating updated_at on
+    # every read turns it into a heartbeat, which makes completed/failed task
+    # durations keep growing.  Only stamp it when persisted task state changes.
+    row = _get_task_row(task_id)
+    if not row:
+        return
+    current_status = str(row.get("status") or "").upper()
+    current_phase = str(row.get("current_phase") or "").upper()
+    status_changed = status is not None and status != current_status
+    phase_changed = phase is not None and phase != current_phase
+    if not (status_changed or phase_changed):
+        return
+
+    parts: list[str] = []
+    params: list[Any] = []
+    if status_changed:
+        parts.append("status = %s")
+        params.append(status)
+    if phase_changed:
+        parts.append("current_phase = %s")
+        params.append(phase)
+    parts.append("updated_at = NOW()")
+    params.append(task_id)
+    _execute(f"UPDATE tg_task SET {', '.join(parts)} WHERE task_id = %s", tuple(params))
 
 
 async def _orch(method: str, path: str, *, json_body: Any = None, params: dict[str, Any] | None = None, headers: dict[str, str] | None = None, timeout: float = 30.0) -> Any:
