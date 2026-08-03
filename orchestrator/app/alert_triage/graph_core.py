@@ -620,11 +620,18 @@ async def validate_decision(state: TriageState) -> TriageState:
     if verdict not in valid_verdicts:
         errors.append(f"invalid verdict: {verdict}")
         raw["verdict"] = "insufficient_evidence"
+        verdict = "insufficient_evidence"
 
-    confidence = float(raw.get("confidence") or 0)
+    try:
+        confidence = float(raw.get("confidence") or 0)
+    except (TypeError, ValueError):
+        errors.append(f"invalid confidence type: {raw.get('confidence')!r}")
+        confidence = 0.3
+        raw["confidence"] = confidence
     if not (0.0 <= confidence <= 1.0):
         errors.append(f"invalid confidence: {confidence}")
-        raw["confidence"] = 0.3
+        confidence = 0.3
+        raw["confidence"] = confidence
 
     severity = str(raw.get("severity") or "medium").strip().lower()
     valid_severities = {"critical", "high", "medium", "low", "info"}
@@ -635,11 +642,13 @@ async def validate_decision(state: TriageState) -> TriageState:
     missing = state.get("missing_evidence", [])
     if missing and confidence > 0.5:
         errors.append(f"confidence {confidence} too high with missing evidence {missing}")
-        raw["confidence"] = 0.4
+        confidence = 0.4
+        raw["confidence"] = confidence
 
     if verdict == "insufficient_evidence" and confidence > 0.5:
         errors.append(f"insufficient_evidence with confidence {confidence} > 0.5")
-        raw["confidence"] = 0.4
+        confidence = 0.4
+        raw["confidence"] = confidence
 
     # 3) 建议动作 execution_level 校验
     actions = raw.get("recommended_actions") or []
@@ -1106,5 +1115,15 @@ async def run_alert_triage(req: dict[str, Any]) -> dict[str, Any]:
         "result": final.get("result"),
         "error": final.get("error"),
         "warnings": final.get("warnings", []),
+        "validation_errors": final.get("validation_errors", []),
+        "enable_rag": final.get("enable_rag", True),
+        "created_at": req.get("created_at", ""),
+        "started_at": final.get("started_at", ""),
+        "finished_at": final.get("finished_at", ""),
+        "alert": final.get("alert"),
+        "whitelist_matches": final.get("whitelist_matches", []),
+        "related_incidents": final.get("related_incidents", []),
+        "rag_degraded": bool(final.get("rag_degraded", False)),
+        "rag_response": final.get("rag_response"),
         "trace_events": final.get("trace_events", []),
     }

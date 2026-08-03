@@ -206,6 +206,17 @@ class TestValidateDecision:
         actions = result["raw_decision"]["recommended_actions"]
         assert actions[0]["execution_level"] == "manual_confirm"
 
+    @pytest.mark.asyncio
+    async def test_non_numeric_confidence_is_degraded_instead_of_crashing(self):
+        state = _base_state(raw_decision={
+            "verdict": "suspicious",
+            "confidence": "high",
+            "severity": "medium",
+        })
+        result = await validate_decision(state)
+        assert result["raw_decision"]["confidence"] == 0.3
+        assert any("invalid confidence type" in error for error in result["validation_errors"])
+
 
 class TestRouting:
     def test_route_after_load_failed(self):

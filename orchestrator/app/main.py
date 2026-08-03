@@ -11,7 +11,7 @@ import asyncio
 import random
 import time
 from contextlib import asynccontextmanager, suppress
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Annotated, Any
 from urllib.parse import quote, urlparse
 
@@ -2016,6 +2016,28 @@ if __name__ == "__main__":
 
 # Alert Triage in-memory store
 _alert_triage_results: dict[str, dict[str, Any]] = {}
+_ALERT_TRIAGE_CONTEXT_KEY = "alert_triage"
+
+
+async def _persist_alert_triage_task(task_data: dict[str, Any]) -> None:
+    """Persist alert-triage state so completed reports survive an orchestrator restart."""
+    task_id = str(task_data.get("task_id") or "")
+    if not task_id:
+        return
+    from app.clients.evidence_client import put_context
+
+    await put_context(task_id, {_ALERT_TRIAGE_CONTEXT_KEY: task_data})
+
+
+async def _load_persisted_alert_triage_task(task_id: str) -> dict[str, Any] | None:
+    """Restore one alert-triage task from the shared Evidence context store."""
+    from app.clients.evidence_client import get_context
+
+    context = await get_context(task_id)
+    task_data = context.get(_ALERT_TRIAGE_CONTEXT_KEY)
+    if not isinstance(task_data, dict) or task_data.get("task_id") != task_id:
+        return None
+    return task_data
 
 
 # ── Alert Triage Routes ──────────────────────────────────────────────
@@ -2040,8 +2062,9 @@ async def alert_triage_create_task(payload: _AlertTriageCreatePayload) -> dict[s
         "strategy_params": payload.strategy_params,
         "caller_notes": payload.caller_notes,
         "status": "PENDING",
-        "created_at": datetime.now().isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
+    await _persist_alert_triage_task(_alert_triage_results[task_id])
     logger.info("alert triage task created task_id=%s alert_uuid=%s", task_id, payload.alert_uuid)
     return {"task_id": task_id, "alert_uuid": payload.alert_uuid, "status": "PENDING"}
 
@@ -2050,6 +2073,10 @@ async def alert_triage_create_task(payload: _AlertTriageCreatePayload) -> dict[s
 async def alert_triage_get_task(task_id: str) -> dict[str, Any]:
     data = _alert_triage_results.get(task_id)
     if data is None:
+        data = await _load_persisted_alert_triage_task(task_id)
+        if data is not None:
+            _alert_triage_results[task_id] = data
+    if data is None:
         raise HTTPException(status_code=404, detail=f"alert triage task not found: {task_id}")
     return data
 
@@ -2057,19 +2084,24 @@ async def alert_triage_get_task(task_id: str) -> dict[str, Any]:
 @app.post("/v1/orchestrator/alert-triage/tasks/{task_id}/run")
 async def alert_triage_run_task(task_id: str) -> dict[str, Any]:
     if task_id not in _alert_triage_results:
+        persisted = await _load_persisted_alert_triage_task(task_id)
+        if persisted is not None:
+            _alert_triage_results[task_id] = persisted
+    if task_id not in _alert_triage_results:
         raise HTTPException(status_code=404, detail=f"alert triage task not found: {task_id}")
 
     task_data = _alert_triage_results[task_id]
     task_data["status"] = "RUNNING"
+    await _persist_alert_triage_task(task_data)
 
     try:
-        import asyncio as _asyncio
         result = await run_alert_triage(task_data)
         _alert_triage_results[task_id] = {
             **task_data,
             **result,
             "status": result.get("status", "FAILED"),
         }
+        await _persist_alert_triage_task(_alert_triage_results[task_id])
         return _alert_triage_results[task_id]
     except Exception as exc:
         logger.exception("alert triage run failed task_id=%s", task_id)
@@ -2078,4 +2110,5 @@ async def alert_triage_run_task(task_id: str) -> dict[str, Any]:
             "status": "FAILED",
             "error": str(exc),
         }
+        await _persist_alert_triage_task(_alert_triage_results[task_id])
         return _alert_triage_results[task_id]
