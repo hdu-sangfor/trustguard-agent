@@ -92,7 +92,7 @@ def _ensure_schema() -> None:
         _SCHEMA_READY = True
 
 
-def upsert_fp_record(record: dict[str, Any]) -> None:
+def upsert_fp_record(record: dict[str, Any], *, raise_on_error: bool = False) -> bool:
     """写入或更新一条 FP 记录到 tg_fp_findings 表。"""
     try:
         _ensure_schema()
@@ -127,8 +127,13 @@ def upsert_fp_record(record: dict[str, Any]) -> None:
                 _to_dt(record.get("verified_at")),
             ),
         )
+        return True
     except Exception:
-        logger.debug("fp_persistence: upsert failed for %s", record.get("fp_id"))
+        if raise_on_error:
+            logger.exception("fp_persistence: upsert failed for %s", record.get("fp_id"))
+            raise
+        logger.debug("fp_persistence: upsert failed for %s", record.get("fp_id"), exc_info=True)
+        return False
 
 
 def load_fp_records(task_id: str) -> list[dict[str, Any]]:

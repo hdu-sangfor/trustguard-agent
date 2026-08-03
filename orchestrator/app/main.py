@@ -1454,50 +1454,62 @@ async def get_fp_findings(task_id: str) -> dict[str, Any]:
 async def submit_fp_feedback(task_id: str, req: FPFeedbackRequest) -> dict[str, Any]:
     """提交人工 FP 判定反馈。"""
     state = _TASKS.get(task_id)
-    if state is None:
-        raise HTTPException(status_code=404, detail="task not found")
+    if state is not None and not isinstance(state.target_context, dict):
+        state.target_context = {}
+    ctx = state.target_context if state is not None else {}
+    records = ctx.get("_fp_records") if isinstance(ctx, dict) else None
+    memory_records = records if isinstance(records, list) else []
+    matched = next((record for record in memory_records if record.get("fp_id") == req.fpId), None)
 
-    ctx = state.target_context or {}
-    records = ctx.get("_fp_records")
-    if not isinstance(records, list):
-        raise HTTPException(status_code=404, detail="no fp records for this task")
+    # Completed tasks may no longer have a TaskState after Orchestrator restarts.
+    # The review UI still loads their findings from MySQL, so feedback must use
+    # the same durable fallback instead of failing solely on missing hot state.
+    if matched is None:
+        from app.core.fp_persistence import load_fp_records
 
-    matched = None
-    for r in records:
-        if r.get("fp_id") == req.fpId:
-            matched = r
-            break
+        persisted_records = load_fp_records(task_id)
+        persisted = next((record for record in persisted_records if record.get("fp_id") == req.fpId), None)
+        if persisted is not None:
+            matched = dict(persisted)
+            if state is not None:
+                if not isinstance(records, list):
+                    state.target_context["_fp_records"] = memory_records
+                memory_records.append(matched)
     if matched is None:
         raise HTTPException(status_code=404, detail=f"fp record {req.fpId} not found")
 
     old_verdict = matched.get("current_verdict")
-    matched["current_verdict"] = req.humanVerdict
-    matched["verification_source"] = "HUMAN"
+    updated = dict(matched)
+    updated["current_verdict"] = req.humanVerdict
+    updated["verification_source"] = "HUMAN"
     if req.feedback:
-        matched["verification_reasoning"] = req.feedback
+        updated["verification_reasoning"] = req.feedback
     from datetime import datetime, timezone
-    matched["verified_at"] = datetime.now(timezone.utc).isoformat()
+    updated["verified_at"] = datetime.now(timezone.utc).isoformat()
 
     # ── 同步 MySQL + Qdrant KB ──
     try:
         from app.core.fp_persistence import upsert_fp_record
-        upsert_fp_record(dict(matched))
-    except Exception:
-        pass
+
+        upsert_fp_record(updated, raise_on_error=True)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="failed to persist FP feedback") from exc
+    matched.update(updated)
     try:
         from app.core.fp_tracker import upsert_to_fp_kb
-        await upsert_to_fp_kb(dict(matched))
+        await upsert_to_fp_kb(updated)
     except Exception:
         pass
 
     # 写入 confirmed_facts 作为人类校正记录
-    fact = f"[HumanCorrected_{req.humanVerdict}] {req.fpId}: {matched.get('template_id')} on {matched.get('url')}"
-    if req.feedback:
-        fact += f" — {req.feedback}"
-    existing = [str(x).strip() for x in (state.confirmed_facts or []) if isinstance(x, str) and x.strip()]
-    if fact not in existing:
-        existing.append(fact)
-        state.confirmed_facts = existing[-120:]
+    if state is not None:
+        fact = f"[HumanCorrected_{req.humanVerdict}] {req.fpId}: {matched.get('template_id')} on {matched.get('url')}"
+        if req.feedback:
+            fact += f" — {req.feedback}"
+        existing = [str(x).strip() for x in (state.confirmed_facts or []) if isinstance(x, str) and x.strip()]
+        if fact not in existing:
+            existing.append(fact)
+            state.confirmed_facts = existing[-120:]
 
     # 发射 trace event
     try:

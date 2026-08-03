@@ -1,7 +1,7 @@
 import json
 import os
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 from collections import deque
 
 from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
@@ -303,7 +303,7 @@ class FPFindingsResponse(BaseModel):
 class FPFeedbackRequest(BaseModel):
     """人工 FP 反馈的请求体。"""
     fpId: str
-    humanVerdict: str                # FALSE_POSITIVE | TRUE_POSITIVE | INCONCLUSIVE
+    humanVerdict: Literal["FALSE_POSITIVE", "TRUE_POSITIVE", "INCONCLUSIVE"]
     feedback: str | None = None
 
 

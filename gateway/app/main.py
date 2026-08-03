@@ -11,7 +11,7 @@ import sys
 import uuid
 from collections import Counter, OrderedDict
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 import httpx
@@ -1269,8 +1269,9 @@ async def task_fp_findings(task_id: str) -> dict[str, Any] | JSONResponse:
 async def task_fp_feedback(
     task_id: str,
     fpId: str = Body(...),
-    humanVerdict: str = Body(...),
+    humanVerdict: Literal["FALSE_POSITIVE", "TRUE_POSITIVE", "INCONCLUSIVE"] = Body(...),
     feedback: str | None = Body(None),
+    _user: CurrentUser = Depends(require_roles("ADMIN", "OPERATOR")),
 ) -> dict[str, Any] | JSONResponse:
     """提交人工 FP 判定反馈，代理到 orchestrator。"""
     try:
@@ -1283,7 +1284,10 @@ async def task_fp_feedback(
 
 
 @app.post("/api/v1/tasks/{task_id}/fp-findings/deep-audit", response_model=None)
-async def task_fp_deep_audit(task_id: str) -> dict[str, Any] | JSONResponse:
+async def task_fp_deep_audit(
+    task_id: str,
+    _user: CurrentUser = Depends(require_roles("ADMIN", "OPERATOR")),
+) -> dict[str, Any] | JSONResponse:
     """触发 T2 深度离线审计，代理到 orchestrator。"""
     try:
         result = await _orch("POST", f"/v1/orchestrator/tasks/{task_id}/fp-findings:deep-audit", timeout=60.0)
