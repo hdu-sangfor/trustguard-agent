@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.clients.trace_client import emit_trace
+from app.core.reasoning_emit import emit_cot_step
 from app.knowledge.config import KnowledgeMcpSettings
 from app.knowledge.gateway import KnowledgeGateway, get_knowledge_gateway
 from app.knowledge.materializer import materialize_knowledge_hit
@@ -143,6 +144,20 @@ async def run_penetration_knowledge_search(
                 "shadow": active.shadow_mode,
             },
         )
+        await emit_cot_step(
+            task_id=task_id,
+            step_type="RAG_RETRIEVAL",
+            status="FAILED",
+            summary=f"Knowledge MCP search failed: {error.code if error else 'MCP_UNEXPECTED_ERROR'}",
+            payload={
+                "phase": phase,
+                "scope": active.scope.value,
+                "request_id": request_id,
+                "code": error.code if error else "MCP_UNEXPECTED_ERROR",
+                "shadow": active.shadow_mode,
+            },
+            source_module="orchestrator.knowledge",
+        )
         return
 
     hit_summaries = [
@@ -224,6 +239,21 @@ async def run_penetration_knowledge_search(
         "shadow": active.shadow_mode,
     }
     await _emit(trace_emitter, task_id, "MCP_TOOL_CALLED", payload)
+    await emit_cot_step(
+        task_id=task_id,
+        step_type="RAG_RETRIEVAL",
+        status="SUCCEEDED",
+        summary=f"Knowledge MCP search: {len(hit_summaries)} hit(s)",
+        payload={
+            "phase": phase,
+            "scope": response.scope,
+            "request_id": response.request_id,
+            "hit_count": len(hit_summaries),
+            "chunk_ids": chunk_ids[:32],
+            "shadow": active.shadow_mode,
+        },
+        source_module="orchestrator.knowledge",
+    )
     if active.materialize_enabled:
         await _emit(
             trace_emitter,

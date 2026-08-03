@@ -34,6 +34,7 @@ from app.models import (
 from app.clients.llm_client import LLMCallFailed, call_plan_list_decision_engine
 from app.clients.executor_client import fetch_skills_for_phase
 from app.clients.trace_client import emit_trace
+from app.core.reasoning_emit import emit_cot_step
 from app.clients.evidence_client import put_context, put_artifacts_summary
 from app.core.loop_guard import canonical_params, artifact_hash, update_loop_guard
 from app.core.workspace_store import write_artifact, write_task_context
@@ -540,6 +541,24 @@ async def _emit(event: TraceEvent) -> None:
     await emit_trace(event)
 
 
+async def _emit_final_conclusion_cot(state: TaskState, *, reason: str | None = None) -> None:
+    payload: Dict[str, Any] = {
+        "final_status": state.status.value,
+        "phase": state.current_phase.value,
+    }
+    if reason:
+        payload["reason"] = reason
+    await emit_cot_step(
+        task_id=state.task_id,
+        step_type="FINAL_CONCLUSION",
+        status="SUCCEEDED" if state.status == TaskStatus.DONE else "FAILED",
+        summary=f"Task {state.status.value}" + (f": {reason}" if reason else ""),
+        payload=payload,
+        started_at=_ts(),
+        finished_at=_ts(),
+    )
+
+
 def _ts() -> str:
     return datetime.utcnow().isoformat() + "Z"
 
@@ -850,6 +869,20 @@ async def _handle_plan_list_decision_path(
             source_module="orchestrator",
             payload=payload,
         )
+    )
+    await emit_cot_step(
+        task_id=state.task_id,
+        step_type="TASK_PLANNING",
+        status="SUCCEEDED",
+        summary=f"PlanList persisted: {n_items} item(s), batch_id={plan_list.batch_id!r}",
+        payload={
+            "phase": state.current_phase.value,
+            "batch_id": plan_list.batch_id,
+            "item_count": n_items,
+            "skill_ids": skill_ids,
+        },
+        started_at=_ts(),
+        finished_at=_ts(),
     )
     note = (
         f"\n[PLAN_LIST] Persisted {n_items} plan item(s) "
@@ -1424,6 +1457,21 @@ async def _run_actions_and_merge_results(
                 run_started_at=started_ts,
             )
         )
+        await emit_cot_step(
+            task_id=state.task_id,
+            step_type="TOOL_CALL",
+            status="RUNNING",
+            summary=f"Invoke skill {resolved_skill_id}",
+            payload={
+                "phase": state.current_phase.value,
+                "tool_name": resolved_skill_id,
+                "target": target,
+                "params": params,
+                "request_id": call_ctx.request_id,
+            },
+            started_at=started_ts,
+            source_module="orchestrator",
+        )
         executor_request_payload: Dict[str, Any] = {
             "phase": state.current_phase.value,
             "skill_id": resolved_skill_id,
@@ -1486,6 +1534,20 @@ async def _run_actions_and_merge_results(
                     source_module="orchestrator",
                     payload=skipped,
                 )
+            )
+            await emit_cot_step(
+                task_id=state.task_id,
+                step_type="RESULT_OBSERVATION",
+                status="SKIPPED",
+                summary=f"Skill {ctx.skill_id} skipped (executor disabled)",
+                payload={
+                    "phase": state.current_phase.value,
+                    "tool_name": ctx.skill_id,
+                    "status": "SKIPPED_EXECUTOR_DISABLED",
+                    "request_id": ctx.request_id,
+                },
+                started_at=_ts(),
+                finished_at=_ts(),
             )
             state.coverage_attempted.append(
                 {
@@ -1598,6 +1660,33 @@ async def _run_actions_and_merge_results(
                 run_finished_at=finished_ts,
                 run_duration_ms=duration_ms if duration_ms is not None and duration_ms >= 0 else None,
             )
+        )
+        obs_status = "SUCCEEDED"
+        status_u = str(effective_status or "").strip().upper()
+        if status_u in {"FAILED", "TIMEOUT", "ERROR"}:
+            obs_status = "FAILED"
+        elif status_u.startswith("SKIPPED"):
+            obs_status = "SKIPPED"
+        artifact_preview = ""
+        try:
+            artifact_preview = json.dumps(resolved_artifacts or {}, ensure_ascii=False)[:800]
+        except (TypeError, ValueError):
+            artifact_preview = str(resolved_artifacts)[:800]
+        await emit_cot_step(
+            task_id=state.task_id,
+            step_type="RESULT_OBSERVATION",
+            status=obs_status,
+            summary=f"Skill {ctx.skill_id} finished: {effective_status}",
+            payload={
+                "phase": state.current_phase.value,
+                "tool_name": ctx.skill_id,
+                "status": effective_status,
+                "request_id": ctx.request_id,
+                "result_summary": artifact_preview,
+            },
+            started_at=call_started_ts[i] if i < len(call_started_ts) else finished_ts,
+            finished_at=finished_ts,
+            duration_ms=duration_ms if duration_ms is not None and duration_ms >= 0 else None,
         )
         exec_result = applied.get("exec_result")
         executor_response_payload: Dict[str, Any] = {
@@ -1761,6 +1850,7 @@ async def _run_actions_and_merge_results(
                         payload={"final_status": state.status.value, "reason": "loop break finish"},
                     )
                 )
+                await _emit_final_conclusion_cot(state, reason="loop break finish")
     state.updated_at = datetime.utcnow()
 
     return effective_status_by_skill
@@ -1943,6 +2033,7 @@ async def tick(state: TaskState, *, enable_executor: bool) -> None:
                 payload={"final_status": state.status.value},
             )
         )
+        await _emit_final_conclusion_cot(state)
         return
 
     # RUNNING 且非 REPORT：先注入聚类/路径轮廓，再跑 THREAT_MODEL 框架硬规则（硬规则可消费 asset_path_profile）
@@ -2312,6 +2403,7 @@ async def tick_manager(
                 payload={"final_status": state.status.value},
             )
         )
+        await _emit_final_conclusion_cot(state)
         return
 
     # RUNNING 且非 REPORT：维护 TodoList，注入当前 Todo，再决策
