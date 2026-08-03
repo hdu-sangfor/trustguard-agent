@@ -1493,6 +1493,12 @@ html[data-theme="light"] .task-agent-page {
   overflow: hidden;
 }
 
+.task-agent-activity-list + .task-agent-activity-list {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--tg-panel-border);
+}
+
 .task-agent-activity-header {
   width: 100%;
   display: flex;

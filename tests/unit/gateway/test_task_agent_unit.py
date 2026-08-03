@@ -219,6 +219,20 @@ async def test_task_event_stream_emits_event_status_and_done(monkeypatch):
             "payload": {"phase": "RECON"},
         }]}
 
+    async def fake_reasoning(_task_id, _limit):
+        return {"data": [{
+            "traceId": "task-1",
+            "taskId": "task-1",
+            "stepId": "rst-1",
+            "stepType": "TASK_PLANNING",
+            "status": "SUCCEEDED",
+            "startedAt": "2026-08-02T00:00:00Z",
+            "finishedAt": "2026-08-02T00:00:01Z",
+            "durationMs": 1000,
+            "summary": "已完成任务规划",
+            "payload": {},
+        }]}
+
     async def fake_orch(*_args, **_kwargs):
         return {"taskId": "task-1", "status": "DONE", "currentPhase": "DONE"}
 
@@ -230,6 +244,7 @@ async def test_task_event_stream_emits_event_status_and_done(monkeypatch):
 
     monkeypatch.setattr(gw, "_get_task_row", fake_row)
     monkeypatch.setattr(gw, "task_events", fake_events)
+    monkeypatch.setattr(gw, "task_reasoning_steps", fake_reasoning)
     monkeypatch.setattr(gw, "_orch", fake_orch)
     monkeypatch.setattr(gw, "_sync_task_state", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(gw, "_supervisor", fake_supervisor)
@@ -239,6 +254,8 @@ async def test_task_event_stream_emits_event_status_and_done(monkeypatch):
     body = b"".join([chunk.encode() if isinstance(chunk, str) else chunk async for chunk in response.body_iterator])
 
     assert b"event: event" in body
+    assert b"event: reasoning" in body
+    assert b"rst-1" in body
     assert b"event: status" in body
     assert b"event: done" in body
     assert b"task-task-1-terminal" in body
@@ -269,6 +286,9 @@ async def test_task_event_stream_emits_and_persists_periodic_assistant_reply(mon
             "payload": {"phase": "VULN_SCAN", "skill_id": f"skill-{index}", "status": "SUCCESS"},
         } for index in range(10)]}
 
+    async def fake_reasoning(_task_id, _limit):
+        return {"data": []}
+
     async def fake_supervisor(_method, path, **kwargs):
         if path == "/v1/task-agent/progress-summary":
             return {"assistantMessage": "已完成一批扫描步骤，正在继续验证。"}
@@ -279,6 +299,7 @@ async def test_task_event_stream_emits_and_persists_periodic_assistant_reply(mon
 
     monkeypatch.setattr(gw, "_get_task_row", fake_row)
     monkeypatch.setattr(gw, "task_events", fake_events)
+    monkeypatch.setattr(gw, "task_reasoning_steps", fake_reasoning)
     monkeypatch.setattr(gw, "_orch", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(gw, "_sync_task_state", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(gw, "_supervisor", fake_supervisor)

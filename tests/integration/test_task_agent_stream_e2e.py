@@ -121,6 +121,13 @@ def test_compose_task_agent_stream_confirmation_and_task_events(gateway_url: str
         assert summary["messageCount"] >= 3
         assert summary["title"].startswith("请对 https://test.example.com")
 
+        reasoning = client.get(
+            f"{gateway_url}/api/v1/tasks/{task_id}/reasoning-steps?limit=20",
+            headers=headers,
+        )
+        assert reasoning.status_code == 200, reasoning.text
+        assert isinstance(reasoning.json()["data"], list)
+
         with client.stream(
             "GET",
             f"{gateway_url}/api/v1/tasks/{task_id}/events/stream",

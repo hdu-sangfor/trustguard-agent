@@ -114,6 +114,19 @@ export interface ApiEvent {
   payload: Record<string, unknown>;
 }
 
+export interface ApiReasoningStep {
+  traceId: string;
+  taskId: string;
+  stepId: string;
+  stepType: 'TASK_UNDERSTANDING' | 'TASK_PLANNING' | 'RAG_RETRIEVAL' | 'TOOL_CALL' | 'RESULT_OBSERVATION' | 'EVIDENCE_JUDGMENT' | 'REPLANNING' | 'FINAL_CONCLUSION' | string;
+  status: 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'SKIPPED' | string;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  durationMs?: number | null;
+  summary: string;
+  payload: Record<string, unknown>;
+}
+
 export interface ApiTaskKnowledgeChunk {
   chunkId: string;
   title: string;
@@ -400,6 +413,7 @@ export async function streamTaskEvents(
   taskId: string,
   handlers: {
     onEvent?: (event: ApiEvent) => void;
+    onReasoning?: (step: ApiReasoningStep) => void;
     onStatus?: (task: ApiTask) => void;
     onAssistant?: (message: ApiConversationMessage) => void;
     onDone?: (result: ApiTaskTerminalResult) => void;
@@ -434,6 +448,7 @@ export async function streamTaskEvents(
     if (!dataLines.length) return;
     const data = JSON.parse(dataLines.join('\n')) as Record<string, unknown>;
     if (eventName === 'event') handlers.onEvent?.(data as unknown as ApiEvent);
+    if (eventName === 'reasoning') handlers.onReasoning?.(data as unknown as ApiReasoningStep);
     if (eventName === 'status') handlers.onStatus?.(data as unknown as ApiTask);
     if (eventName === 'assistant') handlers.onAssistant?.(data as unknown as ApiConversationMessage);
     if (eventName === 'done') {
@@ -512,6 +527,12 @@ export async function getTaskEvents(taskId: string, limit = 500): Promise<ApiEve
   // Backend returns events as direct array; tolerate both formats
   if (Array.isArray(data)) return data;
   return data.events ?? [];
+}
+
+export async function getTaskReasoningSteps(taskId: string, limit = 500): Promise<ApiReasoningStep[]> {
+  return apiFetch<ApiReasoningStep[]>(
+    `/api/v1/tasks/${encodeURIComponent(taskId)}/reasoning-steps?limit=${Math.max(1, Math.min(limit, 1000))}`,
+  );
 }
 
 export async function getTaskKnowledgeChunks(

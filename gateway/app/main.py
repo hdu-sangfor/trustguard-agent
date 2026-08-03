@@ -959,6 +959,7 @@ async def task_events_stream(
 
     async def events():
         seen: set[str] = set()
+        seen_reasoning: set[str] = set()
         last_state = ""
         last_summary_phase = ""
         pending_summary_events: list[dict[str, Any]] = []
@@ -976,6 +977,21 @@ async def task_events_stream(
                 if is_meaningful(item):
                     pending_summary_events.append(item)
                 yield _encode_sse("event", item)
+
+            # ReasoningStep is the durable, user-facing reasoning trace. Keep it
+            # parallel to operational TraceEvent instead of projecting one into
+            # the other, so audit semantics and replay remain unambiguous.
+            try:
+                reasoning_response = await task_reasoning_steps(task_id, 500)
+                reasoning_items = reasoning_response.get("data") or []
+            except Exception:
+                reasoning_items = []
+            for index, item in enumerate(reasoning_items):
+                step_id = str(item.get("stepId") or f"{item.get('startedAt')}:{item.get('stepType')}:{index}")
+                if step_id in seen_reasoning:
+                    continue
+                seen_reasoning.add(step_id)
+                yield _encode_sse("reasoning", item)
 
             try:
                 state = await _orch("GET", f"/v1/orchestrator/tasks/{task_id}", timeout=5.0)

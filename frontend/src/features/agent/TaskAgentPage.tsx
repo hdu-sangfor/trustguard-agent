@@ -8,6 +8,7 @@ import {
   getTask,
   getTaskAgentConversation,
   getTaskEvents,
+  getTaskReasoningSteps,
   listTaskAgentConversations,
   streamTaskAgentDraft,
   streamTaskEvents,
@@ -15,6 +16,7 @@ import {
   type ApiConversationMessage,
   type ApiEvent,
   type ApiPentestDraft,
+  type ApiReasoningStep,
   type ApiTask,
   type ApiTaskAgentConversationSummary,
 } from '@/shared/lib/api';
@@ -106,7 +108,32 @@ function eventActivity(event: ApiEvent, index: number): ApiAgentActivity {
   };
 }
 
-function ActivityList({ activities }: { activities: ApiAgentActivity[] }) {
+const reasoningLabels: Record<string, string> = {
+  TASK_UNDERSTANDING: '任务理解',
+  TASK_PLANNING: '任务规划',
+  RAG_RETRIEVAL: 'RAG 检索',
+  TOOL_CALL: '工具调用',
+  RESULT_OBSERVATION: '结果观察',
+  EVIDENCE_JUDGMENT: '证据判断',
+  REPLANNING: '重新规划',
+  FINAL_CONCLUSION: '最终结论',
+};
+
+function reasoningActivity(step: ApiReasoningStep, index: number): ApiAgentActivity {
+  const status = String(step.status ?? '').toUpperCase();
+  return {
+    id: step.stepId || `reasoning-${index}`,
+    kind: step.stepType === 'TOOL_CALL' ? 'tool' : step.stepType === 'EVIDENCE_JUDGMENT' ? 'guard' : 'analysis',
+    title: reasoningLabels[step.stepType] ?? step.stepType.replaceAll('_', ' '),
+    // Payload can contain tool parameters. The UI intentionally displays only
+    // the redacted summary produced by Orchestrator.
+    detail: String(step.summary ?? '').slice(0, 500),
+    status: status === 'RUNNING' ? 'running' : status === 'FAILED' ? 'blocked' : 'done',
+    timestamp: step.startedAt ?? new Date().toISOString(),
+  };
+}
+
+function ActivityList({ activities, label = '实时执行轨迹' }: { activities: ApiAgentActivity[]; label?: string }) {
   const [expanded, setExpanded] = useState(true);
   const [page, setPage] = useState(1);
   const pageSize = 10;
@@ -116,7 +143,7 @@ function ActivityList({ activities }: { activities: ApiAgentActivity[] }) {
   return (
     <div className="task-agent-activity-list">
       <button type="button" onClick={() => setExpanded((value) => !value)} className="task-agent-activity-header">
-        <span><SquareTerminal size={14} /> 实时执行轨迹 <b>{activities.length}</b></span>
+        <span><SquareTerminal size={14} /> {label} <b>{activities.length}</b></span>
         <ChevronDown size={14} style={{ transform: expanded ? 'rotate(180deg)' : undefined, transition: 'transform .18s' }} />
       </button>
       {expanded && (
@@ -172,6 +199,7 @@ export default function TaskAgentPage() {
   const [busy, setBusy] = useState(false);
   const [draftBusy, setDraftBusy] = useState(false);
   const [liveActivities, setLiveActivities] = useState<ApiAgentActivity[]>([]);
+  const [reasoningActivities, setReasoningActivities] = useState<ApiAgentActivity[]>([]);
   const [conversations, setConversations] = useState<ApiTaskAgentConversationSummary[]>([]);
   const [conversationsLoading, setConversationsLoading] = useState(false);
   const [conversationLoading, setConversationLoading] = useState(false);
@@ -218,6 +246,7 @@ export default function TaskAgentPage() {
     setConversationId(nextConversationId);
     setTask(null);
     setLiveActivities([]);
+    setReasoningActivities([]);
     setMessages([WELCOME_MESSAGE]);
     try {
       const conversation = await getTaskAgentConversation(nextConversationId);
@@ -256,6 +285,7 @@ export default function TaskAgentPage() {
     setTask(null);
     setMessages([WELCOME_MESSAGE]);
     setLiveActivities([]);
+    setReasoningActivities([]);
     setInput('');
     setBusy(false);
     setDraftBusy(false);
@@ -263,7 +293,7 @@ export default function TaskAgentPage() {
     setConversationError('');
   }, []);
 
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, liveActivities]);
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, liveActivities, reasoningActivities]);
   useEffect(() => () => draftAbortRef.current?.abort(), []);
 
   useEffect(() => {
@@ -295,15 +325,28 @@ export default function TaskAgentPage() {
         ? [...items, activity]
         : items.map((item, index) => index === existing ? activity : item);
     });
+    const mergeReasoning = (step: ApiReasoningStep) => setReasoningActivities((items) => {
+      const activity = reasoningActivity(step, items.length);
+      const existing = items.findIndex((item) => item.id === activity.id);
+      return existing < 0
+        ? [...items, activity]
+        : items.map((item, index) => index === existing ? activity : item);
+    });
     const pollFallback = async () => {
       try {
-        const [latest, events] = await Promise.all([getTask(task.taskId), getTaskEvents(task.taskId, 500)]);
+        const [latest, events, reasoningSteps] = await Promise.all([
+          getTask(task.taskId),
+          getTaskEvents(task.taskId, 500),
+          getTaskReasoningSteps(task.taskId, 500).catch(() => []),
+        ]);
         if (!active) return;
         setTask(latest);
         setLiveActivities(events.map(eventActivity));
+        setReasoningActivities(reasoningSteps.map(reasoningActivity));
         if (terminalStatuses.has(latest.status)) {
           setMessages((items) => settleMessages(items));
           setLiveActivities((items) => settleActivities(items) ?? []);
+          setReasoningActivities((items) => settleActivities(items) ?? []);
           appendMessage({
             id: `task-${task.taskId}-terminal`,
             role: 'assistant',
@@ -322,12 +365,14 @@ export default function TaskAgentPage() {
       task.taskId,
       {
         onEvent: mergeEvent,
+        onReasoning: mergeReasoning,
         onStatus: (latest) => {
           if (!active) return;
           setTask(latest);
           if (terminalStatuses.has(latest.status)) {
             setMessages((items) => settleMessages(items));
             setLiveActivities((items) => settleActivities(items) ?? []);
+            setReasoningActivities((items) => settleActivities(items) ?? []);
           }
         },
         onAssistant: (message) => {
@@ -345,6 +390,7 @@ export default function TaskAgentPage() {
               : [...settled, toChatMessage(result.message, result.taskId)];
           });
           setLiveActivities((items) => settleActivities(items) ?? []);
+          setReasoningActivities((items) => settleActivities(items) ?? []);
           void refreshConversations();
         },
       },
@@ -423,6 +469,8 @@ export default function TaskAgentPage() {
     setDraftBusy(true);
     try {
       const response = await confirmTaskAgentDraft(message.confirmationToken, { idempotencyKey: `ui-${message.id}` });
+      setLiveActivities([]);
+      setReasoningActivities([]);
       setTask(response.task);
       if (response.conversationId) {
         setConversationId(response.conversationId);
@@ -553,9 +601,15 @@ export default function TaskAgentPage() {
             ) : <p className="task-agent-monitor-empty">确认任务草稿后，这里会显示执行阶段和状态。</p>}
           </section>
           <section className="task-agent-monitor-trace">
-            {traceActivities.length > 0
-              ? <ActivityList activities={traceActivities} />
-              : <><div className="task-agent-activity-empty-heading"><SquareTerminal size={14} /> 实时执行轨迹</div><p>任务开始后，执行步骤会实时显示在这里。</p></>}
+            {reasoningActivities.length > 0 && (
+              <ActivityList activities={reasoningActivities} label="结构化推理轨迹" />
+            )}
+            {traceActivities.length > 0 && (
+              <ActivityList activities={traceActivities} label="实时执行轨迹" />
+            )}
+            {reasoningActivities.length === 0 && traceActivities.length === 0 && (
+              <><div className="task-agent-activity-empty-heading"><SquareTerminal size={14} /> 任务轨迹</div><p>任务开始后，推理步骤与执行事件会分别显示在这里。</p></>
+            )}
           </section>
         </aside>
       </main>
