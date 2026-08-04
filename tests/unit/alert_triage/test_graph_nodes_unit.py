@@ -156,10 +156,22 @@ class TestQueryRAG:
     @pytest.mark.asyncio
     async def test_rag_degraded(self):
         state = _base_state(enable_rag=True, alert={"alert_type": "malware"})
-        # RAG client is already a placeholder that returns degraded
         result = await query_rag(state)
         assert result["rag_degraded"] is True
-        assert "RAG_DEGRADED" in result["warnings"]
+        assert "RAG_MCP_DISABLED" in result["warnings"]
+
+    @pytest.mark.asyncio
+    async def test_rag_success_keeps_mcp_citations(self):
+        state = _base_state(alert={"alert_type": "malware"})
+        response = type("Response", (), {
+            "degraded": False,
+            "answer": "[RAG:krf1.test] threat context",
+            "citations": [{"chunk_id": "krf1.test", "source": "ATT&CK"}],
+        })()
+        with patch("clients.rag_client.query_rag", new_callable=AsyncMock, return_value=response):
+            result = await query_rag(state)
+        assert result["rag_degraded"] is False
+        assert result["rag_response"]["citations"][0]["chunk_id"] == "krf1.test"
 
 
 class TestValidateDecision:

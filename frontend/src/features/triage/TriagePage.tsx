@@ -38,6 +38,7 @@ const TriagePage = () => {
   const [loading, setLoading] = useState(false);
   const [proxyOnline, setProxyOnline] = useState<boolean | null>(null);
   const [alertUuid, setAlertUuid] = useState("");
+  const [enableRag, setEnableRag] = useState(true);
   const [creating, setCreating] = useState(false);
 
   const fetchTasks = useCallback(async () => {
@@ -74,7 +75,7 @@ const TriagePage = () => {
     }
     setCreating(true);
     try {
-      await createTriageTask(uuid, false);
+      await createTriageTask(uuid, enableRag);
       toast.success("研判任务已创建");
       setAlertUuid("");
       await fetchTasks();
@@ -173,6 +174,10 @@ const TriagePage = () => {
           >
             <Plus size={15} /> {creating ? "创建中..." : "创建研判"}
           </button>
+          <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--tg-text-muted)", fontFamily: "monospace" }}>
+            <input type="checkbox" checked={enableRag} onChange={(e) => setEnableRag(e.target.checked)} />
+            启用知识增强
+          </label>
         </div>
 
         

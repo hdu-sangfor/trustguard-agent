@@ -66,6 +66,12 @@ class RagCitation(BaseModel):
     chunk_id: str = Field(..., description="检索块标识")
     content_snippet: str = Field(default="", description="引文片段")
     source: str = Field(default="", description="知识来源（CVE / ATT&CK / 漏洞库等）")
+    resource_uri: str = Field(default="", description="RAG MCP 资源 URI")
+    source_uri: str | None = Field(default=None, description="原始知识来源 URI")
+    page_no: int | None = Field(default=None, ge=1, description="来源页码")
+    score: float | None = Field(default=None, description="检索相关性分数")
+    source_revision: int | None = Field(default=None, ge=1, description="资源版本")
+    content_hash: str = Field(default="", description="资源内容哈希")
 
 
 class AlertTriageResult(BaseModel):

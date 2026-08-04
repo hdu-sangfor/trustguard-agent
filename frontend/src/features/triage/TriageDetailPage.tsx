@@ -222,7 +222,6 @@ const TriageDetailPage = () => {
           </SectionBlock>
         )}
 
-        {/* RAG Citations (placeholder) */}
         <SectionBlock icon={<Database size={16} color={task.ragDegraded ? "#fbbf24" : "var(--neon-blue)"} />} title="RAG 知识增强">
           {task.ragDegraded ? (
             <div style={{ padding: "10px 14px", borderRadius: 6, background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.2)", fontSize: 12, color: "#fbbf24", fontFamily: "monospace" }}>
@@ -231,9 +230,14 @@ const TriageDetailPage = () => {
             </div>
           ) : (
             <div style={{ fontSize: 12, color: "var(--tg-text-muted)", fontFamily: "monospace" }}>
-              {task.ragCitations && task.ragCitations.length > 0
-                ? JSON.stringify(task.ragCitations, null, 2)
-                : "暂无 RAG 引用"}
+              {task.ragCitations && task.ragCitations.length > 0 ? task.ragCitations.map((citation, index) => {
+                const item = citation as Record<string, unknown>;
+                return <div key={String(item.chunk_id ?? index)} style={{ padding: "10px 12px", marginBottom: 8, borderRadius: 6, background: "var(--tg-input-bg)" }}>
+                  <div style={{ color: "var(--neon-blue)", fontWeight: 700 }}>{String(item.source ?? "trustguard-rag")}</div>
+                  <div style={{ marginTop: 5, whiteSpace: "pre-wrap", lineHeight: 1.5 }}>{String(item.content_snippet ?? "")}</div>
+                  <div style={{ marginTop: 6, opacity: 0.7, fontSize: 10 }}>{String(item.resource_uri ?? item.chunk_id ?? "")}{item.page_no ? ` · 第 ${String(item.page_no)} 页` : ""}</div>
+                </div>;
+              }) : "暂无 RAG 引用"}
             </div>
           )}
         </SectionBlock>

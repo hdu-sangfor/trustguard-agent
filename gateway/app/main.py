@@ -238,7 +238,11 @@ def _triage_task_to_api(state: dict[str, Any] | None, row: dict[str, Any] | None
         "missingEvidence": list(from_state("missing_evidence", []) or []),
         "ragCitations": raw_citations if isinstance(raw_citations, list) else [],
         "ragDegraded": rag_degraded,
-        "ragNote": "RAG 服务不可用，研判仅基于 XDR 原始证据" if rag_degraded else None,
+        "ragNote": (
+            next((str(item) for item in state.get("warnings", []) if str(item).startswith("RAG_")), None)
+            if rag_degraded
+            else None
+        ),
         "errors": list(state.get("validation_errors") or []),
     }
 
