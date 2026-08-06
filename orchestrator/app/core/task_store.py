@@ -43,6 +43,9 @@ class TaskRecord:
     description: Optional[str] = None
     business_background: Optional[str] = None
     extra_user_requirements: Optional[str] = None
+    execution_policy: Dict[str, Any] = field(
+        default_factory=lambda: {"allow_exploit": True, "allow_destructive_actions": False}
+    )
     status: TaskStatus = TaskStatus.PENDING
     current_phase: Phase = Phase.RECON
     # 当前阶段开始时间（UTC），与 TaskState.phase_start_at 对齐；用于断点恢复与墙钟熔断。
@@ -496,6 +499,7 @@ class RedisTaskStore(TaskStore):
             "description": task.description or "",
             "business_background": task.business_background or "",
             "extra_user_requirements": task.extra_user_requirements or "",
+            "execution_policy_json": json.dumps(task.execution_policy or {}),
             "status": task.status.value,
             "current_phase": task.current_phase.value,
             "phase_start_at": ps,
@@ -536,6 +540,10 @@ class RedisTaskStore(TaskStore):
             coverage = json.loads(coverage_raw)
         except Exception:
             coverage = []
+        try:
+            execution_policy = json.loads(data.get("execution_policy_json") or "{}")
+        except Exception:
+            execution_policy = {}
         ps_raw = (data.get("phase_start_at") or "").strip()
         phase_start_at: Optional[datetime] = None
         if ps_raw:
@@ -573,6 +581,7 @@ class RedisTaskStore(TaskStore):
             description=data.get("description") or None,
             business_background=data.get("business_background") or None,
             extra_user_requirements=data.get("extra_user_requirements") or None,
+            execution_policy=execution_policy or {"allow_exploit": True, "allow_destructive_actions": False},
             status=status,
             current_phase=phase,
             phase_start_at=phase_start_at,
@@ -600,6 +609,7 @@ class RedisTaskStore(TaskStore):
             "description": task.description or "",
             "business_background": task.business_background or "",
             "extra_user_requirements": task.extra_user_requirements or "",
+            "execution_policy_json": json.dumps(task.execution_policy or {}),
             "status": task.status.value,
             "current_phase": task.current_phase.value,
             "phase_start_at": ps,

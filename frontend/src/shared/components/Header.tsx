@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { Menu, Moon, Sun, X } from "lucide-react";
+import { ChevronDown, Menu, Moon, Sun, X } from "lucide-react";
 import { toast } from "sonner";
 import { useAppSession } from "@/shared/context/AppSessionContext";
 import { ORBIT_TASKS_UPDATED_EVENT, SENTINEL_ORBIT_TASKS_KEY, readStoredOrbitTasks, type StoredOrbitTask } from "@/shared/constants/orbitTasksStorage";
@@ -40,6 +40,8 @@ const Header = ({ currentPhase = 0 }: HeaderProps) => {
   const [sessionDisplayName, setSessionDisplayName] = useState<string | null>(() => readSessionDisplayName());
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => readThemeMode());
   const [navMenuOpen, setNavMenuOpen] = useState(false);
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const moreMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     applyThemeMode(themeMode);
@@ -47,7 +49,24 @@ const Header = ({ currentPhase = 0 }: HeaderProps) => {
 
   useEffect(() => {
     setNavMenuOpen(false);
+    setMoreMenuOpen(false);
   }, [pathname]);
+
+  useEffect(() => {
+    if (!moreMenuOpen) return;
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      if (!moreMenuRef.current?.contains(event.target as Node)) setMoreMenuOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMoreMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsideClick);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [moreMenuOpen]);
 
   useEffect(() => {
     const refresh = () => setRunningCount(countRunningTasks());
@@ -123,7 +142,7 @@ const Header = ({ currentPhase = 0 }: HeaderProps) => {
     window.scrollTo({ top: 0 });
   };
 
-  const requireLogin = (path: "/logs" | "/tasks" | "/admin" | "/reports" | "/system" | "/monitor" | "/config" | "/stats" | "/vulns" | "/batch" | "/dashboard" | "/audit" | "/triage" | "/knowledge" | "/knowledge/collect") => {
+  const requireLogin = (path: "/logs" | "/tasks" | "/admin" | "/reports" | "/system" | "/monitor" | "/config" | "/stats" | "/vulns" | "/batch" | "/dashboard" | "/audit" | "/triage" | "/knowledge" | "/knowledge/collect" | "/agent") => {
     if (!loggedIn) {
       toast.error("请先登录");
       localStorage.setItem("sentinel_login_redirect", path);
@@ -138,23 +157,37 @@ const Header = ({ currentPhase = 0 }: HeaderProps) => {
     { label: "告警研判", onClick: () => requireLogin("/triage"), badge: 0, path: "/triage" },
     { label: "技术特点", onClick: () => navigate("/features"),      badge: 0,          path: "/features" },
     { label: "运行日志", onClick: () => requireLogin("/logs"),      badge: 0,          path: "/logs" },
+    { label: "可信卫士", onClick: () => requireLogin("/agent"),    badge: 0,          path: "/agent" },
     { label: "任务管理", onClick: () => requireLogin("/tasks"),     badge: runningCount, path: "/tasks" },
     { label: "报告中心", onClick: () => requireLogin("/reports"),   badge: 0,          path: "/reports" },
-    { label: "技能库",   onClick: () => navigate("/skills"),        badge: 0,          path: "/skills" },
     { label: "知识中心", onClick: () => requireLogin("/knowledge"), badge: 0,          path: "/knowledge" },
-    { label: "数据采集", onClick: () => requireLogin("/knowledge/collect"), badge: 0,  path: "/knowledge/collect" },
-    { label: "监控大屏", onClick: () => requireLogin("/monitor"),   badge: 0,          path: "/monitor" },
-    { label: "统计分析", onClick: () => requireLogin("/stats"),     badge: 0,          path: "/stats" },
-    { label: "漏洞库",   onClick: () => requireLogin("/vulns"),     badge: 0,          path: "/vulns" },
-    { label: "批量调度", onClick: () => requireLogin("/batch"),     badge: 0,          path: "/batch" },
-    { label: "管理中心", onClick: () => requireLogin("/dashboard"), badge: 0,          path: "/dashboard" },
-    { label: "审计日志", onClick: () => requireLogin("/audit"),    badge: 0,          path: "/audit" },
-    { label: "平台管理", onClick: () => requireLogin("/admin"),     badge: 0,          path: "/admin" },
-    { label: "系统状态", onClick: () => requireLogin("/system"),    badge: 0,          path: "/system" },
+    { label: "运行日志", onClick: () => requireLogin("/logs"),      badge: 0,          path: "/logs" },
+    { label: "技术特点", onClick: () => navigate("/features"),      badge: 0,          path: "/features", group: "安全能力" },
+    { label: "技能库",   onClick: () => navigate("/skills"),        badge: 0,          path: "/skills", group: "安全能力" },
+    { label: "数据采集", onClick: () => requireLogin("/knowledge/collect"), badge: 0,  path: "/knowledge/collect", group: "安全能力" },
+    { label: "漏洞库",   onClick: () => requireLogin("/vulns"),     badge: 0,          path: "/vulns", group: "安全能力" },
+    { label: "监控大屏", onClick: () => requireLogin("/monitor"),   badge: 0,          path: "/monitor", group: "运营分析" },
+    { label: "统计分析", onClick: () => requireLogin("/stats"),     badge: 0,          path: "/stats", group: "运营分析" },
+    { label: "批量调度", onClick: () => requireLogin("/batch"),     badge: 0,          path: "/batch", group: "运营分析" },
+    { label: "审计日志", onClick: () => requireLogin("/audit"),    badge: 0,          path: "/audit", group: "运营分析" },
+    { label: "管理中心", onClick: () => requireLogin("/dashboard"), badge: 0,          path: "/dashboard", group: "系统管理" },
+    { label: "平台管理", onClick: () => requireLogin("/admin"),     badge: 0,          path: "/admin", group: "系统管理" },
+    { label: "系统状态", onClick: () => requireLogin("/system"),    badge: 0,          path: "/system", group: "系统管理" },
   ];
+  const primaryLinks = navLinks.slice(0, 6);
+  const moreGroups = ["安全能力", "运营分析", "系统管理"].map((label) => ({
+    label,
+    links: navLinks.filter((link) => link.group === label),
+  }));
+  const isLinkActive = (path: string) => {
+    const isExactPath = path === "/" || path === "/knowledge";
+    return isExactPath ? pathname === path : pathname.startsWith(path);
+  };
+  const moreMenuActive = navLinks.slice(6).some((link) => isLinkActive(link.path));
 
   const runNavAction = (action: () => void) => {
     setNavMenuOpen(false);
+    setMoreMenuOpen(false);
     action();
   };
 
@@ -215,10 +248,9 @@ const Header = ({ currentPhase = 0 }: HeaderProps) => {
     </span>
           </div>
 
-          <nav className="nav-primary" style={{display: "flex", alignItems: "center", gap: "12px", flexShrink: 1, minWidth: 0, paddingBottom: 2}}>
-              {navLinks.map((link) => {
-                const isExactPath = link.path === "/" || link.path === "/knowledge";
-                const isActive = isExactPath ? pathname === link.path : pathname.startsWith(link.path);
+          <nav className="nav-primary" style={{display: "flex", alignItems: "center", gap: "16px", flexShrink: 1, minWidth: 0, paddingBottom: 2}}>
+              {primaryLinks.map((link) => {
+                const isActive = isLinkActive(link.path);
                 return (
                   <button
                       key={link.label}
@@ -255,6 +287,41 @@ const Header = ({ currentPhase = 0 }: HeaderProps) => {
                   </button>
                 );
               })}
+              <div className="nav-more" ref={moreMenuRef}>
+                <button
+                  type="button"
+                  className={`nav-link nav-more-trigger${moreMenuActive ? " active" : ""}`}
+                  onClick={() => setMoreMenuOpen((open) => !open)}
+                  aria-haspopup="menu"
+                  aria-expanded={moreMenuOpen}
+                >
+                  更多
+                  <ChevronDown size={13} className={moreMenuOpen ? "open" : undefined} />
+                </button>
+                {moreMenuOpen && (
+                  <div className="nav-more-menu" role="menu" aria-label="更多功能">
+                    {moreGroups.map((group) => (
+                      <section key={group.label} className="nav-more-group">
+                        <div>{group.label}</div>
+                        {group.links.map((link) => {
+                          const isActive = isLinkActive(link.path);
+                          return (
+                            <button
+                              key={`more-${link.label}`}
+                              type="button"
+                              role="menuitem"
+                              className={isActive ? "active" : undefined}
+                              onClick={() => runNavAction(link.onClick)}
+                            >
+                              <span>{link.label}</span>
+                            </button>
+                          );
+                        })}
+                      </section>
+                    ))}
+                  </div>
+                )}
+              </div>
           </nav>
 
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0, position: "relative" }}>
@@ -289,7 +356,10 @@ const Header = ({ currentPhase = 0 }: HeaderProps) => {
               <button
                 type="button"
                 className="nav-menu-btn"
-                onClick={() => setNavMenuOpen((open) => !open)}
+                onClick={() => {
+                  setMoreMenuOpen(false);
+                  setNavMenuOpen((open) => !open);
+                }}
                 title="打开导航菜单"
                 aria-label="打开导航菜单"
                 aria-expanded={navMenuOpen}
@@ -329,7 +399,7 @@ const Header = ({ currentPhase = 0 }: HeaderProps) => {
                   }}
                 >
                   {navLinks.map((link) => {
-                    const isActive = link.path === "/" ? pathname === "/" : pathname.startsWith(link.path);
+                    const isActive = isLinkActive(link.path);
                     return (
                       <button
                         key={`menu-${link.label}`}

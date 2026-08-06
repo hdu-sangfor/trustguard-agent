@@ -18,13 +18,116 @@ export interface ApiTask {
   currentPhase: string;
   createdAt: string;
   updatedAt: string;
+  executionPolicy?: { allow_exploit?: boolean; allow_destructive_actions?: boolean };
+}
+
+export interface ApiAgentActivity {
+  id: string;
+  kind: 'analysis' | 'guard' | 'tool' | 'result' | 'progress';
+  title: string;
+  detail: string;
+  status: 'pending' | 'running' | 'done' | 'blocked';
+  timestamp: string;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  durationMs?: number | null;
+  correlationId?: string | null;
+}
+
+export interface ApiPentestDraft {
+  name: string;
+  target: string;
+  description: string;
+  businessBackground: string;
+  extraUserRequirements: string;
+  testProfile: 'safe' | 'standard' | 'aggressive';
+  allowExploit: boolean;
+  allowDestructiveActions: boolean;
+  maxDurationSeconds: number;
+}
+
+export interface ApiTaskAgentDraft {
+  status: 'NEEDS_CLARIFICATION' | 'NEEDS_CONFIRMATION' | 'REJECTED' | 'READY';
+  conversationId: string;
+  draftId?: string | null;
+  confirmationToken?: string | null;
+  draft?: ApiPentestDraft | null;
+  missingFields: string[];
+  warnings: string[];
+  assistantMessage: string;
+  activities: ApiAgentActivity[];
+  workflowId: string;
+}
+
+export interface ApiTaskAgentConfirmation {
+  conversationId?: string | null;
+  draftId?: string | null;
+  task: ApiTask;
+  started: boolean;
+  activities: ApiAgentActivity[];
+  message: ApiConversationMessage;
+}
+
+export interface ApiConversationMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  text: string;
+  activities: ApiAgentActivity[];
+  draft?: ApiPentestDraft | null;
+  confirmationToken?: string | null;
+  taskId?: string | null;
+  taskStatus?: string | null;
+  createdAt: string;
+}
+
+export interface ApiTaskAgentConversation {
+  conversationId: string;
+  messages: ApiConversationMessage[];
+  taskId?: string | null;
+}
+
+export interface ApiTaskAgentConversationSummary {
+  conversationId: string;
+  title: string;
+  preview: string;
+  taskId?: string | null;
+  taskStatus?: string | null;
+  messageCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ApiTaskTerminalResult {
+  taskId: string;
+  status: ApiTask['status'];
+  message: ApiConversationMessage;
+}
+
+export interface TaskAgentDraftStreamHandlers {
+  onActivity?: (activity: ApiAgentActivity) => void;
+  onDelta?: (text: string) => void;
+  onResult?: (result: ApiTaskAgentDraft) => void;
 }
 
 export interface ApiEvent {
+  eventId?: string;
   taskId: string;
   timestamp: string;
   eventType: string;
   sourceModule: string;
+  payload: Record<string, unknown>;
+}
+
+export interface ApiReasoningStep {
+  traceId: string;
+  taskId: string;
+  stepId: string;
+  stepType: 'TASK_UNDERSTANDING' | 'TASK_PLANNING' | 'RAG_RETRIEVAL' | 'TOOL_CALL' | 'RESULT_OBSERVATION' | 'EVIDENCE_JUDGMENT' | 'REPLANNING' | 'FINAL_CONCLUSION' | string;
+  status: 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'SKIPPED' | string;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  durationMs?: number | null;
+  summary: string;
   payload: Record<string, unknown>;
 }
 
@@ -71,6 +174,7 @@ export interface ApiReportFinding {
   evidence?: string | null;
   phase?: string | null;
   skill?: string | null;
+  fpVerdict?: string | null;
 }
 
 export interface ApiReportRecommendation {
@@ -107,6 +211,7 @@ export interface ApiReport {
   severityHistogram?: Record<string, number>;
   riskLevel?: 'critical' | 'high' | 'medium' | 'low' | 'none';
   executions?: ApiReportExecution[];
+  fpSummary?: Record<string, number> | null;
 }
 
 export interface ApiObservation {
@@ -181,6 +286,106 @@ export async function createTask(params: {
   });
 }
 
+export async function createTaskAgentDraft(
+  message: string,
+  conversationId?: string,
+): Promise<ApiTaskAgentDraft> {
+  return apiFetch<ApiTaskAgentDraft>('/api/v1/task-agent/draft', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message, conversationId, workflowId: 'auto' }),
+  });
+}
+
+export async function streamTaskAgentDraft(
+  message: string,
+  conversationId: string | undefined,
+  handlers: TaskAgentDraftStreamHandlers,
+  signal?: AbortSignal,
+): Promise<void> {
+  const response = await fetch(`${API_BASE}/api/v1/task-agent/draft/stream`, {
+    method: 'POST',
+    headers: { ...authHeaders(), 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+    body: JSON.stringify({ message, conversationId, workflowId: 'auto' }),
+    signal,
+  });
+  if (response.status === 401) {
+    fireUnauthorized();
+    throw new Error('未授权，请重新登录');
+  }
+  if (!response.ok) {
+    let detail = `HTTP ${response.status} ${response.statusText}`;
+    try {
+      const body = await response.json() as { message?: string; detail?: string };
+      detail = body.message || body.detail || detail;
+    } catch { /* retain HTTP fallback */ }
+    throw new Error(detail);
+  }
+  if (!response.body) throw new Error('浏览器未提供可读取的响应流');
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let resultReceived = false;
+
+  const consumeBlock = (block: string) => {
+    if (!block.trim() || block.startsWith(':')) return;
+    let eventName = 'message';
+    const dataLines: string[] = [];
+    for (const line of block.split('\n')) {
+      if (line.startsWith('event:')) eventName = line.slice(6).trim();
+      if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart());
+    }
+    if (!dataLines.length) return;
+    const data = JSON.parse(dataLines.join('\n')) as Record<string, unknown>;
+    if (eventName === 'activity') handlers.onActivity?.(data as unknown as ApiAgentActivity);
+    if (eventName === 'delta') handlers.onDelta?.(String(data.text ?? ''));
+    if (eventName === 'result') {
+      resultReceived = true;
+      handlers.onResult?.(data as unknown as ApiTaskAgentDraft);
+    }
+    if (eventName === 'error') throw new Error(String(data.message ?? '流式回答生成失败'));
+  };
+
+  let streamCompleted = false;
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      buffer += decoder.decode(value, { stream: !done });
+      buffer = buffer.replace(/\r\n/g, '\n');
+      let boundary = buffer.indexOf('\n\n');
+      while (boundary >= 0) {
+        consumeBlock(buffer.slice(0, boundary));
+        buffer = buffer.slice(boundary + 2);
+        boundary = buffer.indexOf('\n\n');
+      }
+      if (done) break;
+    }
+    streamCompleted = true;
+  } finally {
+    if (!streamCompleted) await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
+  if (buffer.trim()) consumeBlock(buffer);
+  if (!resultReceived) throw new Error('流式回答提前结束，未收到任务草稿结果');
+}
+
+export async function confirmTaskAgentDraft(
+  confirmationToken: string,
+  options?: { start?: boolean; maxTicks?: number; idempotencyKey?: string },
+): Promise<ApiTaskAgentConfirmation> {
+  return apiFetch<ApiTaskAgentConfirmation>('/api/v1/task-agent/confirm', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      confirmationToken,
+      start: options?.start ?? true,
+      maxTicks: options?.maxTicks ?? 100,
+      idempotencyKey: options?.idempotencyKey,
+    }),
+  });
+}
+
 export async function listTasks(): Promise<ApiTask[]> {
   return apiFetch<ApiTask[]>('/api/v1/tasks');
 }
@@ -192,6 +397,92 @@ export async function listCompletedTasks(limit = 100): Promise<ApiTask[]> {
 
 export async function getTask(taskId: string): Promise<ApiTask> {
   return apiFetch<ApiTask>(`/api/v1/tasks/${taskId}`);
+}
+
+export async function getTaskAgentConversation(
+  conversationId: string,
+): Promise<ApiTaskAgentConversation> {
+  return apiFetch<ApiTaskAgentConversation>(
+    `/api/v1/task-agent/conversations/${encodeURIComponent(conversationId)}`,
+  );
+}
+
+export async function listTaskAgentConversations(
+  limit = 50,
+): Promise<ApiTaskAgentConversationSummary[]> {
+  return apiFetch<ApiTaskAgentConversationSummary[]>(
+    `/api/v1/task-agent/conversations?limit=${Math.max(1, Math.min(limit, 100))}`,
+  );
+}
+
+export async function streamTaskEvents(
+  taskId: string,
+  handlers: {
+    onEvent?: (event: ApiEvent) => void;
+    onReasoning?: (step: ApiReasoningStep) => void;
+    onStatus?: (task: ApiTask) => void;
+    onAssistant?: (message: ApiConversationMessage) => void;
+    onDone?: (result: ApiTaskTerminalResult) => void;
+  },
+  signal?: AbortSignal,
+  conversationId?: string,
+): Promise<void> {
+  const query = conversationId ? `?conversationId=${encodeURIComponent(conversationId)}` : '';
+  const response = await fetch(`${API_BASE}/api/v1/tasks/${encodeURIComponent(taskId)}/events/stream${query}`, {
+    headers: { ...authHeaders(), Accept: 'text/event-stream' },
+    signal,
+  });
+  if (response.status === 401) {
+    fireUnauthorized();
+    throw new Error('未授权，请重新登录');
+  }
+  if (!response.ok || !response.body) throw new Error(`任务事件流连接失败：HTTP ${response.status}`);
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let doneReceived = false;
+  let streamCompleted = false;
+  const consume = (block: string) => {
+    if (!block.trim() || block.startsWith(':')) return;
+    let eventName = '';
+    const dataLines: string[] = [];
+    for (const line of block.split('\n')) {
+      if (line.startsWith('event:')) eventName = line.slice(6).trim();
+      if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart());
+    }
+    if (!dataLines.length) return;
+    const data = JSON.parse(dataLines.join('\n')) as Record<string, unknown>;
+    if (eventName === 'event') handlers.onEvent?.(data as unknown as ApiEvent);
+    if (eventName === 'reasoning') handlers.onReasoning?.(data as unknown as ApiReasoningStep);
+    if (eventName === 'status') handlers.onStatus?.(data as unknown as ApiTask);
+    if (eventName === 'assistant') handlers.onAssistant?.(data as unknown as ApiConversationMessage);
+    if (eventName === 'done') {
+      doneReceived = true;
+      handlers.onDone?.(data as unknown as ApiTaskTerminalResult);
+    }
+  };
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      buffer += decoder.decode(value, { stream: !done });
+      buffer = buffer.replace(/\r\n/g, '\n');
+      let boundary = buffer.indexOf('\n\n');
+      while (boundary >= 0) {
+        consume(buffer.slice(0, boundary));
+        buffer = buffer.slice(boundary + 2);
+        boundary = buffer.indexOf('\n\n');
+      }
+      if (done) break;
+    }
+    streamCompleted = true;
+  } finally {
+    if (!streamCompleted) await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
+  if (buffer.trim()) consume(buffer);
+  if (!doneReceived && !signal?.aborted) throw new Error('任务事件流意外断开');
 }
 
 function taskRunQuery(maxTicks?: number, maxDurationSeconds?: number): string {
@@ -242,6 +533,12 @@ export async function getTaskEvents(taskId: string, limit = 500): Promise<ApiEve
   // Backend returns events as direct array; tolerate both formats
   if (Array.isArray(data)) return data;
   return data.events ?? [];
+}
+
+export async function getTaskReasoningSteps(taskId: string, limit = 500): Promise<ApiReasoningStep[]> {
+  return apiFetch<ApiReasoningStep[]>(
+    `/api/v1/tasks/${encodeURIComponent(taskId)}/reasoning-steps?limit=${Math.max(1, Math.min(limit, 1000))}`,
+  );
 }
 
 export async function getTaskKnowledgeChunks(
@@ -1774,6 +2071,7 @@ export interface ApiTriageTask {
   recommendedActions?: Array<{ action: string; label: string; category: string; description?: string }>;
   warnings?: string[];
   missingEvidence?: string[];
+  enrichmentEvidence?: string[];
   ragCitations?: unknown[];
   ragDegraded?: boolean;
   ragNote?: string;
@@ -1824,4 +2122,57 @@ export async function runTriageTask(taskId: string): Promise<ApiTriageTask> {
   const json = await resp.json() as { code: string; message: string; data: ApiTriageTask };
   if (json.code !== '0') throw new Error('triage run failed');
   return json.data;
+}
+
+// ── 误报追踪 API ──────────────────────────────────────────
+
+export interface ApiFPFinding {
+  fpId: string;
+  taskId: string;
+  templateId: string;
+  url: string;
+  title: string;
+  severity: string;
+  sourceSkillId: string;
+  sourcePhase: string;
+  currentVerdict: 'UNVERIFIED' | 'SUSPICIOUS' | 'FALSE_POSITIVE' | 'TRUE_POSITIVE' | 'INCONCLUSIVE';
+  verificationSource: string | null;
+  verificationReasoning: string | null;
+  detectedAt: string;
+  verifiedAt: string | null;
+}
+
+export interface ApiFPFindingsResponse {
+  taskId: string;
+  total: number;
+  unverified: number;
+  suspicious: number;
+  falsePositives: number;
+  truePositives: number;
+  inconclusive: number;
+  falsePositiveRate: number;
+  findings: ApiFPFinding[];
+}
+
+export async function getTaskFPFindings(taskId: string): Promise<ApiFPFindingsResponse> {
+  return apiFetch<ApiFPFindingsResponse>(`/api/v1/tasks/${taskId}/fp-findings`);
+}
+
+export async function submitFPFeedback(
+  taskId: string,
+  fpId: string,
+  humanVerdict: string,
+  feedback?: string,
+): Promise<{ fpId: string; accepted: boolean; verdict: string }> {
+  return apiFetch(`/api/v1/tasks/${taskId}/fp-feedback`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fpId, humanVerdict, feedback }),
+  } as RequestInit);
+}
+
+export async function triggerFPDeepAudit(taskId: string): Promise<{ audited: number; resolved: number; message?: string }> {
+  return apiFetch(`/api/v1/tasks/${taskId}/fp-findings/deep-audit`, {
+    method: 'POST',
+  } as RequestInit);
 }

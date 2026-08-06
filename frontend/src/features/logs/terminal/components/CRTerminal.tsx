@@ -621,7 +621,7 @@ export function CRTerminal() {
     }
     .log-event-row {
       display: grid;
-      grid-template-columns: 72px minmax(132px, 190px) minmax(0, 1fr) 16px;
+      grid-template-columns: max-content minmax(132px, 190px) minmax(0, 1fr) 16px;
       align-items: start;
       column-gap: 8px;
       padding: 4px 6px;
@@ -718,7 +718,7 @@ export function CRTerminal() {
     }
     @media (max-width: 720px) {
       .log-event-row {
-        grid-template-columns: 64px minmax(0, 1fr) 16px;
+        grid-template-columns: max-content minmax(0, 1fr) 16px;
         row-gap: 3px;
       }
       .log-event-type {

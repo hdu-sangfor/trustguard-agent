@@ -22,6 +22,8 @@ from pydantic import BaseModel
 
 from app.models import (
     CreateTaskPayload,
+    FPFeedbackRequest,
+    FPFindingsResponse,
     OrchestratorTaskStateResponse,
     Phase,
     TaskState,
@@ -474,6 +476,7 @@ async def create_task(payload: CreateTaskPayload) -> None:
         description=payload.description,
         business_background=payload.businessBackground,
         extra_user_requirements=payload.extraUserRequirements,
+        execution_policy=(payload.executionPolicy.model_dump() if payload.executionPolicy else {}),
     )
     await _TASK_STORE.create_task(record)
     _TASKS[payload.taskId] = TaskState.from_task_record(record)
@@ -777,6 +780,7 @@ class RestoreTaskPayload(BaseModel):
     description: str | None = None
     businessBackground: str | None = None
     extraUserRequirements: str | None = None
+    executionPolicy: dict[str, Any] | None = None
 
 
 @app.post("/v1/orchestrator/tasks/{task_id}/restore", response_model=OrchestratorTaskStateResponse)
@@ -803,6 +807,11 @@ async def restore_task(task_id: str, payload: RestoreTaskPayload | None = None) 
             description=checkpoint.get("description"),
             business_background=rc.get("business_background") if isinstance(rc.get("business_background"), str) else None,
             extra_user_requirements=rc.get("extra_user_requirements") if isinstance(rc.get("extra_user_requirements"), str) else None,
+            execution_policy=(
+                rc.get("execution_policy")
+                if isinstance(rc.get("execution_policy"), dict)
+                else (store_rec.execution_policy if store_rec is not None else None)
+            ),
         )
         _TASKS[task_id] = state
         try:
@@ -817,6 +826,8 @@ async def restore_task(task_id: str, payload: RestoreTaskPayload | None = None) 
             restored_context["target"] = state.target
         if "task_background" not in restored_context:
             restored_context["task_background"] = f"本任务为经授权的渗透测试，仅对 {state.target} 进行安全测试，禁止越权。"
+        if "execution_policy" not in restored_context:
+            restored_context["execution_policy"] = dict(state.execution_policy)
         state.target_context = restored_context
         state.history_summary = checkpoint.get("history_summary") or ""
         state.coverage_attempted = state.target_context.get("_coverage_attempted") or []
@@ -834,6 +845,7 @@ async def restore_task(task_id: str, payload: RestoreTaskPayload | None = None) 
             description=payload.description,
             business_background=payload.businessBackground,
             extra_user_requirements=payload.extraUserRequirements,
+            execution_policy=payload.executionPolicy,
         )
         _TASKS[task_id] = state
         await _TASK_STORE.create_task(state.to_task_record())
@@ -1363,6 +1375,11 @@ async def resume_task(task_id: str) -> OrchestratorTaskStateResponse:
             description=checkpoint.get("description"),
             business_background=rc.get("business_background") if isinstance(rc.get("business_background"), str) else None,
             extra_user_requirements=rc.get("extra_user_requirements") if isinstance(rc.get("extra_user_requirements"), str) else None,
+            execution_policy=(
+                rc.get("execution_policy")
+                if isinstance(rc.get("execution_policy"), dict)
+                else (store_rec.execution_policy if store_rec is not None else None)
+            ),
         )
         _TASKS[task_id] = state
     try:
@@ -1377,6 +1394,8 @@ async def resume_task(task_id: str) -> OrchestratorTaskStateResponse:
         restored_context["target"] = state.target
     if "task_background" not in restored_context:
         restored_context["task_background"] = f"本任务为经授权的渗透测试，仅对 {state.target} 进行安全测试，禁止越权。"
+    if "execution_policy" not in restored_context:
+        restored_context["execution_policy"] = dict(state.execution_policy)
     state.target_context = restored_context
     _bg = restored_context.get("business_background")
     if isinstance(_bg, str):
@@ -1393,6 +1412,154 @@ async def resume_task(task_id: str) -> OrchestratorTaskStateResponse:
     await _TASK_STORE.update_task(state.to_task_record())
     await _emit_task_resumed(state, reason="用户请求续跑，已从 checkpoint 恢复并重置阶段计时。")
     return state.to_response()
+
+
+# ── 误报追踪 API ────────────────────────────────────────
+
+@app.get("/v1/orchestrator/tasks/{task_id}/fp-findings")
+async def get_fp_findings(task_id: str) -> dict[str, Any]:
+    """获取任务的 FP 判定汇总，供前端「误报审核」面板使用。
+    优先从内存读取；若无内存数据则回退 MySQL。"""
+    state = _TASKS.get(task_id)
+    if state is not None:
+        try:
+            from app.core.fp_tracker import get_fp_summary
+            summary = get_fp_summary(state)
+            # 有数据或任务正在运行 → 直接返回（运行中 total=0 是正常的，不回退 DB）
+            if summary.get("total", 0) > 0 or not state.is_terminal():
+                return summary
+        except Exception:
+            pass  # fall through to DB
+
+    # 任务不在内存、或已结束且内存中无 FP 数据 → 回退 MySQL
+    try:
+        from app.core.fp_tracker import load_fp_from_db
+        from app.core.fp_persistence import build_summary_from_db
+        records = load_fp_from_db(task_id)
+        if records:
+            return build_summary_from_db(task_id, records)
+    except Exception:
+        pass
+
+    return {
+        "taskId": task_id,
+        "total": 0,
+        "unverified": 0,
+        "suspicious": 0,
+        "falsePositives": 0,
+        "truePositives": 0,
+        "inconclusive": 0,
+        "falsePositiveRate": 0.0,
+        "findings": [],
+    }
+
+
+@app.post("/v1/orchestrator/tasks/{task_id}/fp-feedback")
+async def submit_fp_feedback(task_id: str, req: FPFeedbackRequest) -> dict[str, Any]:
+    """提交人工 FP 判定反馈。"""
+    state = _TASKS.get(task_id)
+    if state is not None and not isinstance(state.target_context, dict):
+        state.target_context = {}
+    ctx = state.target_context if state is not None else {}
+    records = ctx.get("_fp_records") if isinstance(ctx, dict) else None
+    memory_records = records if isinstance(records, list) else []
+    matched = next((record for record in memory_records if record.get("fp_id") == req.fpId), None)
+
+    # Completed tasks may no longer have a TaskState after Orchestrator restarts.
+    # The review UI still loads their findings from MySQL, so feedback must use
+    # the same durable fallback instead of failing solely on missing hot state.
+    if matched is None:
+        from app.core.fp_persistence import load_fp_records
+
+        persisted_records = load_fp_records(task_id)
+        persisted = next((record for record in persisted_records if record.get("fp_id") == req.fpId), None)
+        if persisted is not None:
+            matched = dict(persisted)
+            if state is not None:
+                if not isinstance(records, list):
+                    state.target_context["_fp_records"] = memory_records
+                memory_records.append(matched)
+    if matched is None:
+        raise HTTPException(status_code=404, detail=f"fp record {req.fpId} not found")
+
+    old_verdict = matched.get("current_verdict")
+    updated = dict(matched)
+    updated["current_verdict"] = req.humanVerdict
+    updated["verification_source"] = "HUMAN"
+    if req.feedback:
+        updated["verification_reasoning"] = req.feedback
+    from datetime import datetime, timezone
+    updated["verified_at"] = datetime.now(timezone.utc).isoformat()
+
+    # ── 同步 MySQL + Qdrant KB ──
+    try:
+        from app.core.fp_persistence import upsert_fp_record
+
+        upsert_fp_record(updated, raise_on_error=True)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="failed to persist FP feedback") from exc
+    matched.update(updated)
+    try:
+        from app.core.fp_tracker import upsert_to_fp_kb
+        await upsert_to_fp_kb(updated)
+    except Exception:
+        pass
+
+    # 写入 confirmed_facts 作为人类校正记录
+    if state is not None:
+        fact = f"[HumanCorrected_{req.humanVerdict}] {req.fpId}: {matched.get('template_id')} on {matched.get('url')}"
+        if req.feedback:
+            fact += f" — {req.feedback}"
+        existing = [str(x).strip() for x in (state.confirmed_facts or []) if isinstance(x, str) and x.strip()]
+        if fact not in existing:
+            existing.append(fact)
+            state.confirmed_facts = existing[-120:]
+
+    # 发射 trace event
+    try:
+        await _emit_trace(TraceEvent(
+            task_id=task_id,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            event_type="FP_HUMAN_FEEDBACK",
+            source_module="fp_tracker",
+            payload={
+                "fp_id": req.fpId,
+                "old_verdict": old_verdict,
+                "new_verdict": req.humanVerdict,
+                "feedback": req.feedback or "",
+            },
+        ))
+    except Exception:
+        pass
+
+    logger.info("fp_feedback: %s %s → %s (human)", req.fpId, old_verdict, req.humanVerdict)
+    return {"fpId": req.fpId, "accepted": True, "verdict": req.humanVerdict}
+
+
+# ── T2 深度审计 API ─────────────────────────────────────
+
+@app.post("/v1/orchestrator/tasks/{task_id}/fp-findings:deep-audit")
+async def trigger_fp_deep_audit(task_id: str) -> dict[str, Any]:
+    """触发 T2 深度离线审计。
+    优先使用内存 TaskState；若任务已结束则从 DB 回退。"""
+    state = _TASKS.get(task_id)
+    if state is not None:
+        try:
+            from app.core.fp_tracker import call_fp_t2_deep_audit
+            return await call_fp_t2_deep_audit(state)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    # 任务不在内存，从 DB 加载 INCONCLUSIVE 记录做离线审计
+    try:
+        from app.core.fp_tracker import load_fp_from_db, call_fp_t2_deep_audit_db
+        records = load_fp_from_db(task_id)
+        inconclusive = [r for r in records if r.get("current_verdict") == "INCONCLUSIVE"]
+        if not inconclusive:
+            return {"audited": 0, "message": "no INCONCLUSIVE records found in DB"}
+        return await call_fp_t2_deep_audit_db(task_id, inconclusive)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/health")
