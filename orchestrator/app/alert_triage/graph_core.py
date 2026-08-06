@@ -269,7 +269,6 @@ async def collect_evidence(state: TriageState) -> TriageState:
         alert.get("hostname")
         or alert.get("hostName")
         or alert.get("device_name")
-        or alert.get("name")
         or ""
     ).strip()
     src_ip = str(
@@ -282,7 +281,7 @@ async def collect_evidence(state: TriageState) -> TriageState:
     if asset_id:
         asset_params["assetIds"] = [asset_id]
     if hostname:
-        asset_params["hostname"] = hostname
+        asset_params["hostName"] = hostname
     if src_ip:
         asset_params["ip"] = src_ip
 
@@ -290,6 +289,8 @@ async def collect_evidence(state: TriageState) -> TriageState:
         try:
             assets = await xdr_client.get_assets(asset_params)
             state["assets"] = assets if isinstance(assets, list) else []
+            if not state["assets"]:
+                state["missing_evidence"].append("assets")
         except xdr_client.XDRClientError as e:
             logger.warning("assets query failed task_id=%s: %s", task_id, e)
             state["missing_evidence"].append("assets")
@@ -358,9 +359,7 @@ async def check_whitelist(state: TriageState) -> TriageState:
     await _emit(task_id, "AT_CHECK_WHITELIST_START", {})
 
     alert = state.get("alert") or {}
-    whitelist_params: dict[str, Any] = {
-        "alert_uuid": state["alert_uuid"],
-    }
+    whitelist_params: dict[str, Any] = {"page": 1, "pageSize": 500, "status": 1}
 
     # 添加告警特征以提高匹配精度
     sig_id = str(alert.get("signature_id") or alert.get("rule_id") or "").strip()
@@ -375,8 +374,16 @@ async def check_whitelist(state: TriageState) -> TriageState:
         whitelist_params["process_name"] = proc
 
     try:
-        matches = await xdr_client.match_whitelist(whitelist_params)
-        state["whitelist_matches"] = matches if isinstance(matches, list) else []
+        candidates = await xdr_client.match_whitelist(whitelist_params)
+        from .whitelist_matching import match_whitelist_records
+
+        state["whitelist_matches"] = match_whitelist_records(
+            candidates if isinstance(candidates, list) else [],
+            alert=alert,
+            proof=state.get("alert_proof"),
+            endpoint_logs=state.get("endpoint_logs"),
+            assets=state.get("assets"),
+        )
     except xdr_client.XDRClientError as e:
         logger.warning("whitelist check failed task_id=%s: %s", task_id, e)
         # whitelist 匹配失败不阻塞流程
@@ -683,6 +690,16 @@ async def validate_decision(state: TriageState) -> TriageState:
         confidence = 0.4
         raw["confidence"] = confidence
 
+    # Reserve insufficient_evidence for missing primary XDR sources.  When the
+    # proof, endpoint logs and asset context are present but do not establish a
+    # deterministic conclusion, the operationally useful verdict is suspicious.
+    if verdict == "insufficient_evidence" and not missing:
+        errors.append("insufficient_evidence requires missing primary evidence")
+        raw["verdict"] = "suspicious"
+        confidence = max(0.5, min(confidence, 0.7))
+        raw["confidence"] = confidence
+        verdict = "suspicious"
+
     # 3) 建议动作 execution_level 校验
     actions = raw.get("recommended_actions") or []
     if isinstance(actions, list):
@@ -698,6 +715,15 @@ async def validate_decision(state: TriageState) -> TriageState:
         if not errors:
             errors.append("deterministic verdict with missing evidence")
         raw["verdict"] = "suspicious"
+
+    # A false-positive conclusion is only safe when an exact active whitelist
+    # rule matched the current alert context.  A script name or change ticket
+    # alone is not enough to suppress an alert from another host or account.
+    if verdict == "false_positive" and not state.get("whitelist_matches"):
+        errors.append("false_positive requires exact whitelist match")
+        raw["verdict"] = "suspicious"
+        raw["confidence"] = min(float(raw.get("confidence") or 0.0), 0.7)
+        verdict = "suspicious"
 
     state["validation_errors"] = errors
     state["raw_decision"] = raw
@@ -763,7 +789,7 @@ async def persist_result(state: TriageState) -> TriageState:
 
     # 组装 whitelist
     matched_whitelists = [
-        str(m.get("id") or m.get("rule_id") or "")
+        str(m.get("id") or m.get("rule_id") or m.get("whiteId") or "")
         for m in (state.get("whitelist_matches") or [])
     ]
 
@@ -1161,9 +1187,13 @@ async def run_alert_triage(req: dict[str, Any]) -> dict[str, Any]:
         "started_at": final.get("started_at", ""),
         "finished_at": final.get("finished_at", ""),
         "alert": final.get("alert"),
+        "alert_proof": final.get("alert_proof"),
+        "assets": final.get("assets", []),
+        "incident_proofs": final.get("incident_proofs", []),
         "whitelist_matches": final.get("whitelist_matches", []),
         "related_incidents": final.get("related_incidents", []),
         "endpoint_logs": final.get("endpoint_logs", []),
+        "missing_evidence": final.get("missing_evidence", []),
         "rag_degraded": bool(final.get("rag_degraded", False)),
         "rag_response": final.get("rag_response"),
         "trace_events": final.get("trace_events", []),

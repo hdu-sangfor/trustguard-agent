@@ -111,6 +111,18 @@ class TestCollectEvidence:
             assert len(result["related_incidents"]) == 1
 
     @pytest.mark.asyncio
+    async def test_alert_name_is_not_used_as_asset_hostname(self):
+        state = _base_state(alert={"uuid": "alert-123", "name": "Suspicious script"})
+        with patch("clients.xdr_client.get_alert_proof", new_callable=AsyncMock) as mock_proof, \
+             patch("clients.xdr_client.get_assets", new_callable=AsyncMock) as mock_assets, \
+             patch("clients.xdr_client.list_incidents", new_callable=AsyncMock) as mock_incidents:
+            mock_proof.return_value = {"description": "summary only"}
+            mock_incidents.return_value = []
+            result = await collect_evidence(state)
+            mock_assets.assert_not_awaited()
+            assert "assets" in result["missing_evidence"]
+
+    @pytest.mark.asyncio
     async def test_proof_missing_adds_to_missing_evidence(self):
         state = _base_state(alert={"uuid": "alert-123", "hostname": "win-pc"})
         from clients.xdr_client import XDRClientError
@@ -123,6 +135,7 @@ class TestCollectEvidence:
             mock_incidents.return_value = []
             result = await collect_evidence(state)
             assert "alert_proof" in result["missing_evidence"]
+            assert "assets" in result["missing_evidence"]
 
 
 class TestCheckWhitelist:
@@ -198,6 +211,16 @@ class TestValidateDecision:
         assert result["raw_decision"]["confidence"] == 0.4
 
     @pytest.mark.asyncio
+    async def test_complete_primary_evidence_uses_suspicious_instead_of_insufficient(self):
+        state = _base_state(
+            raw_decision={"verdict": "insufficient_evidence", "confidence": 0.3},
+            missing_evidence=[],
+        )
+        result = await validate_decision(state)
+        assert result["raw_decision"]["verdict"] == "suspicious"
+        assert result["raw_decision"]["confidence"] == 0.5
+
+    @pytest.mark.asyncio
     async def test_deterministic_verdict_with_missing_evidence(self):
         state = _base_state(
             raw_decision={"verdict": "true_positive", "confidence": 0.7, "severity": "high"},
@@ -205,6 +228,17 @@ class TestValidateDecision:
         )
         result = await validate_decision(state)
         assert result["raw_decision"]["verdict"] == "suspicious"
+
+    @pytest.mark.asyncio
+    async def test_false_positive_requires_exact_whitelist(self):
+        state = _base_state(
+            raw_decision={"verdict": "false_positive", "confidence": 0.9, "severity": "medium"},
+            whitelist_matches=[],
+        )
+        result = await validate_decision(state)
+        assert result["raw_decision"]["verdict"] == "suspicious"
+        assert result["raw_decision"]["confidence"] == 0.7
+        assert any("exact whitelist" in error for error in result["validation_errors"])
 
     @pytest.mark.asyncio
     async def test_auto_action_demoted(self):
