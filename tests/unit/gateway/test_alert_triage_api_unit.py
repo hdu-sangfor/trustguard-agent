@@ -92,12 +92,13 @@ async def test_create_triage_returns_without_waiting_for_run(monkeypatch):
     inserts = []
 
     monkeypatch.setattr(gw, "_execute", lambda sql, params=(): inserts.append((sql, params)) or 1)
-    monkeypatch.setattr(gw, "_get_task_row", lambda task_id: {
-        "task_id": task_id,
+    rows = [None, {
+        "task_id": "at-created",
         "target": "alert-1",
         "status": "PENDING",
         "created_at": "2026-08-03T07:00:00Z",
-    })
+    }]
+    monkeypatch.setattr(gw, "_get_task_row", lambda _task_id: rows.pop(0) if len(rows) > 1 else rows[0])
 
     async def fake_orch(method, path, **kwargs):
         assert method == "POST"
@@ -115,3 +116,55 @@ async def test_create_triage_returns_without_waiting_for_run(monkeypatch):
     assert response["data"]["status"] == "PENDING"
     assert len(scheduled) == 1
     assert len(inserts) == 1
+
+
+@pytest.mark.asyncio
+async def test_create_triage_without_auto_start_registers_but_does_not_schedule(monkeypatch):
+    gw = _load_gateway_main()
+    scheduled = []
+    monkeypatch.setattr(gw, "_execute", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(gw, "_get_task_row", lambda task_id: {
+        "task_id": task_id,
+        "target": "alert-1",
+        "status": "PENDING",
+    })
+    async def register_only(*_args, **_kwargs):
+        return {"status": "PENDING"}
+
+    monkeypatch.setattr(gw, "_orch", register_only)
+    monkeypatch.setattr(gw.asyncio, "create_task", lambda coro: scheduled.append(coro))
+
+    task = await gw._create_alert_triage_task_impl(
+        gw.CreateAlertTriageRequest(alert_uuid="alert-1"),
+        task_id="at-deterministic",
+        auto_start=False,
+    )
+
+    assert task["taskId"] == "at-deterministic"
+    assert scheduled == []
+
+
+@pytest.mark.asyncio
+async def test_create_triage_failure_raises_and_marks_task_failed(monkeypatch):
+    gw = _load_gateway_main()
+    updates = []
+    monkeypatch.setattr(gw, "_execute", lambda sql, params=(): updates.append((sql, params)) or 1)
+    monkeypatch.setattr(gw, "_get_task_row", lambda task_id: {
+        "task_id": task_id,
+        "target": "alert-1",
+        "status": "PENDING",
+    })
+
+    async def unavailable(*_args, **_kwargs):
+        raise RuntimeError("orchestrator unavailable")
+
+    monkeypatch.setattr(gw, "_orch", unavailable)
+
+    with pytest.raises(gw.HTTPException) as exc:
+        await gw._create_alert_triage_task_impl(
+            gw.CreateAlertTriageRequest(alert_uuid="alert-1"),
+            task_id="at-failed",
+        )
+
+    assert exc.value.status_code == 502
+    assert any("status = 'FAILED'" in sql for sql, _params in updates)

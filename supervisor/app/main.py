@@ -25,7 +25,6 @@ from app.domain.models import (
     DraftRequest,
     DraftResponse,
     HealthResponse,
-    PentestDraft,
     ProgressSummaryRequest,
     ProgressSummaryResponse,
     WorkflowCapability,
@@ -74,7 +73,7 @@ def _build_draft_response(req: DraftRequest, actor: str) -> DraftResponse:
     combined = "\n".join(message.text for message in conversation.messages if message.role == "user")
     registered = workflow_registry.resolve(req.workflow_id, combined)
     state = run_graph(combined, registered.adapter.workflow_id)
-    draft_model = PentestDraft.model_validate(state.get("draft") or {})
+    draft_model = registered.adapter.build_model(state.get("draft") or {})
     missing = list(state.get("missing_fields") or [])
     warnings = list(state.get("warnings") or [])
     status = str(state.get("status") or "NEEDS_CLARIFICATION")
@@ -85,6 +84,8 @@ def _build_draft_response(req: DraftRequest, actor: str) -> DraftResponse:
         draft_id = record.draft_id
     if missing:
         assistant = "我还不能创建任务。请补充：" + "、".join(missing) + "。"
+    elif registered.adapter.workflow_id == "alert_triage":
+        assistant = "我已整理好告警研判任务草稿。确认后会调用 Alert Triage Agent 查询 XDR 证据并生成研判结论。"
     else:
         assistant = "我已整理好渗透测试任务草稿。确认后我会创建任务并启动现有的 Pentest Workflow。"
     if warnings:
@@ -259,6 +260,7 @@ def consume_draft(req: ConsumeDraftRequest, x_actor_id: str | None = Header(defa
         draft_id=record.draft_id,
         conversation_id=record.conversation_id,
         draft=record.draft,
+        workflow_id=record.draft.workflow_id,
         confirmation_state="COMPLETED" if record.confirmation_state == "COMPLETED" else "CLAIMED",
         task_id=record.task_id or None,
     )

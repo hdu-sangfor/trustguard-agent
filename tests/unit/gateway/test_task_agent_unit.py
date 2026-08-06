@@ -122,6 +122,61 @@ async def test_task_agent_confirm_reuses_existing_task_lifecycle(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_task_agent_confirm_routes_alert_triage_draft_idempotently(monkeypatch):
+    gw = _load_gateway_main()
+    calls = {"consume": 0, "complete": 0, "create": 0}
+    completed = False
+
+    async def fake_supervisor(_method, path, **kwargs):
+        nonlocal completed
+        if path.endswith("/complete"):
+            calls["complete"] += 1
+            completed = True
+            assert kwargs["json_body"]["taskId"].startswith("at-")
+            return {"confirmationState": "COMPLETED", "taskId": kwargs["json_body"]["taskId"]}
+        if path.endswith("/messages"):
+            return kwargs["json_body"]
+        calls["consume"] += 1
+        return {
+            "workflowId": "alert_triage",
+            "conversationId": "conv-triage",
+            "draftId": "draft-triage",
+            "confirmationState": "COMPLETED" if completed else "CLAIMED",
+            "taskId": "at-existing" if completed else None,
+            "draft": {
+                "workflowId": "alert_triage",
+                "alertUuid": "alert-tp-webshell-001",
+                "scenarioId": "webshell-true-positive",
+                "enableRag": True,
+            },
+        }
+
+    async def fake_create(req, *, task_id=None, auto_start=True):
+        calls["create"] += 1
+        assert req.alert_uuid == "alert-tp-webshell-001"
+        assert req.scenario_id == "webshell-true-positive"
+        assert req.enable_rag is True
+        assert auto_start is True
+        return {"taskId": task_id, "status": "PENDING"}
+
+    monkeypatch.setattr(gw, "_supervisor", fake_supervisor)
+    monkeypatch.setattr(gw, "_create_alert_triage_task_impl", fake_create)
+    monkeypatch.setattr(gw, "_record_audit", lambda *_args, **_kwargs: None)
+    request = gw.TaskAgentConfirmRequest(
+        confirmationToken="signed-token",
+        idempotencyKey="idem-triage",
+    )
+
+    first = await gw.task_agent_confirm(request, _user(gw))
+    second = await gw.task_agent_confirm(request, _user(gw))
+
+    assert first["data"]["workflowId"] == "alert_triage"
+    assert first["data"]["task"]["taskId"].startswith("at-")
+    assert second["data"]["task"]["taskId"] == "at-existing"
+    assert calls == {"consume": 2, "complete": 1, "create": 2}
+
+
+@pytest.mark.asyncio
 async def test_task_agent_conversation_forwards_actor(monkeypatch):
     gw = _load_gateway_main()
     captured = {}

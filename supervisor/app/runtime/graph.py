@@ -24,14 +24,19 @@ def _activity(state: SupervisorState, kind: str, title: str, detail: str, status
 
 
 def _parse_node(state: SupervisorState, adapter) -> SupervisorState:
+    is_triage = adapter.workflow_id == "alert_triage"
     return {
         **state,
         "draft": adapter.build_draft(state.get("message") or ""),
         "activities": _activity(
             state,
             "analysis",
-            "理解任务意图",
-            "提取目标、测试重点、运行时长和风险偏好；不会展示模型私有思维链。",
+            "理解告警研判意图" if is_triage else "理解任务意图",
+            (
+                "提取告警 UUID、场景标记和 RAG 偏好；不会展示模型私有思维链。"
+                if is_triage
+                else "提取目标、测试重点、运行时长和风险偏好；不会展示模型私有思维链。"
+            ),
         ),
     }
 
@@ -41,18 +46,28 @@ def parse_node(state: SupervisorState) -> SupervisorState:
 
 
 def _validate_node(state: SupervisorState, adapter) -> SupervisorState:
+    is_triage = adapter.workflow_id == "alert_triage"
     draft = state.get("draft") or {}
     missing, warnings = adapter.validate(draft)
     activities = _activity(
         state,
         "guard",
-        "检查目标与安全边界",
-        "验证目标格式，并将利用/破坏性请求标记为需要额外确认。",
+        "检查告警标识与研判边界" if is_triage else "检查目标与安全边界",
+        (
+            "验证告警 UUID，并确认该工作流只查询证据和给出人工处置建议。"
+            if is_triage
+            else "验证目标格式，并将利用/破坏性请求标记为需要额外确认。"
+        ),
     )
     if missing:
         activities = _activity(state | {"activities": activities}, "result", "需要补充信息", "缺少：" + "、".join(missing), "blocked")
     else:
-        activities = _activity(state | {"activities": activities}, "result", "生成任务草稿", "草稿已准备好，等待你确认后创建任务。")
+        activities = _activity(
+            state | {"activities": activities},
+            "result",
+            "生成研判任务草稿" if is_triage else "生成任务草稿",
+            "草稿已准备好，等待你确认后创建任务。",
+        )
     return {**state, "missing_fields": missing, "warnings": warnings, "activities": activities, "status": "NEEDS_CLARIFICATION" if missing else "NEEDS_CONFIRMATION"}
 
 

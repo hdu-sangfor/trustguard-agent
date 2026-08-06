@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from fastapi import HTTPException
 
-from app.domain.models import PentestDraft
+from app.domain.models import AlertTriageDraft, PentestDraft
 from app.security.confirmation import DraftStore
 
 
@@ -35,6 +35,23 @@ def test_confirmation_token_rejects_tampering(monkeypatch):
 
     with pytest.raises(HTTPException):
         store.consume(tampered, "actor-1")
+
+
+def test_confirmation_store_preserves_alert_triage_draft(monkeypatch):
+    monkeypatch.setenv("SUPERVISOR_CONFIRMATION_SECRET", "unit-test-secret")
+    store = DraftStore()
+    draft = AlertTriageDraft(
+        alert_uuid="alert-tp-webshell-001",
+        scenario_id="webshell-true-positive",
+        enable_rag=True,
+    )
+    _record, token = store.put("conv-triage", "actor-1", draft)
+
+    consumed = store.claim(token, "actor-1", "idem-triage")
+
+    assert isinstance(consumed.draft, AlertTriageDraft)
+    assert consumed.draft.workflow_id == "alert_triage"
+    assert consumed.draft.alert_uuid == "alert-tp-webshell-001"
 
 
 def test_confirmation_claim_is_retryable_and_completion_is_replayable(monkeypatch):

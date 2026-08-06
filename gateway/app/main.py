@@ -777,6 +777,14 @@ async def task_agent_confirm(
         actor_id=user.user_id,
     )
     draft = (consumed or {}).get("draft") or {}
+    workflow_id = str(
+        (consumed or {}).get("workflowId")
+        or draft.get("workflowId")
+        or draft.get("workflow_id")
+        or "pentest"
+    ).strip().lower()
+    if workflow_id == "alert_triage":
+        return await _confirm_alert_triage_draft(consumed or {}, req, user, idem)
     target = str(draft.get("target") or "").strip()
     if not target:
         raise HTTPException(status_code=400, detail="Supervisor draft is missing target")
@@ -875,6 +883,109 @@ async def task_agent_confirm(
     }
     _record_audit("TASK_AGENT_CONFIRMED", user.user_id, task_id, f"start={req.start}")
     return ok(payload)
+
+
+async def _confirm_alert_triage_draft(
+    consumed: dict[str, Any],
+    req: TaskAgentConfirmRequest,
+    user: CurrentUser,
+    idempotency_key: str,
+) -> dict[str, Any]:
+    draft = consumed.get("draft") if isinstance(consumed.get("draft"), dict) else {}
+    alert_uuid = str(draft.get("alertUuid") or draft.get("alert_uuid") or "").strip()
+    if not alert_uuid:
+        raise HTTPException(status_code=400, detail="Supervisor triage draft is missing alertUuid")
+    draft_id = str(consumed.get("draftId") or "").strip()
+    if not draft_id:
+        raise HTTPException(status_code=400, detail="Supervisor response is missing draftId")
+    task_id = str(consumed.get("taskId") or "").strip()
+    if not task_id:
+        task_id = "at-" + hashlib.sha256(draft_id.encode()).hexdigest()[:32]
+
+    task = await _create_alert_triage_task_impl(
+        CreateAlertTriageRequest(
+            alert_uuid=alert_uuid,
+            scenario_id=draft.get("scenarioId") or draft.get("scenario_id"),
+            enable_rag=bool(draft.get("enableRag") or draft.get("enable_rag")),
+            caller_notes=str(draft.get("callerNotes") or draft.get("caller_notes") or ""),
+        ),
+        task_id=task_id,
+        auto_start=req.start,
+    )
+    if str(consumed.get("confirmationState") or "") != "COMPLETED":
+        await _supervisor(
+            "POST",
+            "/v1/task-agent/drafts/complete",
+            json_body={
+                "draftId": draft_id,
+                "idempotencyKey": idempotency_key,
+                "taskId": task_id,
+            },
+            actor_id=user.user_id,
+        )
+
+    activity = [
+        {
+            "id": "confirm-1",
+            "kind": "tool",
+            "title": "创建告警研判任务",
+            "detail": f"Gateway 已创建 {task_id}",
+            "status": "done",
+            "timestamp": _now_iso(),
+        }
+    ]
+    if req.start:
+        activity.append(
+            {
+                "id": "confirm-2",
+                "kind": "progress",
+                "title": "启动 Alert Triage Workflow",
+                "detail": "Orchestrator 已接管任务，将查询 XDR 证据并生成可追溯研判结论。",
+                "status": "running",
+                "timestamp": _now_iso(),
+            }
+        )
+    conversation_id = str(consumed.get("conversationId") or "")
+    assistant_text = (
+        f"告警研判任务 {task_id} 已创建并启动。"
+        if req.start
+        else f"告警研判任务 {task_id} 已创建，当前尚未启动。"
+    )
+    persisted_message: dict[str, Any] = {
+        "id": f"confirm-{draft_id}",
+        "role": "assistant",
+        "text": assistant_text,
+        "activities": activity,
+        "taskId": task_id,
+        "taskStatus": str(task.get("status") or "PENDING"),
+        "createdAt": _now_iso(),
+    }
+    if conversation_id:
+        try:
+            persisted_message = await _supervisor(
+                "POST",
+                f"/v1/conversations/{conversation_id}/messages",
+                json_body=persisted_message,
+                actor_id=user.user_id,
+                timeout=5.0,
+            )
+        except Exception:
+            log.exception(
+                "failed to persist alert-triage confirmation conversation_id=%s",
+                conversation_id,
+            )
+    _record_audit("TASK_AGENT_TRIAGE_CONFIRMED", user.user_id, task_id, f"start={req.start}")
+    return ok(
+        {
+            "conversationId": conversation_id,
+            "draftId": draft_id,
+            "workflowId": "alert_triage",
+            "task": task,
+            "started": req.start,
+            "activities": activity,
+            "message": persisted_message,
+        }
+    )
 
 
 @app.get("/api/v1/tasks/{task_id}/run-status")
@@ -2330,15 +2441,27 @@ class CreateAlertTriageRequest(BaseModel):
 
 @app.post("/api/v1/alert-triage/tasks")
 async def create_alert_triage_task(req: CreateAlertTriageRequest) -> dict[str, Any]:
-    task_id = "at-" + uuid.uuid4().hex
-    _execute(
-        """
-        INSERT INTO tg_task
-          (task_id, name, target, status, current_phase, created_at, updated_at)
-        VALUES (%s, %s, %s, 'PENDING', 'RECON', NOW(), NOW())
-        """,
-        (task_id, f"研判-{req.alert_uuid[:8]}", req.alert_uuid),
-    )
+    return ok(await _create_alert_triage_task_impl(req))
+
+
+async def _create_alert_triage_task_impl(
+    req: CreateAlertTriageRequest,
+    *,
+    task_id: str | None = None,
+    auto_start: bool = True,
+) -> dict[str, Any]:
+    task_id = task_id or "at-" + uuid.uuid4().hex
+    row = _get_task_row(task_id)
+    if row is None:
+        _execute(
+            """
+            INSERT INTO tg_task
+              (task_id, name, target, status, current_phase, created_at, updated_at)
+            VALUES (%s, %s, %s, 'PENDING', 'RECON', NOW(), NOW())
+            """,
+            (task_id, f"研判-{req.alert_uuid[:8]}", req.alert_uuid),
+        )
+        row = _get_task_row(task_id)
     payload = {
         "task_id": task_id,
         "alert_uuid": req.alert_uuid,
@@ -2352,17 +2475,19 @@ async def create_alert_triage_task(req: CreateAlertTriageRequest) -> dict[str, A
     except Exception as exc:
         log.warning("alert triage create failed task_id=%s: %s", task_id, exc)
         _execute("UPDATE tg_task SET status = 'FAILED', updated_at = NOW() WHERE task_id = %s", (task_id,))
-        return fail("创建研判任务失败", code="ORCHESTRATOR_ERROR", status_code=502)
+        raise HTTPException(status_code=502, detail="创建研判任务失败") from exc
 
-    # The graph may include XDR retries and an LLM request.  Do not keep the
-    # browser request open while it runs; the task is visible and pollable now.
-    asyncio.create_task(_run_alert_triage_in_background(task_id))
-    return ok(_triage_task_to_api({
+    current_status = str((row or {}).get("status") or "PENDING").upper()
+    if auto_start and current_status not in {"RUNNING", "DONE"}:
+        # The graph may include XDR retries and an LLM request. Do not keep the
+        # caller request open while it runs; the task is visible and pollable now.
+        asyncio.create_task(_run_alert_triage_in_background(task_id))
+    return _triage_task_to_api({
         "task_id": task_id,
         "alert_uuid": req.alert_uuid,
-        "status": "PENDING",
+        "status": current_status,
         "enable_rag": req.enable_rag,
-    }, _get_task_row(task_id)))
+    }, row)
 
 @app.get("/api/v1/alert-triage/tasks")
 async def list_alert_triage_tasks(limit: int = 50) -> dict[str, Any]:
