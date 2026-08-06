@@ -129,6 +129,7 @@ class TriageState(TypedDict, total=False):
     # 工作流中间态
     alert: dict[str, Any] | None
     alert_proof: dict[str, Any] | None
+    endpoint_logs: list[dict[str, Any]]
     assets: list[dict[str, Any]]
     related_incidents: list[dict[str, Any]]
     incident_proofs: list[dict[str, Any]]
@@ -228,9 +229,11 @@ async def collect_evidence(state: TriageState) -> TriageState:
 
     missing: list[str] = []
     state["assets"] = []
+    state["endpoint_logs"] = []
     state["related_incidents"] = []
     state["incident_proofs"] = []
     state["alert_proof"] = {}
+    alert = state.get("alert") or {}
 
     # 1) proof
     try:
@@ -244,13 +247,40 @@ async def collect_evidence(state: TriageState) -> TriageState:
         missing.append("alert_proof")
         state["missing_evidence"].append("alert_proof")
 
+    # 1b) 原始端点日志：告警中的 logIds 是最有价值的行为上下文。
+    log_ids = alert.get("logIds") or (state["alert_proof"] or {}).get("logIds") or []
+    if isinstance(log_ids, list) and log_ids:
+        try:
+            logs = await xdr_client.list_endpoint_security_logs(
+                {"uuIds": [str(item) for item in log_ids], "page": 1, "pageSize": 100}
+            )
+            state["endpoint_logs"] = logs if isinstance(logs, list) else []
+            if not state["endpoint_logs"]:
+                state["missing_evidence"].append("endpoint_logs")
+        except xdr_client.XDRClientError as e:
+            logger.warning("endpoint logs query failed task_id=%s: %s", task_id, e)
+            state["missing_evidence"].append("endpoint_logs")
+    else:
+        state["missing_evidence"].append("endpoint_logs")
+
     # 2) assets
-    alert = state.get("alert") or {}
     asset_params: dict[str, Any] = {}
     hostname = str(
-        alert.get("hostname") or alert.get("device_name") or ""
+        alert.get("hostname")
+        or alert.get("hostName")
+        or alert.get("device_name")
+        or alert.get("name")
+        or ""
     ).strip()
-    src_ip = str(alert.get("source_ip") or "").strip()
+    src_ip = str(
+        alert.get("source_ip")
+        or alert.get("hostIp")
+        or alert.get("sourceIp")
+        or ""
+    ).strip()
+    asset_id = str(alert.get("assetId") or alert.get("hostAssetId") or "").strip()
+    if asset_id:
+        asset_params["assetIds"] = [asset_id]
     if hostname:
         asset_params["hostname"] = hostname
     if src_ip:
@@ -279,7 +309,7 @@ async def collect_evidence(state: TriageState) -> TriageState:
         state["related_incidents"] = incidents if isinstance(incidents, list) else []
         # 获取每个 incident 的 proof
         for inc in state["related_incidents"][:5]:  # 最多取 5 个
-            iid = str(inc.get("uuid") or inc.get("id", ""))
+            iid = str(inc.get("uuid") or inc.get("uuId") or inc.get("id", ""))
             if not iid:
                 continue
             try:
@@ -355,7 +385,7 @@ async def check_whitelist(state: TriageState) -> TriageState:
     match_info = {
         "match_count": len(state["whitelist_matches"]),
         "match_ids": [
-            str(m.get("id") or m.get("rule_id", "") or "")
+            str(m.get("id") or m.get("rule_id") or m.get("whiteId") or "")
             for m in state["whitelist_matches"][:10]
         ],
     }
@@ -501,6 +531,7 @@ async def make_decision(state: TriageState) -> TriageState:
 严重程度: {alert_severity}
 告警详情: {_safe_json_dumps(alert, 800)}
 证据: {proof_summary}
+原始端点日志: {_safe_json_dumps(state.get('endpoint_logs', []), 3000)}
 白名单匹配: {whitelist_summary}
 RAG 知识: {rag_summary}
 关联事件数: {len(state.get('related_incidents', []))}
@@ -713,8 +744,14 @@ async def persist_result(state: TriageState) -> TriageState:
         evidence_refs.append(
             {"source": "proof", "uuid": state["alert_uuid"], "field": "proof", "value_summary": _summarize_proof(state["alert_proof"])}
         )
+    for log in state.get("endpoint_logs") or []:
+        lid = str(log.get("uuId") or log.get("uuid") or log.get("id") or "")
+        if lid:
+            evidence_refs.append(
+                {"source": "endpoint_log", "uuid": lid, "field": "", "value_summary": _safe_json_dumps(log, 300)}
+            )
     for inc in state.get("related_incidents") or []:
-        eid = str(inc.get("uuid") or inc.get("id", ""))
+        eid = str(inc.get("uuid") or inc.get("uuId") or inc.get("id", ""))
         if eid:
             evidence_refs.append(
                 {"source": "incident", "uuid": eid, "field": "", "value_summary": str(inc.get("title") or inc.get("name", "") or "")[:200]}
@@ -732,7 +769,7 @@ async def persist_result(state: TriageState) -> TriageState:
 
     # related incidents
     related_incidents = [
-        str(inc.get("uuid") or inc.get("id", ""))
+        str(inc.get("uuid") or inc.get("uuId") or inc.get("id", ""))
         for inc in (state.get("related_incidents") or [])
     ]
 
@@ -1067,6 +1104,7 @@ async def run_alert_triage(req: dict[str, Any]) -> dict[str, Any]:
         "caller_notes": req.get("caller_notes"),
         "alert": None,
         "alert_proof": None,
+        "endpoint_logs": [],
         "assets": [],
         "related_incidents": [],
         "incident_proofs": [],
@@ -1125,6 +1163,7 @@ async def run_alert_triage(req: dict[str, Any]) -> dict[str, Any]:
         "alert": final.get("alert"),
         "whitelist_matches": final.get("whitelist_matches", []),
         "related_incidents": final.get("related_incidents", []),
+        "endpoint_logs": final.get("endpoint_logs", []),
         "rag_degraded": bool(final.get("rag_degraded", False)),
         "rag_response": final.get("rag_response"),
         "trace_events": final.get("trace_events", []),

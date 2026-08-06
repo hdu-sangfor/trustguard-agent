@@ -290,7 +290,10 @@ async def get_alert_proof(alert_uuid: str) -> dict[str, Any]:
     """GET /api/xdr/v1/alerts/{uuid}/proof"""
     path = f"/api/xdr/v1/alerts/{alert_uuid}/proof"
     result = await _xdr_request("GET", path)
-    return result if isinstance(result, dict) else {}
+    if not isinstance(result, dict):
+        return {}
+    data = result.get("data")
+    return data if isinstance(data, dict) else result
 
 
 async def list_incidents(
@@ -310,11 +313,31 @@ async def list_incidents(
     return []
 
 
+async def list_endpoint_security_logs(
+    params: Optional[dict[str, Any]] = None,
+) -> list[dict[str, Any]]:
+    """POST /api/xdr/v1/securitylog/list for alert-linked endpoint evidence."""
+    result = await _xdr_request(
+        "POST", "/api/xdr/v1/securitylog/list", json_body=params or {}
+    )
+    if isinstance(result, list):
+        return result
+    if isinstance(result, dict):
+        data = result.get("data", {})
+        if isinstance(data, dict):
+            return data.get("item") or data.get("items") or data.get("logs") or []
+        return data if isinstance(data, list) else []
+    return []
+
+
 async def get_incident_proof(incident_uuid: str) -> dict[str, Any]:
     """GET /api/xdr/v1/incidents/{uuid}/proof"""
     path = f"/api/xdr/v1/incidents/{incident_uuid}/proof"
     result = await _xdr_request("GET", path)
-    return result if isinstance(result, dict) else {}
+    if not isinstance(result, dict):
+        return {}
+    data = result.get("data")
+    return data if isinstance(data, dict) else result
 
 
 async def get_assets(

@@ -209,14 +209,14 @@ def _triage_task_to_api(state: dict[str, Any] | None, row: dict[str, Any] | None
             "severity": _triage_severity(alert.get("severity")),
             "threatDefine": alert.get("threat_define"),
             "direction": alert.get("direction"),
-            "proofType": alert.get("proof_type"),
-            "proofSummary": alert.get("proof_summary") or "",
+            "proofType": alert.get("proof_type") or alert.get("proofType"),
+            "proofSummary": alert.get("proof_summary") or alert.get("proofSummary") or "",
         } if alert else None,
         "matchedWhitelists": raw_whitelists,
         "relatedIncidents": [
             {
-                "uuId": item.get("uuid") or item.get("id") or "",
-                "name": item.get("name") or item.get("title") or item.get("uuid") or item.get("id") or "",
+                "uuId": item.get("uuid") or item.get("uuId") or item.get("id") or "",
+                "name": item.get("name") or item.get("title") or item.get("uuid") or item.get("uuId") or item.get("id") or "",
                 "severity": _triage_severity(item.get("severity")),
             }
             for item in raw_incidents if isinstance(item, dict)

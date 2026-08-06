@@ -28,7 +28,7 @@ def test_triage_task_api_contract_converts_internal_result_to_ui_fields():
             "alert_uuid": "alert-1",
             "status": "DONE",
             "enable_rag": True,
-            "alert": {"name": "可疑 PowerShell", "severity": "high"},
+            "alert": {"name": "可疑 PowerShell", "severity": "high", "proofType": 2},
             "whitelist_matches": [{"id": "wl-1", "name": "approved-script"}],
             "related_incidents": [{"uuid": "inc-1", "title": "关联事件", "severity": "medium"}],
             "rag_degraded": True,
@@ -55,6 +55,7 @@ def test_triage_task_api_contract_converts_internal_result_to_ui_fields():
     assert task["taskId"] == "at-1"
     assert task["alertUuid"] == "alert-1"
     assert task["alertSummary"]["severity"] == 4
+    assert task["alertSummary"]["proofType"] == 2
     assert task["relatedIncidents"] == [{"uuId": "inc-1", "name": "关联事件", "severity": 3}]
     assert task["matchedWhitelists"][0]["id"] == "wl-1"
     assert task["recommendedActions"] == [{
@@ -66,6 +67,20 @@ def test_triage_task_api_contract_converts_internal_result_to_ui_fields():
     assert task["missingEvidence"] == ["process_tree"]
     assert task["ragDegraded"] is True
     assert task["errors"] == ["invalid confidence type"]
+
+
+def test_triage_task_api_contract_accepts_official_xdr_uuid_field():
+    gw = _load_gateway_main()
+    task = gw._triage_task_to_api(
+        {
+            "task_id": "at-official-fields",
+            "alert_uuid": "alert-1",
+            "status": "DONE",
+            "related_incidents": [{"uuId": "incident-1", "name": "关联事件"}],
+            "result": {"verdict": "true_positive", "confidence": 0.9},
+        }
+    )
+    assert task["relatedIncidents"][0]["uuId"] == "incident-1"
 
 
 @pytest.mark.asyncio

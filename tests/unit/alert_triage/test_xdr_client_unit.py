@@ -17,11 +17,11 @@ import pytest
 
 from clients.xdr_client import (
     XDRClientError,
-    _generate_xdr_signature,
-    _build_xdr_headers,
+    _sdk_sign,
     _redact_headers,
     get_alert,
     get_alert_proof,
+    list_endpoint_security_logs,
     match_whitelist,
     list_incidents,
     get_assets,
@@ -31,48 +31,45 @@ from clients.xdr_client import (
 
 class TestXDRSignature:
     def test_signature_with_secret(self):
-        with patch.dict(os.environ, {"XDR_SIGN_SECRET": "test-secret"}):
+        with patch.dict(os.environ, {"XDR_AK": "test-ak", "XDR_SK": "test-secret"}):
             # Need to re-import to pick up env
             import importlib
             import clients.xdr_client as xdrmod
             importlib.reload(xdrmod)
-            sig = xdrmod._generate_xdr_signature("GET", "/api/test", "12345", "abc", "")
-            assert isinstance(sig, str)
-            assert len(sig) == 64  # HMAC-SHA256 hex
+            headers = xdrmod._sdk_sign("GET", "/api/test")
+            assert headers["Authorization"].startswith("algorithm=HMAC-SHA256")
+            assert "Signature=" in headers["Authorization"]
 
     def test_signature_without_secret(self):
-        with patch.dict(os.environ, {"XDR_SIGN_SECRET": ""}):
+        with patch.dict(os.environ, {"XDR_AK": "", "XDR_SK": ""}):
             import importlib
             import clients.xdr_client as xdrmod
             importlib.reload(xdrmod)
-            sig = xdrmod._generate_xdr_signature("GET", "/api/test", "12345", "abc", "")
-            assert sig == ""
+            headers = xdrmod._sdk_sign("GET", "/api/test")
+            assert "Authorization" not in headers
 
 
 class TestHeaders:
     def test_headers_include_signature_and_api_key(self):
-        with patch.dict(os.environ, {"XDR_SIGN_SECRET": "sec", "XDR_API_KEY": "key123"}):
+        with patch.dict(os.environ, {"XDR_AK": "key123", "XDR_SK": "sec"}):
             import importlib
             import clients.xdr_client as xdrmod
             importlib.reload(xdrmod)
-            headers = xdrmod._build_xdr_headers("POST", "/api/test", '{"key":"value"}')
-            assert "X-Timestamp" in headers
-            assert "X-Nonce" in headers
-            assert "X-Signature" in headers
-            assert "X-API-Key" in headers
-            assert headers["X-API-Key"] == "key123"
+            headers = xdrmod._sdk_sign("POST", "/api/test", '{"key":"value"}')
+            assert "sign-date" in headers
+            assert "sdk-host" in headers
+            assert "Authorization" in headers
+            assert "Access=key123" in headers["Authorization"]
 
 
 class TestRedaction:
     def test_redact_headers(self):
         headers = {
-            "X-Signature": "abc123def456",
-            "X-API-Key": "sk-secret-key",
+            "Authorization": "algorithm=HMAC-SHA256, Signature=abc123def456",
             "Content-Type": "application/json",
         }
         redacted = _redact_headers(headers)
-        assert redacted["X-Signature"] == "***REDACTED***"
-        assert redacted["X-API-Key"] == "***REDACTED***"
+        assert redacted["Authorization"] == "***REDACTED***"
         assert redacted["Content-Type"] == "application/json"
 
 
@@ -103,6 +100,20 @@ class TestClientCalls:
             mock_req.side_effect = XDRClientError("not found", status_code=404)
             with pytest.raises(XDRClientError):
                 await get_alert("nonexistent")
+
+    @pytest.mark.asyncio
+    async def test_get_alert_proof_unwraps_official_response(self):
+        with patch("clients.xdr_client._xdr_request", new_callable=AsyncMock) as mock_req:
+            mock_req.return_value = {"code": 0, "data": {"uuId": "alert-1", "proof": {"logIds": ["log-1"]}}}
+            result = await get_alert_proof("alert-1")
+            assert result == {"uuId": "alert-1", "proof": {"logIds": ["log-1"]}}
+
+    @pytest.mark.asyncio
+    async def test_endpoint_security_logs_unwrap_official_page(self):
+        with patch("clients.xdr_client._xdr_request", new_callable=AsyncMock) as mock_req:
+            mock_req.return_value = {"code": 0, "data": {"item": [{"uuId": "log-1"}]}}
+            result = await list_endpoint_security_logs({"uuIds": ["log-1"]})
+            assert result == [{"uuId": "log-1"}]
 
     @pytest.mark.asyncio
     async def test_match_whitelist(self):
