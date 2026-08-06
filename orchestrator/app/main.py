@@ -249,6 +249,8 @@ async def _orchestrator_lifespan(app: FastAPI):
 
         fed_sync_task = asyncio.create_task(_kb_federation_sync_loop())
 
+    await _recover_alert_triage_tasks()
+
     yield
 
     if gc_task is not None:
@@ -2022,6 +2024,54 @@ _ALERT_TRIAGE_CONTEXT_KEY = "alert_triage"
 _ALERT_TRIAGE_LOCK_TTL_SECONDS = max(
     60, int(os.getenv("ALERT_TRIAGE_LOCK_TTL_SECONDS", "900") or "900")
 )
+_ALERT_TRIAGE_RECOVERY_GRACE_SECONDS = max(
+    0, int(os.getenv("ALERT_TRIAGE_RECOVERY_GRACE_SECONDS", "60") or "60")
+)
+_alert_triage_recovery_tasks: set[asyncio.Task] = set()
+
+
+def _parse_alert_triage_timestamp(value: Any) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+async def _recover_alert_triage_tasks() -> None:
+    """接管 Evidence 中服务重启前遗留的告警研判任务。"""
+    from app.clients.evidence_client import list_internal_tasks
+
+    try:
+        summaries = await list_internal_tasks()
+    except Exception:
+        logger.exception("alert triage recovery scan failed")
+        return
+
+    now = datetime.now(timezone.utc)
+    for summary in summaries:
+        task_id = str(summary.get("task_id") or "").strip()
+        if not task_id.startswith("at-"):
+            continue
+        if str(summary.get("status") or "").upper() != "RUNNING":
+            continue
+        updated_at = _parse_alert_triage_timestamp(summary.get("updated_at"))
+        if updated_at is not None:
+            age = (now - updated_at).total_seconds()
+            if age < _ALERT_TRIAGE_RECOVERY_GRACE_SECONDS:
+                continue
+        persisted = await _load_persisted_alert_triage_task(task_id)
+        if not persisted or str(persisted.get("status") or "").upper() != "RUNNING":
+            continue
+        recovery = asyncio.create_task(alert_triage_run_task(task_id))
+        _alert_triage_recovery_tasks.add(recovery)
+        recovery.add_done_callback(_alert_triage_recovery_tasks.discard)
+        logger.info("alert triage recovery scheduled task_id=%s", task_id)
 
 
 async def _persist_alert_triage_task(task_data: dict[str, Any]) -> None:

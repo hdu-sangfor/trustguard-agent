@@ -61,6 +61,25 @@ async def get_context(task_id: str) -> Dict[str, Any]:
     return {}
 
 
+async def list_internal_tasks(limit: int = 200) -> list[dict[str, Any]]:
+    """列出 Evidence 中的任务摘要，供服务启动恢复遗留任务。"""
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                f"{EVIDENCE_BASE_URL}/internal/tasks",
+                params={"limit": max(1, min(int(limit), 200))},
+                timeout=10.0,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return data if isinstance(data, list) else []
+    except httpx.HTTPStatusError as e:
+        _log.warning("evidence list_internal_tasks %s", evidence_http_error_detail(e.response))
+    except httpx.HTTPError as e:
+        _log.warning("evidence list_internal_tasks transport_error=%s", e)
+    return []
+
+
 async def put_artifacts_summary(task_id: str, skill_id: str, summary: str) -> None:
     """将本步执行结果摘要写入Evidence artifacts（证据落盘）。"""
     if not summary or len(summary) > 10000:

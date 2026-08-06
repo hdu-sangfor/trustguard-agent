@@ -1,5 +1,7 @@
+import asyncio
 import importlib
 import sys
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -113,3 +115,49 @@ async def test_alert_triage_run_honors_task_store_lock(monkeypatch):
     assert result["already_running"] is True
     assert result["status"] == "PENDING"
     await store.release_task_lock(task_id, "another-orchestrator")
+
+
+@pytest.mark.asyncio
+async def test_recover_alert_triage_tasks_schedules_only_stale_running_tasks(monkeypatch):
+    orch = _load_orchestrator_main()
+    task_id = "at-recover-me"
+    monkeypatch.setattr(orch, "_ALERT_TRIAGE_RECOVERY_GRACE_SECONDS", 60)
+    monkeypatch.setattr(
+        orch,
+        "_load_persisted_alert_triage_task",
+        AsyncMock(
+            return_value={"task_id": task_id, "status": "RUNNING", "alert_uuid": "alert-1"}
+        ),
+    )
+    monkeypatch.setattr(
+        "app.clients.evidence_client.list_internal_tasks",
+        AsyncMock(
+            return_value=[
+                {
+                    "task_id": task_id,
+                    "status": "RUNNING",
+                    "updated_at": "2020-01-01T00:00:00Z",
+                },
+                {
+                    "task_id": "at-fresh",
+                    "status": "RUNNING",
+                    "updated_at": "2999-01-01T00:00:00Z",
+                },
+                {
+                    "task_id": "normal-task",
+                    "status": "RUNNING",
+                    "updated_at": "2020-01-01T00:00:00Z",
+                },
+            ]
+        ),
+    )
+    scheduled: list[str] = []
+
+    async def _run(task_id: str):
+        scheduled.append(task_id)
+        return {"task_id": task_id}
+
+    monkeypatch.setattr(orch, "alert_triage_run_task", _run)
+    await orch._recover_alert_triage_tasks()
+    await asyncio.sleep(0)
+    assert scheduled == [task_id]
