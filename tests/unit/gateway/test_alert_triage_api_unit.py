@@ -45,6 +45,7 @@ def test_triage_task_api_contract_converts_internal_result_to_ui_fields():
                     "execution_level": "manual_confirm",
                 }],
                 "missing_evidence": ["process_tree"],
+                "enrichment_evidence": ["file_hash"],
                 "rag_citations": [{"chunk_id": "c1"}],
                 "finished_at": "2026-08-03T08:00:00Z",
             },
@@ -65,6 +66,7 @@ def test_triage_task_api_contract_converts_internal_result_to_ui_fields():
         "description": "存在横向移动迹象",
     }]
     assert task["missingEvidence"] == ["process_tree"]
+    assert task["enrichmentEvidence"] == ["file_hash"]
     assert task["ragDegraded"] is True
     assert task["errors"] == ["invalid confidence type"]
 

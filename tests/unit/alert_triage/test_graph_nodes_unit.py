@@ -50,6 +50,7 @@ def _base_state(**overrides) -> TriageState:
         "error": None,
         "warnings": [],
         "missing_evidence": [],
+        "enrichment_evidence": [],
         "started_at": "2026-07-23T10:00:00Z",
         "finished_at": "",
         "current_node": "init",
@@ -109,6 +110,32 @@ class TestCollectEvidence:
             assert result["alert_proof"] == {"cmd": "powershell"}
             assert len(result["assets"]) == 1
             assert len(result["related_incidents"]) == 1
+            assert len(result["incident_proofs"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_persist_result_references_assets_and_incident_proofs(self):
+        state = _base_state(
+            alert={"uuid": "alert-123", "name": "WebShell"},
+            alert_proof={"filePath": "C:\\\\inetpub\\\\wwwroot\\\\cmd.jsp"},
+            endpoint_logs=[{"uuId": "log-1", "processName": "cmd.exe"}],
+            assets=[{"assetId": "asset-1", "hostName": "app-prod-01"}],
+            related_incidents=[{"uuId": "inc-1", "name": "WebShell incident"}],
+            incident_proofs=[{"uuId": "inc-1", "proof": {"attackStory": ["upload"]}}],
+            raw_decision={
+                "verdict": "true_positive",
+                "confidence": 0.9,
+                "severity": "critical",
+                "summary": "confirmed",
+                "reasoning": "evidence",
+                "recommended_actions": [],
+                "missing_evidence": ["file_hash"],
+            },
+        )
+        result = await persist_result(state)
+        refs = result["result"]["xdr_evidence_refs"]
+        assert {ref["source"] for ref in refs} >= {"asset", "incident_proof"}
+        assert result["result"]["missing_evidence"] == []
+        assert result["result"]["enrichment_evidence"] == ["file_hash"]
 
     @pytest.mark.asyncio
     async def test_alert_name_is_not_used_as_asset_hostname(self):

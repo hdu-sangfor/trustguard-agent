@@ -236,6 +236,7 @@ def _triage_task_to_api(state: dict[str, Any] | None, row: dict[str, Any] | None
         ],
         "warnings": list(state.get("warnings") or result.get("warnings") or []),
         "missingEvidence": list(from_state("missing_evidence", []) or []),
+        "enrichmentEvidence": list(from_state("enrichment_evidence", []) or []),
         "ragCitations": raw_citations if isinstance(raw_citations, list) else [],
         "ragDegraded": rag_degraded,
         "ragNote": (

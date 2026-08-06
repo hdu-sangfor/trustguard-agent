@@ -108,7 +108,10 @@ class AlertTriageResult(BaseModel):
         default_factory=list, description="建议动作列表"
     )
     missing_evidence: list[str] = Field(
-        default_factory=list, description="缺失的证据项"
+        default_factory=list, description="阻断研判的核心缺失证据项"
+    )
+    enrichment_evidence: list[str] = Field(
+        default_factory=list, description="不阻断当前结论、建议后续补充的增强证据项"
     )
     warnings: list[str] = Field(
         default_factory=list, description="研判过程中的警告（如降级信息）"

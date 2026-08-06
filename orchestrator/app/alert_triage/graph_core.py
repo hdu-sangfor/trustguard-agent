@@ -145,6 +145,7 @@ class TriageState(TypedDict, total=False):
     error: str | None
     warnings: list[str]
     missing_evidence: list[str]
+    enrichment_evidence: list[str]
     started_at: str
     finished_at: str
     current_node: str
@@ -783,6 +784,37 @@ async def persist_result(state: TriageState) -> TriageState:
                 {"source": "incident", "uuid": eid, "field": "", "value_summary": str(inc.get("title") or inc.get("name", "") or "")[:200]}
             )
 
+    for proof in state.get("incident_proofs") or []:
+        pid = str(proof.get("uuid") or proof.get("uuId") or proof.get("id", ""))
+        if pid:
+            evidence_refs.append(
+                {
+                    "source": "incident_proof",
+                    "uuid": pid,
+                    "field": "proof",
+                    "value_summary": _safe_json_dumps(proof, 300),
+                }
+            )
+
+    for asset in state.get("assets") or []:
+        aid = str(
+            asset.get("assetId")
+            or asset.get("hostAssetId")
+            or asset.get("uuid")
+            or asset.get("uuId")
+            or asset.get("id")
+            or ""
+        )
+        if aid:
+            evidence_refs.append(
+                {
+                    "source": "asset",
+                    "uuid": aid,
+                    "field": "asset",
+                    "value_summary": _safe_json_dumps(asset, 300),
+                }
+            )
+
     # 组装 RAG citations
     rag_data = state.get("rag_response") or {}
     rag_citations_raw: list[dict[str, Any]] = rag_data.get("citations", []) or []
@@ -801,6 +833,9 @@ async def persist_result(state: TriageState) -> TriageState:
 
     # model
     model = str(raw.get("_model") or "")
+    blocking_missing_evidence = list(dict.fromkeys(state.get("missing_evidence", [])))
+    enrichment_evidence = list(dict.fromkeys(raw.get("missing_evidence") or []))
+    state["enrichment_evidence"] = enrichment_evidence
 
     try:
         result = AlertTriageResult(
@@ -819,9 +854,8 @@ async def persist_result(state: TriageState) -> TriageState:
                 for a in (raw.get("recommended_actions") or [])
                 if isinstance(a, dict)
             ],
-            missing_evidence=list(
-                set(state.get("missing_evidence", []) + (raw.get("missing_evidence") or []))
-            ),
+            missing_evidence=blocking_missing_evidence,
+            enrichment_evidence=enrichment_evidence,
             warnings=list(set(state.get("warnings", []) + (raw.get("warnings") or []))),
             model=model,
             token_usage=TokenUsage(
@@ -1039,6 +1073,7 @@ def _build_fallback_result(state: TriageState, error: str) -> dict[str, Any]:
         "related_incidents": [],
         "recommended_actions": [],
         "missing_evidence": ["schema_validation_failed"],
+        "enrichment_evidence": list(dict.fromkeys(raw.get("missing_evidence") or [])),
         "warnings": state.get("warnings", []) + [f"SCHEMA_VALIDATION_FAILED: {error}"],
         "model": "",
         "token_usage": {"input_tokens": 0, "output_tokens": 0},
@@ -1144,6 +1179,7 @@ async def run_alert_triage(req: dict[str, Any]) -> dict[str, Any]:
         "error": None,
         "warnings": [],
         "missing_evidence": [],
+        "enrichment_evidence": [],
         "started_at": _now_iso(),
         "finished_at": "",
         "current_node": "init",
@@ -1194,6 +1230,7 @@ async def run_alert_triage(req: dict[str, Any]) -> dict[str, Any]:
         "related_incidents": final.get("related_incidents", []),
         "endpoint_logs": final.get("endpoint_logs", []),
         "missing_evidence": final.get("missing_evidence", []),
+        "enrichment_evidence": final.get("enrichment_evidence", []),
         "rag_degraded": bool(final.get("rag_degraded", False)),
         "rag_response": final.get("rag_response"),
         "trace_events": final.get("trace_events", []),
