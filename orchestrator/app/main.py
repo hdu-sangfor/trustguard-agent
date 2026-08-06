@@ -10,6 +10,7 @@ import os
 import asyncio
 import random
 import time
+from uuid import uuid4
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
 from typing import Annotated, Any
@@ -2016,7 +2017,11 @@ if __name__ == "__main__":
 
 # Alert Triage in-memory store
 _alert_triage_results: dict[str, dict[str, Any]] = {}
+_alert_triage_run_locks: dict[str, asyncio.Lock] = {}
 _ALERT_TRIAGE_CONTEXT_KEY = "alert_triage"
+_ALERT_TRIAGE_LOCK_TTL_SECONDS = max(
+    60, int(os.getenv("ALERT_TRIAGE_LOCK_TTL_SECONDS", "900") or "900")
+)
 
 
 async def _persist_alert_triage_task(task_data: dict[str, Any]) -> None:
@@ -2054,6 +2059,20 @@ class _AlertTriageCreatePayload(BaseModel):
 @app.post("/v1/orchestrator/alert-triage/tasks")
 async def alert_triage_create_task(payload: _AlertTriageCreatePayload) -> dict[str, Any]:
     task_id = payload.task_id
+    existing = _alert_triage_results.get(task_id)
+    if existing is None:
+        existing = await _load_persisted_alert_triage_task(task_id)
+        if existing is not None:
+            _alert_triage_results[task_id] = existing
+    if existing is not None:
+        if str(existing.get("alert_uuid")) != payload.alert_uuid:
+            raise HTTPException(status_code=409, detail="task_id already belongs to another alert")
+        return {
+            "task_id": task_id,
+            "alert_uuid": payload.alert_uuid,
+            "status": existing.get("status", "PENDING"),
+            "idempotent": True,
+        }
     _alert_triage_results[task_id] = {
         "task_id": task_id,
         "alert_uuid": payload.alert_uuid,
@@ -2090,25 +2109,76 @@ async def alert_triage_run_task(task_id: str) -> dict[str, Any]:
     if task_id not in _alert_triage_results:
         raise HTTPException(status_code=404, detail=f"alert triage task not found: {task_id}")
 
-    task_data = _alert_triage_results[task_id]
-    task_data["status"] = "RUNNING"
-    await _persist_alert_triage_task(task_data)
+    lock = _alert_triage_run_locks.setdefault(task_id, asyncio.Lock())
+    if lock.locked():
+        # A background run or another caller already owns this task. Returning
+        # the current state makes repeated POSTs harmless and pollable.
+        return {**_alert_triage_results[task_id], "already_running": True}
 
-    try:
-        result = await run_alert_triage(task_data)
-        _alert_triage_results[task_id] = {
-            **task_data,
-            **result,
-            "status": result.get("status", "FAILED"),
-        }
-        await _persist_alert_triage_task(_alert_triage_results[task_id])
-        return _alert_triage_results[task_id]
-    except Exception as exc:
-        logger.exception("alert triage run failed task_id=%s", task_id)
-        _alert_triage_results[task_id] = {
-            **task_data,
-            "status": "FAILED",
-            "error": str(exc),
-        }
-        await _persist_alert_triage_task(_alert_triage_results[task_id])
-        return _alert_triage_results[task_id]
+    async with lock:
+        task_data = _alert_triage_results[task_id]
+        if task_data.get("status") == "DONE":
+            return {**task_data, "idempotent": True}
+
+        # TaskStore provides the cross-process guard when Redis is enabled.
+        # The in-process asyncio lock above still keeps duplicate requests cheap
+        # and avoids waiting for the distributed lock in the common case.
+        owner_id = f"alert-triage:{os.getpid()}:{uuid4().hex}"
+        lock_acquired = await _TASK_STORE.acquire_task_lock(
+            task_id,
+            owner_id,
+            ttl_seconds=_ALERT_TRIAGE_LOCK_TTL_SECONDS,
+        )
+        if not lock_acquired:
+            latest = await _load_persisted_alert_triage_task(task_id)
+            if latest is not None:
+                _alert_triage_results[task_id] = latest
+                task_data = latest
+            return {**task_data, "already_running": True}
+
+        refresh_stop = asyncio.Event()
+        refresh_task: asyncio.Task | None = None
+
+        async def _refresh_lock() -> None:
+            interval = max(10, _ALERT_TRIAGE_LOCK_TTL_SECONDS // 3)
+            while not refresh_stop.is_set():
+                try:
+                    await asyncio.wait_for(refresh_stop.wait(), timeout=interval)
+                except asyncio.TimeoutError:
+                    if not await _TASK_STORE.refresh_task_lock(
+                        task_id,
+                        owner_id,
+                        ttl_seconds=_ALERT_TRIAGE_LOCK_TTL_SECONDS,
+                    ):
+                        logger.warning("alert triage lock refresh failed task_id=%s", task_id)
+                        return
+
+        refresh_task = asyncio.create_task(_refresh_lock())
+
+        try:
+            task_data["status"] = "RUNNING"
+            await _persist_alert_triage_task(task_data)
+            result = await run_alert_triage(task_data)
+            _alert_triage_results[task_id] = {
+                **task_data,
+                **result,
+                "status": result.get("status", "FAILED"),
+            }
+            await _persist_alert_triage_task(_alert_triage_results[task_id])
+            return _alert_triage_results[task_id]
+        except Exception as exc:
+            logger.exception("alert triage run failed task_id=%s", task_id)
+            _alert_triage_results[task_id] = {
+                **task_data,
+                "status": "FAILED",
+                "error": str(exc),
+            }
+            await _persist_alert_triage_task(_alert_triage_results[task_id])
+            return _alert_triage_results[task_id]
+        finally:
+            refresh_stop.set()
+            if refresh_task is not None:
+                refresh_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await refresh_task
+            await _TASK_STORE.release_task_lock(task_id, owner_id)

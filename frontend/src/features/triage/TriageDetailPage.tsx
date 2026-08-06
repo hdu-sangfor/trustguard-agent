@@ -48,9 +48,9 @@ const TriageDetailPage = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const fetchTask = useCallback(async () => {
+  const fetchTask = useCallback(async (showLoading = true) => {
     if (!taskId) return;
-    setLoading(true);
+    if (showLoading) setLoading(true);
     setError("");
     try {
       const t = await getTriageTask(taskId);
@@ -63,6 +63,13 @@ const TriageDetailPage = () => {
   }, [taskId]);
 
   useEffect(() => { fetchTask(); }, [fetchTask]);
+
+  // Refresh active runs until a terminal result is available.
+  useEffect(() => {
+    if (task?.status !== "PENDING" && task?.status !== "RUNNING") return;
+    const timer = window.setInterval(() => { void fetchTask(false); }, 3000);
+    return () => window.clearInterval(timer);
+  }, [task?.status, fetchTask]);
 
   const formatTime = (iso: string | null) => {
     if (!iso) return "—";

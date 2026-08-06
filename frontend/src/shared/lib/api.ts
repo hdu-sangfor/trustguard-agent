@@ -1784,7 +1784,7 @@ export async function createTriageTask(alertUuid: string, ragEnabled = false): P
   const resp = await fetch('/api/v1/alert-triage/tasks', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ alertUuid, ragEnabled }),
+    body: JSON.stringify({ alertUuid, enableRag: ragEnabled }),
     signal: AbortSignal.timeout(30000),
   });
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);

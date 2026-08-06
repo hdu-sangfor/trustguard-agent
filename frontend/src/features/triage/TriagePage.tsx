@@ -41,8 +41,8 @@ const TriagePage = () => {
   const [enableRag, setEnableRag] = useState(true);
   const [creating, setCreating] = useState(false);
 
-  const fetchTasks = useCallback(async () => {
-    setLoading(true);
+  const fetchTasks = useCallback(async (showLoading = true) => {
+    if (showLoading) setLoading(true);
     try {
       const t = await listTriageTasks();
       setTasks(t);
@@ -66,6 +66,14 @@ const TriagePage = () => {
     checkProxy();
     fetchTasks();
   }, [checkProxy, fetchTasks]);
+
+  // Keep the list current while a run is queued or executing; terminal tasks
+  // stop polling so the page does not create unnecessary gateway traffic.
+  useEffect(() => {
+    if (!tasks.some((task) => task.status === "PENDING" || task.status === "RUNNING")) return;
+    const timer = window.setInterval(() => { void fetchTasks(false); }, 3000);
+    return () => window.clearInterval(timer);
+  }, [tasks, fetchTasks]);
 
   const handleCreate = async () => {
     const uuid = alertUuid.trim();
@@ -123,7 +131,7 @@ const TriagePage = () => {
             )}
             <button
               type="button"
-              onClick={fetchTasks}
+              onClick={() => { void fetchTasks(); }}
               disabled={loading}
               style={{
                 display: "inline-flex", alignItems: "center", gap: 5, padding: "6px 14px",
