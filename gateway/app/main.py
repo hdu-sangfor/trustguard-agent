@@ -120,9 +120,11 @@ def _limit(value: int | None, default: int, max_value: int = 1000) -> int:
 
 
 def _task_row_to_api(row: dict[str, Any]) -> dict[str, Any]:
+    task_id = row.get("task_id") or ""
     return {
         "id": int(row.get("id") or 0),
-        "taskId": row.get("task_id") or "",
+        "taskId": task_id,
+        "workflowId": "alert_triage" if str(task_id).startswith("at-") else "pentest",
         "name": row.get("name") or "",
         "target": row.get("target") or "",
         "description": row.get("description") or "",
@@ -224,6 +226,7 @@ def _triage_task_to_api(state: dict[str, Any] | None, row: dict[str, Any] | None
 
     return {
         "taskId": state.get("task_id") or row.get("task_id") or "",
+        "workflowId": "alert_triage",
         "alertUuid": state.get("alert_uuid") or row.get("target") or "",
         "status": status,
         "verdict": from_state("verdict"),

@@ -18,6 +18,7 @@ export interface ApiTask {
   currentPhase: string;
   createdAt: string;
   updatedAt: string;
+  workflowId?: 'pentest' | 'alert_triage' | string;
   executionPolicy?: { allow_exploit?: boolean; allow_destructive_actions?: boolean };
 }
 
@@ -35,6 +36,7 @@ export interface ApiAgentActivity {
 }
 
 export interface ApiPentestDraft {
+  workflowId: 'pentest';
   name: string;
   target: string;
   description: string;
@@ -46,12 +48,22 @@ export interface ApiPentestDraft {
   maxDurationSeconds: number;
 }
 
+export interface ApiAlertTriageDraft {
+  workflowId: 'alert_triage';
+  alertUuid: string;
+  scenarioId?: string | null;
+  enableRag: boolean;
+  callerNotes: string;
+}
+
+export type ApiTaskAgentDraftModel = ApiPentestDraft | ApiAlertTriageDraft;
+
 export interface ApiTaskAgentDraft {
   status: 'NEEDS_CLARIFICATION' | 'NEEDS_CONFIRMATION' | 'REJECTED' | 'READY';
   conversationId: string;
   draftId?: string | null;
   confirmationToken?: string | null;
-  draft?: ApiPentestDraft | null;
+  draft?: ApiTaskAgentDraftModel | null;
   missingFields: string[];
   warnings: string[];
   assistantMessage: string;
@@ -66,6 +78,7 @@ export interface ApiTaskAgentConfirmation {
   started: boolean;
   activities: ApiAgentActivity[];
   message: ApiConversationMessage;
+  workflowId?: 'pentest' | 'alert_triage' | string;
 }
 
 export interface ApiConversationMessage {
@@ -73,7 +86,7 @@ export interface ApiConversationMessage {
   role: 'user' | 'assistant';
   text: string;
   activities: ApiAgentActivity[];
-  draft?: ApiPentestDraft | null;
+  draft?: ApiTaskAgentDraftModel | null;
   confirmationToken?: string | null;
   taskId?: string | null;
   taskStatus?: string | null;

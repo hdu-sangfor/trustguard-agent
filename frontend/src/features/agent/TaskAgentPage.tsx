@@ -13,6 +13,7 @@ import {
   streamTaskAgentDraft,
   streamTaskEvents,
   type ApiAgentActivity,
+  type ApiAlertTriageDraft,
   type ApiConversationMessage,
   type ApiEvent,
   type ApiPentestDraft,
@@ -34,7 +35,7 @@ type ChatMessage = {
   text: string;
   taskId?: string | null;
   activities?: ApiAgentActivity[];
-  draft?: ApiPentestDraft | null;
+  draft?: ApiPentestDraft | ApiAlertTriageDraft | null;
   confirmationToken?: string | null;
   streaming?: boolean;
 };
@@ -327,10 +328,25 @@ function ActivityList({ activities, label = '实时执行轨迹' }: { activities
   );
 }
 
-function DraftCard({ draft, onConfirm, busy }: { draft: ApiPentestDraft; onConfirm: () => void; busy: boolean }) {
+function DraftCard({ draft, onConfirm, busy }: { draft: ApiPentestDraft | ApiAlertTriageDraft; onConfirm: () => void; busy: boolean }) {
+  if (draft.workflowId === 'alert_triage') {
+    return (
+      <div className="task-agent-draft">
+        <div className="task-agent-draft-title"><ShieldCheck size={15} /> 告警研判草稿</div>
+        <div className="task-agent-draft-grid">
+          <span>告警 UUID</span><strong>{draft.alertUuid}</strong>
+          <span>场景</span><strong>{draft.scenarioId || '未指定'}</strong>
+          <span>知识辅助</span><strong>{draft.enableRag ? '已启用（仅辅助）' : '未启用'}</strong>
+        </div>
+        <button type="button" onClick={onConfirm} disabled={busy}>
+          {busy ? '正在创建并启动…' : '确认并启动告警研判'}
+        </button>
+      </div>
+    );
+  }
   return (
     <div className="task-agent-draft">
-      <div className="task-agent-draft-title"><ShieldCheck size={15} /> 任务草稿</div>
+        <div className="task-agent-draft-title"><ShieldCheck size={15} /> 渗透测试草稿</div>
       <div className="task-agent-draft-grid">
         <span>名称</span><strong>{draft.name}</strong>
         <span>目标</span><strong>{draft.target}</strong>
@@ -491,7 +507,7 @@ export default function TaskAgentPage() {
           getTaskReasoningSteps(task.taskId, 500).catch(() => []),
         ]);
         if (!active) return;
-        setTask(latest);
+        setTask({ ...latest, workflowId: latest.workflowId || task.workflowId });
         setLiveActivities(events.map(eventActivity));
         setReasoningActivities(reasoningStepActivities(reasoningSteps));
         if (terminalStatuses.has(latest.status)) {
@@ -502,10 +518,10 @@ export default function TaskAgentPage() {
             id: `task-${task.taskId}-terminal`,
             role: 'assistant',
             text: latest.status === 'DONE'
-              ? `渗透测试任务 ${task.taskId} 已完成。可以打开报告中心查看测试结果。`
+              ? `${task.workflowId === 'alert_triage' ? '告警研判' : '渗透测试'}任务 ${task.taskId} 已完成。`
               : latest.status === 'FAILED'
-                ? `渗透测试任务 ${task.taskId} 执行失败。你可以查看执行轨迹定位失败步骤。`
-                : `渗透测试任务 ${task.taskId} 已取消。`,
+                ? `${task.workflowId === 'alert_triage' ? '告警研判' : '渗透测试'}任务 ${task.taskId} 执行失败。你可以查看执行轨迹定位失败步骤。`
+                : `${task.workflowId === 'alert_triage' ? '告警研判' : '渗透测试'}任务 ${task.taskId} 已取消。`,
           });
           void refreshConversations();
           if (interval !== undefined) window.clearInterval(interval);
@@ -519,7 +535,7 @@ export default function TaskAgentPage() {
         onReasoning: mergeReasoning,
         onStatus: (latest) => {
           if (!active) return;
-          setTask(latest);
+          setTask({ ...latest, workflowId: latest.workflowId || task.workflowId });
           if (terminalStatuses.has(latest.status)) {
             setMessages((items) => settleMessages(items));
             setLiveActivities((items) => settleActivities(items) ?? []);
@@ -758,7 +774,7 @@ export default function TaskAgentPage() {
                     </div>
                   ))}
                 </div>
-                {(task.status === 'DONE' || task.status === 'FAILED') && <button type="button" className="task-agent-report-button" onClick={() => navigate(`/reports?taskId=${task.taskId}`)}>打开报告中心</button>}
+                {(task.status === 'DONE' || task.status === 'FAILED') && <button type="button" className="task-agent-report-button" onClick={() => navigate(task.workflowId === 'alert_triage' ? `/triage/${task.taskId}` : `/reports?taskId=${task.taskId}`)}>{task.workflowId === 'alert_triage' ? '打开研判详情' : '打开报告中心'}</button>}
               </>
             ) : <p className="task-agent-monitor-empty">确认任务草稿后，这里会显示执行阶段和状态。</p>}
           </section>
