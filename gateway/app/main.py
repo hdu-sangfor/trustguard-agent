@@ -905,16 +905,29 @@ async def _confirm_alert_triage_draft(
     if not task_id:
         task_id = "at-" + hashlib.sha256(draft_id.encode()).hexdigest()[:32]
 
-    task = await _create_alert_triage_task_impl(
-        CreateAlertTriageRequest(
-            alert_uuid=alert_uuid,
-            scenario_id=draft.get("scenarioId") or draft.get("scenario_id"),
-            enable_rag=bool(draft.get("enableRag") or draft.get("enable_rag")),
-            caller_notes=str(draft.get("callerNotes") or draft.get("caller_notes") or ""),
-        ),
-        task_id=task_id,
-        auto_start=req.start,
+    request = CreateAlertTriageRequest(
+        alert_uuid=alert_uuid,
+        scenario_id=draft.get("scenarioId") or draft.get("scenario_id"),
+        enable_rag=bool(draft.get("enableRag") or draft.get("enable_rag")),
+        caller_notes=str(draft.get("callerNotes") or draft.get("caller_notes") or ""),
     )
+    task: dict[str, Any]
+    if str(consumed.get("confirmationState") or "").upper() == "COMPLETED" and task_id:
+        # A retry after completion must return the durable result, rather than
+        # rebuilding an empty create response from the original draft.
+        existing_state = await _get_alert_triage_state(task_id)
+        existing_row = _get_task_row(task_id)
+        task = _triage_task_to_api(existing_state, existing_row) if existing_state else await _create_alert_triage_task_impl(
+            request,
+            task_id=task_id,
+            auto_start=req.start,
+        )
+    else:
+        task = await _create_alert_triage_task_impl(
+            request,
+            task_id=task_id,
+            auto_start=req.start,
+        )
     if str(consumed.get("confirmationState") or "") != "COMPLETED":
         await _supervisor(
             "POST",

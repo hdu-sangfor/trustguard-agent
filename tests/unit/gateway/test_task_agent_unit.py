@@ -159,8 +159,18 @@ async def test_task_agent_confirm_routes_alert_triage_draft_idempotently(monkeyp
         assert auto_start is True
         return {"taskId": task_id, "status": "PENDING"}
 
+    async def fake_existing_state(_task_id):
+        return {
+            "task_id": "at-existing",
+            "alert_uuid": "alert-tp-webshell-001",
+            "status": "DONE",
+            "result": {"verdict": "true_positive", "confidence": 0.95},
+        }
+
     monkeypatch.setattr(gw, "_supervisor", fake_supervisor)
     monkeypatch.setattr(gw, "_create_alert_triage_task_impl", fake_create)
+    monkeypatch.setattr(gw, "_get_alert_triage_state", fake_existing_state)
+    monkeypatch.setattr(gw, "_get_task_row", lambda _task_id: {"task_id": "at-existing", "status": "DONE"})
     monkeypatch.setattr(gw, "_record_audit", lambda *_args, **_kwargs: None)
     request = gw.TaskAgentConfirmRequest(
         confirmationToken="signed-token",
@@ -173,7 +183,8 @@ async def test_task_agent_confirm_routes_alert_triage_draft_idempotently(monkeyp
     assert first["data"]["workflowId"] == "alert_triage"
     assert first["data"]["task"]["taskId"].startswith("at-")
     assert second["data"]["task"]["taskId"] == "at-existing"
-    assert calls == {"consume": 2, "complete": 1, "create": 2}
+    assert second["data"]["task"]["verdict"] == "true_positive"
+    assert calls == {"consume": 2, "complete": 1, "create": 1}
 
 
 @pytest.mark.asyncio
