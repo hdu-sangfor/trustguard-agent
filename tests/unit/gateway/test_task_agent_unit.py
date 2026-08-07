@@ -331,6 +331,58 @@ async def test_task_event_stream_emits_event_status_and_done(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_task_event_stream_returns_alert_triage_conclusion_in_conversation(monkeypatch):
+    gw = _load_gateway_main()
+
+    monkeypatch.setattr(gw, "_get_task_row", lambda _task_id: {
+        "task_id": "at-stream-1",
+        "status": "DONE",
+        "current_phase": "DONE",
+    })
+
+    async def fake_events(_task_id, _limit):
+        return {"data": [{
+            "eventId": "evt-triage-done",
+            "taskId": "at-stream-1",
+            "timestamp": "2026-08-07T00:00:00Z",
+            "eventType": "AT_WORKFLOW_COMPLETE",
+            "sourceModule": "alert_triage",
+            "payload": {"status": "DONE", "verdict": "true_positive"},
+        }]}
+
+    async def fake_triage_state(_task_id):
+        return {"result": {
+            "verdict": "true_positive",
+            "confidence": 0.95,
+            "summary": "WebShell 命令执行证据成立。",
+            "xdr_evidence_refs": [{"source": "alert", "uuid": "alert-1"}],
+            "recommended_actions": [{"action": "人工隔离主机"}],
+        }}
+
+    async def fake_supervisor(_method, _path, **kwargs):
+        return kwargs["json_body"]
+
+    monkeypatch.setattr(gw, "task_events", fake_events)
+    monkeypatch.setattr(gw, "task_reasoning_steps", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(gw, "_orch", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(gw, "_sync_task_state", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(gw, "_get_alert_triage_state", fake_triage_state)
+    monkeypatch.setattr(gw, "_supervisor", fake_supervisor)
+    monkeypatch.setattr(gw, "_record_audit", lambda *_args, **_kwargs: None)
+
+    response = await gw.task_events_stream("at-stream-1", _user(gw), "conv-triage")
+    body = b"".join([
+        chunk.encode() if isinstance(chunk, str) else chunk
+        async for chunk in response.body_iterator
+    ])
+
+    assert "真实攻击".encode() in body
+    assert "alert:alert-1".encode() in body
+    assert "人工隔离主机".encode() in body
+    assert b"Pentest Workflow" not in body
+
+
+@pytest.mark.asyncio
 async def test_task_event_stream_emits_and_persists_periodic_assistant_reply(monkeypatch):
     gw = _load_gateway_main()
     rows = [

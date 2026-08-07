@@ -282,6 +282,46 @@ def _triage_task_to_api(state: dict[str, Any] | None, row: dict[str, Any] | None
     }
 
 
+def _triage_terminal_text(task_id: str, status: str, state: dict[str, Any] | None) -> str:
+    if status != "DONE":
+        return f"告警研判任务 {task_id} 已结束，状态：{status}。请查看执行轨迹定位原因。"
+    state = state or {}
+    result = state.get("result") if isinstance(state.get("result"), dict) else {}
+    verdict = str(result.get("verdict") or state.get("verdict") or "insufficient_evidence")
+    verdict_label = {
+        "true_positive": "真实攻击",
+        "false_positive": "误报",
+        "suspicious": "可疑，需人工复核",
+        "insufficient_evidence": "证据不足",
+    }.get(verdict, verdict)
+    confidence = result.get("confidence", state.get("confidence"))
+    confidence_text = f"{float(confidence):.0%}" if isinstance(confidence, (int, float)) else "未提供"
+    summary = str(result.get("summary") or state.get("summary") or "").strip()
+    refs = result.get("xdr_evidence_refs") or result.get("xdrEvidenceRefs") or []
+    ref_ids = [
+        f"{item.get('source')}:{item.get('uuid')}"
+        for item in refs[:8]
+        if isinstance(item, dict) and item.get("source") and item.get("uuid")
+    ]
+    actions = result.get("recommended_actions") or result.get("recommendedActions") or []
+    lines = [
+        f"告警研判任务 {task_id} 已完成。",
+        f"结论：{verdict_label}（{verdict}），置信度：{confidence_text}。",
+    ]
+    if summary:
+        lines.append(f"判断摘要：{summary}")
+    if ref_ids:
+        lines.append("关键证据：" + "、".join(ref_ids))
+    if actions:
+        action_text = "；".join(
+            str(item.get("action") or "") for item in actions[:3] if isinstance(item, dict)
+        )
+        if action_text:
+            lines.append("建议动作（均需人工确认）：" + action_text)
+    lines.append("以上为基于 XDR 证据的研判建议，Agent 未执行隔离、封禁或关闭告警等写操作。")
+    return "\n".join(lines)
+
+
 async def _get_alert_triage_state(task_id: str) -> dict[str, Any] | None:
     try:
         state = await _orch("GET", f"{ORCH_ALERT_TRIAGE_PATH}/tasks/{task_id}", timeout=10.0)
@@ -1287,7 +1327,11 @@ async def task_events_stream(
                         if detail:
                             break
                 if status == "DONE":
-                    text = f"渗透测试任务 {task_id} 已完成。Pentest Workflow 已执行完毕，可以打开报告中心查看测试结果。"
+                    if task_id.startswith("at-"):
+                        triage_state = await _get_alert_triage_state(task_id)
+                        text = _triage_terminal_text(task_id, status, triage_state)
+                    else:
+                        text = f"渗透测试任务 {task_id} 已完成。Pentest Workflow 已执行完毕，可以打开报告中心查看测试结果。"
                 elif status == "FAILED":
                     text = f"渗透测试任务 {task_id} 执行失败，停止在 {phase or '当前'} 阶段。"
                     if detail:

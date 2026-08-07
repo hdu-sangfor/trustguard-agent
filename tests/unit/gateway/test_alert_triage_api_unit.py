@@ -85,6 +85,34 @@ def test_triage_task_api_contract_accepts_official_xdr_uuid_field():
     assert task["relatedIncidents"][0]["uuId"] == "incident-1"
 
 
+def test_triage_terminal_text_explains_verdict_evidence_and_manual_actions():
+    gw = _load_gateway_main()
+
+    text = gw._triage_terminal_text(
+        "at-terminal-1",
+        "DONE",
+        {
+            "result": {
+                "verdict": "true_positive",
+                "confidence": 0.95,
+                "summary": "检测到 WebShell 命令执行。",
+                "xdr_evidence_refs": [
+                    {"source": "alert", "uuid": "alert-1"},
+                    {"source": "endpoint_log", "uuid": "log-1"},
+                ],
+                "recommended_actions": [{"action": "人工隔离主机"}],
+            }
+        },
+    )
+
+    assert "真实攻击（true_positive）" in text
+    assert "95%" in text
+    assert "alert:alert-1" in text
+    assert "endpoint_log:log-1" in text
+    assert "人工隔离主机" in text
+    assert "未执行隔离" in text
+
+
 @pytest.mark.asyncio
 async def test_create_triage_returns_without_waiting_for_run(monkeypatch):
     gw = _load_gateway_main()
