@@ -156,6 +156,57 @@ def _append_trace(state: TriageState, event: dict[str, Any]) -> list[dict[str, A
     return [*state.get("trace_events", []), event]
 
 
+def _record_ids(items: list[dict[str, Any]]) -> list[str]:
+    return [
+        str(item.get("uuId") or item.get("uuid") or item.get("assetId") or item.get("id") or "")
+        for item in items
+        if str(item.get("uuId") or item.get("uuid") or item.get("assetId") or item.get("id") or "")
+    ]
+
+
+async def _emit_xdr_request(
+    task_id: str,
+    request_id: str,
+    operation: str,
+    resource: str,
+    params: dict[str, Any],
+) -> None:
+    await _emit(
+        task_id,
+        "AT_XDR_REQUEST",
+        {
+            "request_id": request_id,
+            "operation": operation,
+            "resource": resource,
+            "params": params,
+        },
+    )
+
+
+async def _emit_xdr_response(
+    task_id: str,
+    request_id: str,
+    resource: str,
+    *,
+    records: list[dict[str, Any]] | None = None,
+    status: str = "success",
+    error: str = "",
+) -> None:
+    items = records or []
+    await _emit(
+        task_id,
+        "AT_XDR_RESPONSE",
+        {
+            "request_id": request_id,
+            "resource": resource,
+            "status": status,
+            "record_count": len(items),
+            "record_ids": _record_ids(items)[:20],
+            "error": error[:300],
+        },
+    )
+
+
 # ── Node: load_alert ────────────────────────────────────────────────
 
 
@@ -167,11 +218,22 @@ async def load_alert(state: TriageState) -> TriageState:
     state["current_node"] = "load_alert"
 
     await _emit(task_id, "AT_LOAD_ALERT_START", {"alert_uuid": alert_uuid})
+    request_id = f"xdr-alert-{alert_uuid}"
+    await _emit_xdr_request(
+        task_id,
+        request_id,
+        "读取告警详情",
+        "alert",
+        {"alert_uuid": alert_uuid},
+    )
 
     try:
         alert = await xdr_client.get_alert(alert_uuid)
         if not alert or not isinstance(alert, dict):
             msg = f"Alert not found: {alert_uuid}"
+            await _emit_xdr_response(
+                task_id, request_id, "alert", status="not_found", error=msg
+            )
             await _emit(task_id, "AT_LOAD_ALERT_FAILED", {"error": msg})
             return {
                 **state,
@@ -184,6 +246,9 @@ async def load_alert(state: TriageState) -> TriageState:
             }
 
         state["alert"] = alert
+        await _emit_xdr_response(
+            task_id, request_id, "alert", records=[alert]
+        )
         await _emit(
             task_id,
             "AT_LOAD_ALERT_COMPLETE",
@@ -191,6 +256,9 @@ async def load_alert(state: TriageState) -> TriageState:
                 "alert_uuid": alert_uuid,
                 "alert_type": alert.get("alert_type") or alert.get("type"),
                 "severity": alert.get("severity"),
+                "name": alert.get("name") or alert.get("title"),
+                "asset_id": alert.get("assetId") or alert.get("hostAssetId"),
+                "host_ip": alert.get("hostIp") or alert.get("sourceIp"),
             },
         )
         return {
@@ -203,6 +271,9 @@ async def load_alert(state: TriageState) -> TriageState:
     except xdr_client.XDRClientError as e:
         msg = f"XDR unavailable loading alert: {e}"
         logger.warning("load_alert failed task_id=%s: %s", task_id, e)
+        await _emit_xdr_response(
+            task_id, request_id, "alert", status="failed", error=str(e)
+        )
         await _emit(task_id, "AT_LOAD_ALERT_FAILED", {"error": msg})
         return {
             **state,
@@ -237,29 +308,64 @@ async def collect_evidence(state: TriageState) -> TriageState:
     alert = state.get("alert") or {}
 
     # 1) proof
+    proof_request_id = f"xdr-proof-{alert_uuid}"
+    await _emit_xdr_request(
+        task_id,
+        proof_request_id,
+        "读取告警原始证据",
+        "alert_proof",
+        {"alert_uuid": alert_uuid},
+    )
     try:
         proof = await xdr_client.get_alert_proof(alert_uuid)
         state["alert_proof"] = proof if isinstance(proof, dict) else {}
+        await _emit_xdr_response(
+            task_id,
+            proof_request_id,
+            "alert_proof",
+            records=[state["alert_proof"]] if state["alert_proof"] else [],
+            status="success" if state["alert_proof"] else "empty",
+        )
         if not proof:
             missing.append("alert_proof")
             state["missing_evidence"].append("alert_proof")
     except xdr_client.XDRClientError as e:
         logger.warning("alert proof missing task_id=%s: %s", task_id, e)
+        await _emit_xdr_response(
+            task_id, proof_request_id, "alert_proof", status="failed", error=str(e)
+        )
         missing.append("alert_proof")
         state["missing_evidence"].append("alert_proof")
 
     # 1b) 原始端点日志：告警中的 logIds 是最有价值的行为上下文。
     log_ids = alert.get("logIds") or (state["alert_proof"] or {}).get("logIds") or []
     if isinstance(log_ids, list) and log_ids:
+        log_request_id = f"xdr-endpoint-logs-{alert_uuid}"
+        log_params = {"uuIds": [str(item) for item in log_ids], "page": 1, "pageSize": 100}
+        await _emit_xdr_request(
+            task_id,
+            log_request_id,
+            "按告警关联 ID 查询端点日志",
+            "endpoint_logs",
+            log_params,
+        )
         try:
-            logs = await xdr_client.list_endpoint_security_logs(
-                {"uuIds": [str(item) for item in log_ids], "page": 1, "pageSize": 100}
-            )
+            logs = await xdr_client.list_endpoint_security_logs(log_params)
             state["endpoint_logs"] = logs if isinstance(logs, list) else []
+            await _emit_xdr_response(
+                task_id,
+                log_request_id,
+                "endpoint_logs",
+                records=state["endpoint_logs"],
+                status="success" if state["endpoint_logs"] else "empty",
+            )
             if not state["endpoint_logs"]:
                 state["missing_evidence"].append("endpoint_logs")
         except xdr_client.XDRClientError as e:
             logger.warning("endpoint logs query failed task_id=%s: %s", task_id, e)
+            await _emit_xdr_response(
+                task_id, log_request_id, "endpoint_logs", status="failed", error=str(e)
+            )
             state["missing_evidence"].append("endpoint_logs")
     else:
         state["missing_evidence"].append("endpoint_logs")
@@ -287,13 +393,31 @@ async def collect_evidence(state: TriageState) -> TriageState:
         asset_params["ip"] = src_ip
 
     if asset_params:
+        asset_request_id = f"xdr-assets-{alert_uuid}"
+        await _emit_xdr_request(
+            task_id,
+            asset_request_id,
+            "查询告警关联资产",
+            "assets",
+            asset_params,
+        )
         try:
             assets = await xdr_client.get_assets(asset_params)
             state["assets"] = assets if isinstance(assets, list) else []
+            await _emit_xdr_response(
+                task_id,
+                asset_request_id,
+                "assets",
+                records=state["assets"],
+                status="success" if state["assets"] else "empty",
+            )
             if not state["assets"]:
                 state["missing_evidence"].append("assets")
         except xdr_client.XDRClientError as e:
             logger.warning("assets query failed task_id=%s: %s", task_id, e)
+            await _emit_xdr_response(
+                task_id, asset_request_id, "assets", status="failed", error=str(e)
+            )
             state["missing_evidence"].append("assets")
     else:
         state["missing_evidence"].append("assets")
@@ -306,22 +430,62 @@ async def collect_evidence(state: TriageState) -> TriageState:
     else:
         incident_params["alert_uuid"] = alert_uuid
 
+    incident_request_id = f"xdr-incidents-{alert_uuid}"
+    await _emit_xdr_request(
+        task_id,
+        incident_request_id,
+        "查询告警关联事件",
+        "incidents",
+        incident_params,
+    )
     try:
         incidents = await xdr_client.list_incidents(incident_params)
         state["related_incidents"] = incidents if isinstance(incidents, list) else []
+        await _emit_xdr_response(
+            task_id,
+            incident_request_id,
+            "incidents",
+            records=state["related_incidents"],
+            status="success" if state["related_incidents"] else "empty",
+        )
         # 获取每个 incident 的 proof
         for inc in state["related_incidents"][:5]:  # 最多取 5 个
             iid = str(inc.get("uuid") or inc.get("uuId") or inc.get("id", ""))
             if not iid:
                 continue
+            incident_proof_request_id = f"xdr-incident-proof-{iid}"
+            await _emit_xdr_request(
+                task_id,
+                incident_proof_request_id,
+                "读取关联事件证据",
+                "incident_proof",
+                {"incident_uuid": iid},
+            )
             try:
                 iproof = await xdr_client.get_incident_proof(iid)
                 if isinstance(iproof, dict):
                     state["incident_proofs"].append(iproof)
+                await _emit_xdr_response(
+                    task_id,
+                    incident_proof_request_id,
+                    "incident_proof",
+                    records=[iproof] if isinstance(iproof, dict) else [],
+                    status="success" if isinstance(iproof, dict) else "empty",
+                )
             except xdr_client.XDRClientError:
+                await _emit_xdr_response(
+                    task_id,
+                    incident_proof_request_id,
+                    "incident_proof",
+                    status="failed",
+                    error="incident proof unavailable",
+                )
                 state["missing_evidence"].append(f"incident_proof:{iid}")
     except xdr_client.XDRClientError as e:
         logger.warning("incidents query failed task_id=%s: %s", task_id, e)
+        await _emit_xdr_response(
+            task_id, incident_request_id, "incidents", status="failed", error=str(e)
+        )
         state["missing_evidence"].append("related_incidents")
 
     await _emit(
@@ -329,6 +493,9 @@ async def collect_evidence(state: TriageState) -> TriageState:
         "AT_COLLECT_EVIDENCE_COMPLETE",
         {
             "has_proof": bool(state["alert_proof"]),
+            "endpoint_log_ids": _record_ids(state["endpoint_logs"]),
+            "asset_ids": _record_ids(state["assets"]),
+            "incident_ids": _record_ids(state["related_incidents"]),
             "asset_count": len(state["assets"]),
             "incident_count": len(state["related_incidents"]),
             "missing_evidence": state["missing_evidence"],
@@ -357,8 +524,6 @@ async def check_whitelist(state: TriageState) -> TriageState:
     state["current_node"] = "check_whitelist"
     state["whitelist_matches"] = []
 
-    await _emit(task_id, "AT_CHECK_WHITELIST_START", {})
-
     alert = state.get("alert") or {}
     whitelist_params: dict[str, Any] = {"page": 1, "pageSize": 500, "status": 1}
 
@@ -374,6 +539,20 @@ async def check_whitelist(state: TriageState) -> TriageState:
     if proc:
         whitelist_params["process_name"] = proc
 
+    whitelist_request_id = f"xdr-whitelist-{state['alert_uuid']}"
+    await _emit(
+        task_id,
+        "AT_CHECK_WHITELIST_START",
+        {"request_id": whitelist_request_id, "params": whitelist_params},
+    )
+    await _emit_xdr_request(
+        task_id,
+        whitelist_request_id,
+        "匹配有效白名单",
+        "whitelist",
+        whitelist_params,
+    )
+
     try:
         candidates = await xdr_client.match_whitelist(whitelist_params)
         from .whitelist_matching import match_whitelist_records
@@ -385,10 +564,20 @@ async def check_whitelist(state: TriageState) -> TriageState:
             endpoint_logs=state.get("endpoint_logs"),
             assets=state.get("assets"),
         )
+        await _emit_xdr_response(
+            task_id,
+            whitelist_request_id,
+            "whitelist",
+            records=state["whitelist_matches"],
+            status="success" if state["whitelist_matches"] else "empty",
+        )
     except xdr_client.XDRClientError as e:
         logger.warning("whitelist check failed task_id=%s: %s", task_id, e)
         # whitelist 匹配失败不阻塞流程
         state["warnings"].append("whitelist_check_unavailable")
+        await _emit_xdr_response(
+            task_id, whitelist_request_id, "whitelist", status="failed", error=str(e)
+        )
 
     match_info = {
         "match_count": len(state["whitelist_matches"]),
@@ -431,10 +620,13 @@ async def query_rag(state: TriageState) -> TriageState:
             ),
         }
 
-    await _emit(task_id, "AT_QUERY_RAG_START", {})
-
     alert = state.get("alert") or {}
     questions = rag_client.build_questions_from_alert(alert)
+    await _emit(
+        task_id,
+        "AT_QUERY_RAG_START",
+        {"questions": questions, "question_count": len(questions)},
+    )
 
     try:
         response = await rag_client.query_rag(questions, {"task_id": task_id})
@@ -456,6 +648,11 @@ async def query_rag(state: TriageState) -> TriageState:
                 {
                     "question_count": len(questions),
                     "citation_count": len(response.citations),
+                    "citation_ids": [
+                        str(item.get("chunk_id") or item.get("chunkId") or "")
+                        for item in response.citations[:20]
+                        if isinstance(item, dict)
+                    ],
                 },
             )
     except Exception as e:
@@ -484,8 +681,6 @@ async def make_decision(state: TriageState) -> TriageState:
     task_id = state["task_id"]
     state["current_node"] = "make_decision"
     state["raw_decision"] = None
-
-    await _emit(task_id, "AT_MAKE_DECISION_START", {})
 
     # 构建 LLM prompt
     alert = state.get("alert") or {}
@@ -517,6 +712,23 @@ async def make_decision(state: TriageState) -> TriageState:
         "[证据不足] 以下证据缺失: " + ", ".join(missing)
         if missing
         else ""
+    )
+
+    await _emit(
+        task_id,
+        "AT_MAKE_DECISION_START",
+        {
+            "input_summary": {
+                "alert_uuid": state["alert_uuid"],
+                "has_alert_proof": bool(alert_proof),
+                "endpoint_log_count": len(state.get("endpoint_logs", [])),
+                "asset_count": len(state.get("assets", [])),
+                "incident_count": len(state.get("related_incidents", [])),
+                "whitelist_match_count": len(whitelist_matches),
+                "rag_available": bool(rag_response) and not state.get("rag_degraded"),
+                "missing_evidence": missing,
+            }
+        },
     )
 
     # 构建 system + user prompt
@@ -580,6 +792,17 @@ RAG 知识: {rag_summary}
             "response_format": {"type": "json_object"},
         }
         timeout = httpx.Timeout(cfg.read_timeout, connect=cfg.connect_timeout)
+        await _emit(
+            task_id,
+            "AT_LLM_REQUEST",
+            {
+                "request_id": f"llm-decision-{task_id}",
+                "model": cfg.model_id,
+                "purpose": "根据 XDR 证据生成结构化告警结论",
+                "temperature": 0.3,
+                "max_tokens": 4096,
+            },
+        )
         async with httpx.AsyncClient(base_url=cfg.base_url, timeout=timeout) as client:
             resp = await client.post("/chat/completions", headers=headers, json=payload)
             resp.raise_for_status()
@@ -591,6 +814,16 @@ RAG 知识: {rag_summary}
         )
         llm_model = str(body.get("model") or cfg.model_id)
         llm_resp = {"content": raw_text, "model": llm_model, "input_tokens": token_usage.input_tokens, "output_tokens": token_usage.output_tokens}
+        await _emit(
+            task_id,
+            "AT_LLM_RESPONSE",
+            {
+                "request_id": f"llm-decision-{task_id}",
+                "model": llm_model,
+                "input_tokens": token_usage.input_tokens,
+                "output_tokens": token_usage.output_tokens,
+            },
+        )
     except Exception as e:
         logger.warning("LLM call failed task_id=%s: %s", task_id, e)
         state["warnings"].append(f"LLM_CALL_FAILED: {e}")
@@ -626,7 +859,12 @@ RAG 知识: {rag_summary}
     await _emit(
         task_id,
         "AT_MAKE_DECISION_COMPLETE",
-        {"verdict": state["raw_decision"].get("verdict")},
+        {
+            "verdict": state["raw_decision"].get("verdict"),
+            "confidence": state["raw_decision"].get("confidence"),
+            "summary": str(state["raw_decision"].get("summary") or "")[:800],
+            "reasoning": str(state["raw_decision"].get("reasoning") or "")[:1600],
+        },
     )
     return {
         **state,
@@ -880,6 +1118,11 @@ async def persist_result(state: TriageState) -> TriageState:
         {
             "verdict": raw.get("verdict"),
             "confidence": raw.get("confidence"),
+            "evidence_refs": [
+                f"{item['source']}:{item['uuid']}" for item in evidence_refs[:30]
+            ],
+            "missing_evidence": blocking_missing_evidence,
+            "enrichment_evidence": enrichment_evidence[:10],
         },
     )
     return {

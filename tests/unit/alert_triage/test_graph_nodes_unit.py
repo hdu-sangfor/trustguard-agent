@@ -65,12 +65,19 @@ class TestLoadAlert:
     async def test_alert_found(self):
         mock_alert = {"uuid": "alert-123", "alert_type": "malware", "severity": "high"}
         state = _base_state()
-        with patch("clients.xdr_client.get_alert", new_callable=AsyncMock) as mock_get:
+        with patch("clients.xdr_client.get_alert", new_callable=AsyncMock) as mock_get, \
+             patch("alert_triage.graph_core._emit", new_callable=AsyncMock) as mock_emit:
             mock_get.return_value = mock_alert
             result = await load_alert(state)
             assert result["status"] == "RUNNING"
             assert result["alert"] == mock_alert
             assert result["current_node"] == "load_alert"
+            emitted = [(call.args[1], call.args[2]) for call in mock_emit.await_args_list]
+            request = next(payload for event, payload in emitted if event == "AT_XDR_REQUEST")
+            response = next(payload for event, payload in emitted if event == "AT_XDR_RESPONSE")
+            assert request["operation"] == "读取告警详情"
+            assert request["params"] == {"alert_uuid": "alert-123"}
+            assert response["record_ids"] == ["alert-123"]
 
     @pytest.mark.asyncio
     async def test_alert_not_found(self):
@@ -96,12 +103,19 @@ class TestLoadAlert:
 class TestCollectEvidence:
     @pytest.mark.asyncio
     async def test_collect_all(self):
-        state = _base_state(alert={"uuid": "alert-123", "hostname": "win-pc"})
+        state = _base_state(alert={
+            "uuid": "alert-123",
+            "hostname": "win-pc",
+            "logIds": ["log-1"],
+        })
         with patch("clients.xdr_client.get_alert_proof", new_callable=AsyncMock) as mock_proof, \
+             patch("clients.xdr_client.list_endpoint_security_logs", new_callable=AsyncMock) as mock_logs, \
              patch("clients.xdr_client.get_assets", new_callable=AsyncMock) as mock_assets, \
              patch("clients.xdr_client.list_incidents", new_callable=AsyncMock) as mock_incidents, \
-             patch("clients.xdr_client.get_incident_proof", new_callable=AsyncMock) as mock_iproof:
+             patch("clients.xdr_client.get_incident_proof", new_callable=AsyncMock) as mock_iproof, \
+             patch("alert_triage.graph_core._emit", new_callable=AsyncMock) as mock_emit:
             mock_proof.return_value = {"cmd": "powershell"}
+            mock_logs.return_value = [{"uuId": "log-1"}]
             mock_assets.return_value = [{"hostname": "win-pc"}]
             mock_incidents.return_value = [{"uuid": "inc-1"}]
             mock_iproof.return_value = {"note": "test"}
@@ -111,6 +125,25 @@ class TestCollectEvidence:
             assert len(result["assets"]) == 1
             assert len(result["related_incidents"]) == 1
             assert len(result["incident_proofs"]) == 1
+            emitted = [(call.args[1], call.args[2]) for call in mock_emit.await_args_list]
+            resources = {
+                payload["resource"]
+                for event, payload in emitted
+                if event == "AT_XDR_REQUEST"
+            }
+            assert resources == {
+                "alert_proof",
+                "endpoint_logs",
+                "assets",
+                "incidents",
+                "incident_proof",
+            }
+            complete = next(
+                payload for event, payload in emitted
+                if event == "AT_COLLECT_EVIDENCE_COMPLETE"
+            )
+            assert complete["endpoint_log_ids"] == ["log-1"]
+            assert complete["incident_ids"] == ["inc-1"]
 
     @pytest.mark.asyncio
     async def test_persist_result_references_assets_and_incident_proofs(self):
