@@ -113,6 +113,26 @@ def test_triage_terminal_text_explains_verdict_evidence_and_manual_actions():
     assert "未执行隔离" in text
 
 
+def test_triage_terminal_text_uses_alert_wording_for_failed_and_cancelled_tasks():
+    gw = _load_gateway_main()
+
+    failed = gw._triage_terminal_text(
+        "at-failed-1",
+        "FAILED",
+        None,
+        phase="MAKE_DECISION",
+        detail="模型响应格式错误",
+    )
+    cancelled = gw._triage_terminal_text("at-cancelled-1", "CANCELLED", None)
+
+    assert failed == (
+        "告警研判任务 at-failed-1 执行失败，停止在 MAKE_DECISION 阶段。"
+        " 原因：模型响应格式错误 你可以查看执行轨迹定位失败步骤。"
+    )
+    assert cancelled == "告警研判任务 at-cancelled-1 已取消。"
+    assert "渗透测试" not in failed + cancelled
+
+
 @pytest.mark.asyncio
 async def test_create_triage_returns_without_waiting_for_run(monkeypatch):
     gw = _load_gateway_main()

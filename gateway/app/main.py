@@ -282,7 +282,21 @@ def _triage_task_to_api(state: dict[str, Any] | None, row: dict[str, Any] | None
     }
 
 
-def _triage_terminal_text(task_id: str, status: str, state: dict[str, Any] | None) -> str:
+def _triage_terminal_text(
+    task_id: str,
+    status: str,
+    state: dict[str, Any] | None,
+    *,
+    phase: str = "",
+    detail: str = "",
+) -> str:
+    if status == "FAILED":
+        text = f"告警研判任务 {task_id} 执行失败，停止在 {phase or '当前'} 阶段。"
+        if detail:
+            text += f" 原因：{detail}"
+        return text + " 你可以查看执行轨迹定位失败步骤。"
+    if status == "CANCELLED":
+        return f"告警研判任务 {task_id} 已取消。"
     if status != "DONE":
         return f"告警研判任务 {task_id} 已结束，状态：{status}。请查看执行轨迹定位原因。"
     state = state or {}
@@ -1326,12 +1340,18 @@ async def task_events_stream(
                         detail = str(payload.get("message") or payload.get("reason") or payload.get("detail") or "").strip()[:500]
                         if detail:
                             break
-                if status == "DONE":
-                    if task_id.startswith("at-"):
-                        triage_state = await _get_alert_triage_state(task_id)
-                        text = _triage_terminal_text(task_id, status, triage_state)
-                    else:
-                        text = f"渗透测试任务 {task_id} 已完成。Pentest Workflow 已执行完毕，可以打开报告中心查看测试结果。"
+                is_alert_triage = task_id.startswith("at-")
+                if is_alert_triage:
+                    triage_state = await _get_alert_triage_state(task_id) if status == "DONE" else None
+                    text = _triage_terminal_text(
+                        task_id,
+                        status,
+                        triage_state,
+                        phase=phase,
+                        detail=detail,
+                    )
+                elif status == "DONE":
+                    text = f"渗透测试任务 {task_id} 已完成。Pentest Workflow 已执行完毕，可以打开报告中心查看测试结果。"
                 elif status == "FAILED":
                     text = f"渗透测试任务 {task_id} 执行失败，停止在 {phase or '当前'} 阶段。"
                     if detail:
