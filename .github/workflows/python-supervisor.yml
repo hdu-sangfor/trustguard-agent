@@ -1,4 +1,4 @@
-name: Python Orchestrator
+name: Python Supervisor
 
 on:
   push:
@@ -14,18 +14,16 @@ permissions:
   contents: read
 
 concurrency:
-  group: python-orchestrator-${{ github.ref }}
+  group: python-supervisor-${{ github.ref }}
   cancel-in-progress: true
 
 env:
   PYTHON_VERSION: "3.11"
   UV_VERSION: "0.11.7"
-  EXECUTOR_USE_SKILL_CONTAINERS: "true"
-  TRUSTGUARD_EXECUTOR_MODE: inline
 
 jobs:
-  orchestrator:
-    name: Python Orchestrator
+  supervisor:
+    name: Python Supervisor
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -44,31 +42,29 @@ jobs:
           version: ${{ env.UV_VERSION }}
           enable-cache: true
           cache-dependency-glob: |
-            orchestrator/pyproject.toml
-            orchestrator/uv.lock
+            supervisor/pyproject.toml
+            supervisor/uv.lock
 
-      - name: Install orchestrator dependencies
-        working-directory: orchestrator
+      - name: Install supervisor dependencies
+        working-directory: supervisor
         run: uv sync --locked --no-dev --no-install-project --python "$(which python)"
 
       - name: Check installed dependencies
-        working-directory: orchestrator
+        working-directory: supervisor
         run: uv pip check
 
-      - name: Compile orchestrator modules
-        working-directory: orchestrator
+      - name: Compile supervisor modules
+        working-directory: supervisor
         run: uv run --locked --no-dev --no-sync python -m compileall app
 
-      - name: Import orchestrator entrypoint
-        working-directory: orchestrator
+      - name: Import supervisor entrypoint
+        working-directory: supervisor
         env:
           PYTHONPATH: .
         run: uv run --locked --no-dev --no-sync python -c "import app.main"
 
-      - name: Run alert triage unit tests
-        working-directory: orchestrator
-        env:
-          PYTHONPATH: ${{ github.workspace }}/orchestrator:${{ github.workspace }}/orchestrator/app
+      - name: Run supervisor unit tests
+        working-directory: supervisor
         run: >-
           uv run --locked --no-sync --with pytest --with pytest-asyncio
-          pytest -c ../tests/pytest.ini ../tests/unit/alert_triage -q
+          pytest -c ../tests/pytest.ini ../tests/unit/supervisor -q
