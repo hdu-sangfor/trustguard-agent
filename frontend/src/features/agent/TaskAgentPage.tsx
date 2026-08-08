@@ -72,7 +72,6 @@ function conversationStatus(status?: string | null): string {
   return '';
 }
 
-const phases = ['RECON', 'THREAT_MODEL', 'VULN_SCAN', 'EXPLOIT', 'REPORT'];
 const terminalStatuses = new Set<ApiTask['status']>(['DONE', 'FAILED', 'CANCELLED']);
 
 function settleActivities(activities: ApiAgentActivity[] | undefined): ApiAgentActivity[] | undefined {
@@ -139,6 +138,30 @@ const triageStageLabels: Record<string, string> = {
   RECOMMEND_ACTION: '生成处置建议',
   WORKFLOW: '完成告警研判',
 };
+
+type WorkflowPhase = {
+  id: string;
+  label: string;
+};
+
+const pentestPhases: WorkflowPhase[] = [
+  { id: 'RECON', label: '信息收集' },
+  { id: 'THREAT_MODEL', label: '威胁建模' },
+  { id: 'VULN_SCAN', label: '漏洞扫描' },
+  { id: 'EXPLOIT', label: '利用验证' },
+  { id: 'REPORT', label: '生成报告' },
+];
+
+const alertTriagePhases: WorkflowPhase[] = [
+  'LOAD_ALERT',
+  'COLLECT_EVIDENCE',
+  'CHECK_WHITELIST',
+  'QUERY_RAG',
+  'MAKE_DECISION',
+  'VALIDATE_DECISION',
+  'PERSIST_RESULT',
+  'RECOMMEND_ACTION',
+].map((id) => ({ id, label: triageStageLabels[id] }));
 
 function triageStage(eventType: string): string {
   const normalized = eventType.replace(/^AT_/, '');
@@ -806,10 +829,29 @@ export default function TaskAgentPage() {
     } finally { setDraftBusy(false); }
   };
 
-  const phaseIndex = useMemo(
-    () => task?.status === 'DONE' ? phases.length : Math.max(0, phases.indexOf(task?.currentPhase ?? 'RECON')),
-    [task?.currentPhase, task?.status],
-  );
+  const isAlertTriage = task?.workflowId === 'alert_triage' || task?.taskId.startsWith('at-') === true;
+  const workflowPhases = isAlertTriage ? alertTriagePhases : pentestPhases;
+  const phaseIndex = useMemo(() => {
+    if (task?.status === 'DONE') return workflowPhases.length;
+    if (!isAlertTriage) {
+      return Math.max(0, pentestPhases.findIndex((phase) => phase.id === (task?.currentPhase ?? 'RECON')));
+    }
+
+    let latestIndex = -1;
+    let latestStatus: ApiAgentActivity['status'] | undefined;
+    workflowPhases.forEach((phase, index) => {
+      const activity = reasoningActivities.find((item) => item.id === `triage-stage-${phase.id}`);
+      if (activity) {
+        latestIndex = index;
+        latestStatus = activity.status;
+      }
+    });
+    if (latestIndex < 0) return 0;
+    if (task?.status === 'RUNNING' && latestStatus !== 'running') {
+      return Math.min(latestIndex + 1, workflowPhases.length);
+    }
+    return latestIndex;
+  }, [isAlertTriage, reasoningActivities, task?.currentPhase, task?.status, workflowPhases]);
   const traceActivities = useMemo(() => {
     if (liveActivities.length > 0) return liveActivities;
     for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -825,13 +867,6 @@ export default function TaskAgentPage() {
       : undefined;
     return taskMessage?.id;
   }, [messages, reasoningActivities.length, task?.taskId]);
-  const phaseLabels: Record<string, string> = {
-    RECON: '信息收集',
-    THREAT_MODEL: '威胁建模',
-    VULN_SCAN: '漏洞扫描',
-    EXPLOIT: '利用验证',
-    REPORT: '生成报告',
-  };
   if (!loggedIn) {
     return <><Header /><main style={{ paddingTop: 110, maxWidth: 760, margin: '0 auto', paddingInline: 24 }}><h2>请先登录可信卫士</h2><button type="button" onClick={() => navigate('/login')}>前往登录</button></main></>;
   }
@@ -918,10 +953,10 @@ export default function TaskAgentPage() {
                 <div className="task-agent-id-label">任务 ID</div>
                 <div className="task-agent-id">{task.taskId}</div>
                 <div className="task-agent-phases">
-                  {phases.map((phase, index) => (
-                    <div key={phase} className={index <= phaseIndex ? 'active' : ''}>
-                      <span>{index < phaseIndex ? <Check size={11} /> : index === phaseIndex ? <Loader2 size={11} className="tg-spin" /> : <Circle size={7} />}</span>
-                      {phaseLabels[phase]}
+                  {workflowPhases.map((phase, index) => (
+                    <div key={phase.id} className={index <= phaseIndex ? 'active' : ''}>
+                      <span>{index < phaseIndex ? <Check size={11} /> : index === phaseIndex && task.status === 'RUNNING' ? <Loader2 size={11} className="tg-spin" /> : <Circle size={7} />}</span>
+                      {phase.label}
                     </div>
                   ))}
                 </div>
