@@ -71,4 +71,7 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}/orchestrator:${{ github.workspace }}/orchestrator/app
         run: >-
           uv run --locked --no-sync --with pytest --with pytest-asyncio
-          pytest -c ../tests/pytest.ini ../tests/unit/alert_triage -q
+          pytest -c ../tests/pytest.ini
+          ../tests/unit/alert_triage
+          ../tests/unit/orchestrator/api/test_alert_triage_persistence_unit.py
+          -q

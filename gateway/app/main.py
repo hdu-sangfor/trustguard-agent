@@ -49,6 +49,7 @@ START_TIME = datetime.now(timezone.utc)
 PHASE_ORDER = ["RECON", "THREAT_MODEL", "VULN_SCAN", "EXPLOIT", "REPORT", "DONE"]
 STATUS_VALUES = ["PENDING", "RUNNING", "PAUSED", "DONE", "FAILED", "CANCELLED"]
 _EXECUTION_POLICY_SCHEMA_READY = False
+_ALERT_TRIAGE_REVIEW_SCHEMA_READY = False
 
 app = FastAPI(title="TrustGuard Gateway", version="1.0.0")
 app.include_router(knowledge_router)
@@ -223,6 +224,7 @@ def _triage_task_to_api(state: dict[str, Any] | None, row: dict[str, Any] | None
     if not finished_at and status in ("DONE", "FAILED"):
         finished_at = row.get("updated_at")
     rag_degraded = bool(state.get("rag_degraded", False))
+    warnings = list(state.get("warnings") or result.get("warnings") or [])
 
     return {
         "taskId": state.get("task_id") or row.get("task_id") or "",
@@ -234,7 +236,7 @@ def _triage_task_to_api(state: dict[str, Any] | None, row: dict[str, Any] | None
         "severity": _triage_severity(from_state("severity")),
         "summary": str(from_state("summary", "") or ""),
         "reasoning": str(from_state("reasoning", "") or ""),
-        "ragEnabled": bool(state.get("enable_rag", True)),
+        "ragEnabled": bool(state.get("enable_rag", False)),
         "createdAt": _dt_iso(state.get("created_at") or row.get("created_at")) or "",
         "finishedAt": _dt_iso(finished_at),
         "alertSummary": {
@@ -268,13 +270,20 @@ def _triage_task_to_api(state: dict[str, Any] | None, row: dict[str, Any] | None
             }
             for item in raw_actions if isinstance(item, dict)
         ],
-        "warnings": list(state.get("warnings") or result.get("warnings") or []),
+        "warnings": warnings,
         "missingEvidence": list(from_state("missing_evidence", []) or []),
         "enrichmentEvidence": list(from_state("enrichment_evidence", []) or []),
         "ragCitations": raw_citations if isinstance(raw_citations, list) else [],
         "ragDegraded": rag_degraded,
         "ragNote": (
-            next((str(item) for item in state.get("warnings", []) if str(item).startswith("RAG_")), None)
+            next(
+                (
+                    str(item)
+                    for item in warnings
+                    if str(item).startswith(("RAG_", "MCP_"))
+                ),
+                None,
+            )
             if rag_degraded
             else None
         ),
@@ -347,6 +356,48 @@ async def _get_alert_triage_state(task_id: str) -> dict[str, Any] | None:
             return state if isinstance(state, dict) else None
         except Exception:
             return None
+
+
+async def _get_alert_triage_states(task_ids: list[str]) -> dict[str, dict[str, Any]]:
+    """Batch-load persisted triage states, with a bounded live fallback."""
+    if not task_ids:
+        return {}
+    states: dict[str, dict[str, Any]] = {}
+    try:
+        contexts = await _evidence(
+            "POST",
+            "/internal/tasks/contexts:batch",
+            json_body={"task_ids": task_ids},
+            timeout=15.0,
+        )
+        if isinstance(contexts, dict):
+            for task_id, context in contexts.items():
+                state = context.get("alert_triage") if isinstance(context, dict) else None
+                if task_id in task_ids and isinstance(state, dict):
+                    states[task_id] = state
+    except Exception as exc:
+        log.warning("batch alert triage context lookup failed: %s", exc)
+
+    missing = [task_id for task_id in task_ids if task_id not in states]
+    semaphore = asyncio.Semaphore(10)
+
+    async def fetch_live(task_id: str) -> tuple[str, dict[str, Any] | None]:
+        async with semaphore:
+            try:
+                state = await _orch(
+                    "GET",
+                    f"{ORCH_ALERT_TRIAGE_PATH}/tasks/{task_id}",
+                    timeout=10.0,
+                )
+                return task_id, state if isinstance(state, dict) else None
+            except Exception:
+                return task_id, None
+
+    if missing:
+        for task_id, state in await asyncio.gather(*(fetch_live(task_id) for task_id in missing)):
+            if state is not None:
+                states[task_id] = state
+    return states
 
 
 async def _run_alert_triage_in_background(task_id: str) -> None:
@@ -572,6 +623,61 @@ def _ensure_execution_policy_schema() -> None:
     _EXECUTION_POLICY_SCHEMA_READY = True
 
 
+def _ensure_alert_triage_review_schema() -> None:
+    global _ALERT_TRIAGE_REVIEW_SCHEMA_READY
+    if _ALERT_TRIAGE_REVIEW_SCHEMA_READY:
+        return
+    _execute(
+        """
+        CREATE TABLE IF NOT EXISTS tg_alert_triage_review (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            review_id VARCHAR(64) NOT NULL,
+            task_id VARCHAR(64) NOT NULL,
+            reviewer_user_id VARCHAR(64) NOT NULL,
+            reviewer_username VARCHAR(128) NOT NULL,
+            decision VARCHAR(32) NOT NULL,
+            human_verdict VARCHAR(32) NULL,
+            notes TEXT NULL,
+            selected_actions JSON NULL,
+            created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+            UNIQUE KEY uk_alert_triage_review_id (review_id),
+            INDEX idx_alert_triage_review_task (task_id, created_at),
+            INDEX idx_alert_triage_review_user (reviewer_user_id, created_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """
+    )
+    _ALERT_TRIAGE_REVIEW_SCHEMA_READY = True
+
+
+def _alert_triage_review_to_api(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "reviewId": row.get("review_id") or "",
+        "taskId": row.get("task_id") or "",
+        "reviewerUserId": row.get("reviewer_user_id") or "",
+        "reviewerUsername": row.get("reviewer_username") or "",
+        "decision": row.get("decision") or "",
+        "humanVerdict": row.get("human_verdict"),
+        "notes": row.get("notes") or "",
+        "selectedActions": _json_loads(row.get("selected_actions"), []),
+        "createdAt": _dt_iso(row.get("created_at")) or "",
+    }
+
+
+def _list_alert_triage_reviews(task_id: str) -> list[dict[str, Any]]:
+    _ensure_alert_triage_review_schema()
+    rows = _query(
+        """
+        SELECT review_id, task_id, reviewer_user_id, reviewer_username,
+               decision, human_verdict, notes, selected_actions, created_at
+        FROM tg_alert_triage_review
+        WHERE task_id = %s
+        ORDER BY created_at ASC, id ASC
+        """,
+        (task_id,),
+    )
+    return [_alert_triage_review_to_api(row) for row in rows]
+
+
 async def _create_task_impl(
     req: CreateTaskRequest,
     *,
@@ -638,7 +744,10 @@ async def create_task(req: CreateTaskRequest) -> dict[str, Any]:
 
 
 @app.get("/api/v1/tasks")
-def list_tasks(limit: int = 200) -> dict[str, Any]:
+def list_tasks(
+    limit: int = 200,
+    _user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
     rows = _query(
         "SELECT * FROM tg_task ORDER BY created_at DESC LIMIT %s",
         (_limit(limit, 200),),
@@ -647,7 +756,10 @@ def list_tasks(limit: int = 200) -> dict[str, Any]:
 
 
 @app.get("/api/v1/tasks/{task_id}", response_model=None)
-async def get_task(task_id: str) -> dict[str, Any] | JSONResponse:
+async def get_task(
+    task_id: str,
+    _user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any] | JSONResponse:
     row = _get_task_row(task_id)
     if not row:
         return fail("任务不存在", code="NOT_FOUND", data={"taskId": task_id})
@@ -1068,7 +1180,11 @@ async def run_status(task_id: str) -> dict[str, Any]:
 
 
 @app.get("/api/v1/tasks/{task_id}/events")
-async def task_events(task_id: str, limit: int = 500) -> dict[str, Any]:
+async def task_events(
+    task_id: str,
+    limit: int = 500,
+    _user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
     try:
         raw = await _evidence("GET", f"/internal/tasks/{task_id}/events", params={"limit": _limit(limit, 500)})
         data = [
@@ -1115,7 +1231,11 @@ async def task_events(task_id: str, limit: int = 500) -> dict[str, Any]:
 
 
 @app.get("/api/v1/tasks/{task_id}/reasoning-steps")
-async def task_reasoning_steps(task_id: str, limit: int = 500) -> dict[str, Any]:
+async def task_reasoning_steps(
+    task_id: str,
+    limit: int = 500,
+    _user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
     """结构化 CoT 推理步骤列表（Issue #136）；与 /events 运维轨迹并行。"""
     try:
         raw = await _evidence(
@@ -1497,7 +1617,11 @@ async def task_knowledge_chunks(
 
 
 @app.get("/api/v1/tasks/{task_id}/observation")
-async def task_observation(task_id: str, artifactsSummaryLimit: int = 500) -> dict[str, Any]:
+async def task_observation(
+    task_id: str,
+    artifactsSummaryLimit: int = 500,
+    _user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
     row = _get_task_row(task_id)
     context: dict[str, Any] = {}
     artifacts: list[dict[str, Any]] = []
@@ -1539,7 +1663,10 @@ async def task_observation(task_id: str, artifactsSummaryLimit: int = 500) -> di
     return ok(data)
 
 @app.get("/api/v1/tasks/{task_id}/todos")
-async def task_todos(task_id: str) -> dict[str, Any]:
+async def task_todos(
+    task_id: str,
+    _user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
     try:
         items = await _orch("GET", f"/v1/orchestrator/tasks/{task_id}/todos", timeout=8.0)
         if not isinstance(items, list):
@@ -1550,7 +1677,11 @@ async def task_todos(task_id: str) -> dict[str, Any]:
 
 
 @app.get("/api/v1/tasks/{task_id}/full", response_model=None)
-async def task_full(task_id: str, events_limit: int = 100) -> dict[str, Any] | JSONResponse:
+async def task_full(
+    task_id: str,
+    events_limit: int = 100,
+    _user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any] | JSONResponse:
     row = _get_task_row(task_id)
     if not row:
         return fail("任务不存在", code="NOT_FOUND", data={"taskId": task_id})
@@ -1786,7 +1917,10 @@ async def _executions(task_id: str, limit: int = 100, offset: int = 0) -> dict[s
 
 
 @app.get("/api/v1/tasks/{task_id}/report", response_model=None)
-async def task_report(task_id: str) -> dict[str, Any] | JSONResponse:
+async def task_report(
+    task_id: str,
+    _user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any] | JSONResponse:
     row = _get_task_row(task_id)
     if not row:
         return fail("任务不存在", code="NOT_FOUND", data={"taskId": task_id})
@@ -1910,7 +2044,13 @@ def _build_summary(row: dict[str, Any], findings: list[dict[str, Any]], executio
 
 
 @app.get("/api/v1/tasks/{task_id}/trace")
-async def trace(task_id: str, request: Request, executions_limit: int = 50, executions_offset: int = 0) -> dict[str, Any]:
+async def trace(
+    task_id: str,
+    request: Request,
+    executions_limit: int = 50,
+    executions_offset: int = 0,
+    _user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
     headers = _trace_headers(request)
     try:
         data = await _orch("GET", f"/v1/orchestrator/tasks/{task_id}/trace", params={"executions_limit": executions_limit, "executions_offset": executions_offset}, headers=headers, timeout=15.0)
@@ -1920,7 +2060,11 @@ async def trace(task_id: str, request: Request, executions_limit: int = 50, exec
 
 
 @app.get("/api/v1/tasks/{task_id}/trace/plan")
-async def trace_plan(task_id: str, request: Request) -> dict[str, Any]:
+async def trace_plan(
+    task_id: str,
+    request: Request,
+    _user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
     try:
         data = await _orch("GET", f"/v1/orchestrator/tasks/{task_id}/trace/plan", headers=_trace_headers(request), timeout=15.0)
     except Exception:
@@ -1929,7 +2073,11 @@ async def trace_plan(task_id: str, request: Request) -> dict[str, Any]:
 
 
 @app.get("/api/v1/tasks/{task_id}/trace/compile")
-async def trace_compile(task_id: str, request: Request) -> dict[str, Any]:
+async def trace_compile(
+    task_id: str,
+    request: Request,
+    _user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
     try:
         data = await _orch("GET", f"/v1/orchestrator/tasks/{task_id}/trace/compile", headers=_trace_headers(request), timeout=15.0)
     except Exception:
@@ -1938,7 +2086,12 @@ async def trace_compile(task_id: str, request: Request) -> dict[str, Any]:
 
 
 @app.get("/api/v1/tasks/{task_id}/executions")
-async def task_executions(task_id: str, limit: int = 50, offset: int = 0) -> dict[str, Any]:
+async def task_executions(
+    task_id: str,
+    limit: int = 50,
+    offset: int = 0,
+    _user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
     return ok(await _executions(task_id, limit, offset))
 
 
@@ -2519,8 +2672,28 @@ class CreateAlertTriageRequest(BaseModel):
     caller_notes: str | None = Field(default=None, validation_alias=AliasChoices("caller_notes", "callerNotes"))
 
 
+class AlertTriageReviewRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    decision: Literal["CONFIRMED", "OVERRIDDEN", "NEEDS_MORE_EVIDENCE"]
+    human_verdict: Literal[
+        "true_positive",
+        "false_positive",
+        "suspicious",
+        "insufficient_evidence",
+    ] | None = Field(default=None, validation_alias=AliasChoices("human_verdict", "humanVerdict"))
+    notes: str = Field(default="", max_length=4000)
+    selected_actions: list[str] = Field(
+        default_factory=list,
+        max_length=50,
+        validation_alias=AliasChoices("selected_actions", "selectedActions"),
+    )
+
+
 @app.post("/api/v1/alert-triage/tasks")
-async def create_alert_triage_task(req: CreateAlertTriageRequest) -> dict[str, Any]:
+async def create_alert_triage_task(
+    req: CreateAlertTriageRequest,
+    _user: CurrentUser = Depends(require_roles("ADMIN", "OPERATOR")),
+) -> dict[str, Any]:
     return ok(await _create_alert_triage_task_impl(req))
 
 
@@ -2570,20 +2743,21 @@ async def _create_alert_triage_task_impl(
     }, row)
 
 @app.get("/api/v1/alert-triage/tasks")
-async def list_alert_triage_tasks(limit: int = 50) -> dict[str, Any]:
+async def list_alert_triage_tasks(
+    limit: int = 50,
+    _user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
     rows = _query(
         "SELECT task_id, name, target, status, created_at, updated_at FROM tg_task WHERE task_id LIKE 'at-%%' ORDER BY created_at DESC LIMIT %s",
         (_limit(limit, 20, 200),),
     )
     tasks = [_triage_task_to_api(None, row) for row in rows]
 
-    # Enrich completed tasks with orchestrator state (batch, best-effort)
+    # Enrich every completed task from Evidence in one batch.  Older results
+    # must remain useful; an arbitrary first-page cap silently erased verdicts.
     done_ids = [t["taskId"] for t in tasks if t["status"] in ("DONE", "FAILED")]
     if done_ids:
-        async def _fetch_one(tid: str) -> tuple[str, dict[str, Any] | None]:
-            return tid, await _get_alert_triage_state(tid)
-        results = await asyncio.gather(*(_fetch_one(tid) for tid in done_ids[:20]))
-        state_map = {tid: state for tid, state in results if state is not None}
+        state_map = await _get_alert_triage_states(done_ids)
         for index, task in enumerate(tasks):
             s = state_map.get(task["taskId"])
             if s:
@@ -2593,16 +2767,24 @@ async def list_alert_triage_tasks(limit: int = 50) -> dict[str, Any]:
 
 
 @app.get("/api/v1/alert-triage/tasks/{task_id}")
-async def get_alert_triage_task(task_id: str) -> dict[str, Any]:
+async def get_alert_triage_task(
+    task_id: str,
+    _user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
     row = _get_task_row(task_id)
     if not row:
         return fail("任务不存在", code="NOT_FOUND", data={"taskId": task_id})
     state = await _get_alert_triage_state(task_id)
-    return ok(_triage_task_to_api(state, row))
+    task = _triage_task_to_api(state, row)
+    task["humanReviews"] = _list_alert_triage_reviews(task_id)
+    return ok(task)
 
 
 @app.post("/api/v1/alert-triage/tasks/{task_id}/run")
-async def run_alert_triage_task(task_id: str) -> dict[str, Any]:
+async def run_alert_triage_task(
+    task_id: str,
+    _user: CurrentUser = Depends(require_roles("ADMIN", "OPERATOR")),
+) -> dict[str, Any]:
     row = _get_task_row(task_id)
     if not row:
         return fail("任务不存在", code="NOT_FOUND", data={"taskId": task_id})
@@ -2616,12 +2798,19 @@ async def run_alert_triage_task(task_id: str) -> dict[str, Any]:
 
 
 @app.get("/api/v1/alert-triage/tasks/{task_id}/events")
-async def get_alert_triage_events(task_id: str, limit: int = 500) -> dict[str, Any]:
+async def get_alert_triage_events(
+    task_id: str,
+    limit: int = 500,
+    _user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
     return await task_events(task_id, limit)
 
 
 @app.get("/api/v1/alert-triage/tasks/{task_id}/report")
-async def get_alert_triage_report(task_id: str) -> dict[str, Any]:
+async def get_alert_triage_report(
+    task_id: str,
+    _user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
     row = _get_task_row(task_id)
     if not row:
         return fail("任务不存在", code="NOT_FOUND", data={"taskId": task_id})
@@ -2629,7 +2818,85 @@ async def get_alert_triage_report(task_id: str) -> dict[str, Any]:
         result = await _orch("GET", f"{ORCH_ALERT_TRIAGE_PATH}/tasks/{task_id}", timeout=10.0)
     except Exception as exc:
         return fail(f"获取研判报告失败: {exc}", code="ORCHESTRATOR_ERROR")
+    if isinstance(result, dict):
+        result = dict(result)
+        result["humanReviews"] = _list_alert_triage_reviews(task_id)
     return ok(result)
+
+
+@app.get("/api/v1/alert-triage/tasks/{task_id}/reviews")
+def list_alert_triage_reviews(
+    task_id: str,
+    _user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    row = _get_task_row(task_id)
+    if not row or not str(task_id).startswith("at-"):
+        return fail("任务不存在", code="NOT_FOUND", data={"taskId": task_id})
+    return ok(_list_alert_triage_reviews(task_id))
+
+
+@app.post("/api/v1/alert-triage/tasks/{task_id}/reviews")
+def create_alert_triage_review(
+    task_id: str,
+    req: AlertTriageReviewRequest,
+    user: CurrentUser = Depends(require_roles("ADMIN", "OPERATOR")),
+) -> dict[str, Any]:
+    row = _get_task_row(task_id)
+    if not row or not str(task_id).startswith("at-"):
+        raise HTTPException(status_code=404, detail="任务不存在")
+    if str(row.get("status") or "").upper() != "DONE":
+        raise HTTPException(status_code=409, detail="仅已完成的研判任务可提交人工复核")
+    if req.decision == "OVERRIDDEN" and req.human_verdict is None:
+        raise HTTPException(status_code=422, detail="覆盖 Agent 结论时必须提供人工结论")
+    if req.decision == "NEEDS_MORE_EVIDENCE" and req.human_verdict is not None:
+        raise HTTPException(status_code=422, detail="补充证据决定不能同时给出人工结论")
+
+    _ensure_alert_triage_review_schema()
+    review_id = "atr-" + uuid.uuid4().hex
+    _execute(
+        """
+        INSERT INTO tg_alert_triage_review
+          (review_id, task_id, reviewer_user_id, reviewer_username, decision,
+           human_verdict, notes, selected_actions, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW(6))
+        """,
+        (
+            review_id,
+            task_id,
+            user.user_id,
+            user.username,
+            req.decision,
+            req.human_verdict,
+            req.notes.strip(),
+            _json_dumps(req.selected_actions),
+        ),
+    )
+    _record_audit(
+        "ALERT_TRIAGE_REVIEWED",
+        user.user_id,
+        task_id,
+        f"review_id={review_id} decision={req.decision} verdict={req.human_verdict or ''}",
+    )
+    rows = _query(
+        """
+        SELECT review_id, task_id, reviewer_user_id, reviewer_username,
+               decision, human_verdict, notes, selected_actions, created_at
+        FROM tg_alert_triage_review WHERE review_id = %s
+        """,
+        (review_id,),
+    )
+    review = rows[0] if rows else {
+        "review_id": review_id,
+        "task_id": task_id,
+        "reviewer_user_id": user.user_id,
+        "reviewer_username": user.username,
+        "decision": req.decision,
+        "human_verdict": req.human_verdict,
+        "notes": req.notes.strip(),
+        "selected_actions": req.selected_actions,
+        "created_at": _now_iso(),
+    }
+    return ok(_alert_triage_review_to_api(review))
 
 
 @app.get("/api/v1/system/info")

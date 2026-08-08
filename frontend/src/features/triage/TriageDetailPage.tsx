@@ -6,8 +6,16 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, Shield, AlertTriangle, CheckCircle, XCircle, HelpCircle, Clock, FileText, Activity, ShieldAlert, Info, Database } from "lucide-react";
+import { toast } from "sonner";
 import Header from "@/shared/components/Header";
-import { getTriageTask, type ApiTriageTask } from "@/shared/lib/api";
+import { useAppSession } from "@/shared/context/AppSessionContext";
+import {
+  getMe,
+  getTriageTask,
+  submitTriageReview,
+  type ApiTriageReview,
+  type ApiTriageTask,
+} from "@/shared/lib/api";
 
 const VERDICT_CONFIG: Record<string, { label: string; color: string; bg: string; icon: React.ReactNode }> = {
   true_positive:     { label: "确认恶意", color: "#f87171", bg: "rgba(248,113,113,0.15)", icon: <AlertTriangle size={18} /> },
@@ -44,9 +52,16 @@ const LabelValue = ({ label, value, monospace }: { label: string; value: React.R
 const TriageDetailPage = () => {
   const { taskId } = useParams<{ taskId: string }>();
   const navigate = useNavigate();
+  const { loggedIn } = useAppSession();
   const [task, setTask] = useState<ApiTriageTask | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [canReview, setCanReview] = useState(false);
+  const [reviewDecision, setReviewDecision] = useState<ApiTriageReview['decision']>('CONFIRMED');
+  const [humanVerdict, setHumanVerdict] = useState<Exclude<ApiTriageTask['verdict'], null>>('suspicious');
+  const [reviewNotes, setReviewNotes] = useState("");
+  const [selectedActions, setSelectedActions] = useState<string[]>([]);
+  const [submittingReview, setSubmittingReview] = useState(false);
 
   const fetchTask = useCallback(async (showLoading = true) => {
     if (!taskId) return;
@@ -62,7 +77,16 @@ const TriageDetailPage = () => {
     }
   }, [taskId]);
 
-  useEffect(() => { fetchTask(); }, [fetchTask]);
+  useEffect(() => {
+    if (!loggedIn) {
+      navigate("/login", { replace: true });
+      return;
+    }
+    void fetchTask();
+    void getMe()
+      .then((user) => setCanReview(user.role === 'ADMIN' || user.role === 'OPERATOR'))
+      .catch(() => setCanReview(false));
+  }, [fetchTask, loggedIn, navigate]);
 
   // Refresh active runs until a terminal result is available.
   useEffect(() => {
@@ -80,6 +104,27 @@ const TriageDetailPage = () => {
   };
 
   const verdictCfg = task?.verdict ? VERDICT_CONFIG[task.verdict] : null;
+
+  const handleReview = async () => {
+    if (!taskId) return;
+    setSubmittingReview(true);
+    try {
+      await submitTriageReview(taskId, {
+        decision: reviewDecision,
+        humanVerdict: reviewDecision === 'OVERRIDDEN' ? humanVerdict : undefined,
+        notes: reviewNotes,
+        selectedActions,
+      });
+      toast.success("人工复核已写入审计记录");
+      setReviewNotes("");
+      setSelectedActions([]);
+      await fetchTask(false);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "提交人工复核失败");
+    } finally {
+      setSubmittingReview(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -273,6 +318,88 @@ const TriageDetailPage = () => {
                 );
               })}
             </div>
+          </SectionBlock>
+        )}
+
+        {task.status === "DONE" && canReview && (
+          <SectionBlock icon={<CheckCircle size={16} color="#34d399" />} title="人工复核">
+            <div style={{ display: "grid", gap: 10 }}>
+              <label style={{ fontSize: 11, color: "var(--tg-text-muted)", fontFamily: "monospace" }}>
+                复核决定
+                <select
+                  value={reviewDecision}
+                  onChange={(e) => setReviewDecision(e.target.value as ApiTriageReview['decision'])}
+                  style={{ display: "block", width: "100%", marginTop: 5, padding: "8px 10px", borderRadius: 6, border: "1px solid var(--tg-panel-border)", background: "var(--tg-input-bg)", color: "var(--tg-text)" }}
+                >
+                  <option value="CONFIRMED">确认 Agent 结论</option>
+                  <option value="OVERRIDDEN">覆盖 Agent 结论</option>
+                  <option value="NEEDS_MORE_EVIDENCE">需要补充证据</option>
+                </select>
+              </label>
+              {reviewDecision === 'OVERRIDDEN' && (
+                <label style={{ fontSize: 11, color: "var(--tg-text-muted)", fontFamily: "monospace" }}>
+                  人工结论
+                  <select
+                    value={humanVerdict}
+                    onChange={(e) => setHumanVerdict(e.target.value as Exclude<ApiTriageTask['verdict'], null>)}
+                    style={{ display: "block", width: "100%", marginTop: 5, padding: "8px 10px", borderRadius: 6, border: "1px solid var(--tg-panel-border)", background: "var(--tg-input-bg)", color: "var(--tg-text)" }}
+                  >
+                    {Object.entries(VERDICT_CONFIG).map(([value, config]) => <option key={value} value={value}>{config.label}</option>)}
+                  </select>
+                </label>
+              )}
+              {(task.recommendedActions ?? []).length > 0 && (
+                <div style={{ fontSize: 11, color: "var(--tg-text-muted)", fontFamily: "monospace" }}>
+                  确认后续动作
+                  <div style={{ display: "grid", gap: 6, marginTop: 6 }}>
+                    {(task.recommendedActions ?? []).map((action) => (
+                      <label key={action.action} style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                        <input
+                          type="checkbox"
+                          checked={selectedActions.includes(action.action)}
+                          onChange={(e) => setSelectedActions((items) => e.target.checked
+                            ? [...items, action.action]
+                            : items.filter((item) => item !== action.action))}
+                        />
+                        {action.label}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <textarea
+                value={reviewNotes}
+                onChange={(e) => setReviewNotes(e.target.value)}
+                maxLength={4000}
+                rows={3}
+                placeholder="填写复核依据或待补充证据（可选）"
+                style={{ resize: "vertical", padding: "9px 10px", borderRadius: 6, border: "1px solid var(--tg-panel-border)", background: "var(--tg-input-bg)", color: "var(--tg-text)", fontSize: 12 }}
+              />
+              <button
+                type="button"
+                disabled={submittingReview}
+                onClick={() => { void handleReview(); }}
+                style={{ justifySelf: "start", padding: "8px 16px", borderRadius: 6, border: "none", background: "#34d399", color: "#052e25", fontWeight: 800, cursor: submittingReview ? "not-allowed" : "pointer", opacity: submittingReview ? 0.6 : 1 }}
+              >
+                {submittingReview ? "提交中..." : "提交复核"}
+              </button>
+            </div>
+          </SectionBlock>
+        )}
+
+        {(task.humanReviews ?? []).length > 0 && (
+          <SectionBlock icon={<FileText size={16} color="var(--neon-blue)" />} title={`人工复核记录 (${task.humanReviews?.length ?? 0})`}>
+            {(task.humanReviews ?? []).map((review) => (
+              <div key={review.reviewId} style={{ padding: "10px 12px", marginBottom: 8, borderRadius: 6, background: "var(--tg-input-bg)", fontSize: 12 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, fontFamily: "monospace" }}>
+                  <strong style={{ color: "var(--neon-blue)" }}>{review.decision}</strong>
+                  <span style={{ color: "var(--tg-text-muted)", fontSize: 10 }}>{review.reviewerUsername} · {formatTime(review.createdAt)}</span>
+                </div>
+                {review.humanVerdict && <div style={{ marginTop: 6 }}>人工结论：{VERDICT_CONFIG[review.humanVerdict]?.label ?? review.humanVerdict}</div>}
+                {review.notes && <div style={{ marginTop: 6, color: "var(--tg-text-muted)", whiteSpace: "pre-wrap" }}>{review.notes}</div>}
+                {review.selectedActions.length > 0 && <div style={{ marginTop: 6 }}>确认动作：{review.selectedActions.join("；")}</div>}
+              </div>
+            ))}
           </SectionBlock>
         )}
 

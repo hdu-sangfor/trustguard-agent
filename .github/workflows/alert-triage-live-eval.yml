@@ -1,0 +1,129 @@
+name: Alert Triage Live Scenario Gate
+
+on:
+  workflow_dispatch:
+    inputs:
+      repeat:
+        description: Runs per scenario
+        required: false
+        default: "1"
+      timeout_seconds:
+        description: Timeout per scenario
+        required: false
+        default: "180"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: alert-triage-live-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  live-scenario-matrix:
+    name: Stateful XDR Matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      LLM_API_KEY: ${{ secrets.ALERT_TRIAGE_LLM_API_KEY }}
+      LLM_BASE_URL: ${{ vars.ALERT_TRIAGE_LLM_BASE_URL }}
+      LLM_MODEL_ID: ${{ vars.ALERT_TRIAGE_LLM_MODEL_ID }}
+
+    steps:
+      - name: Checkout Agent
+        uses: actions/checkout@v4
+
+      - name: Checkout XDR Mock
+        uses: actions/checkout@v4
+        with:
+          repository: hdu-sangfor/trustguard-xdr-mock
+          path: trustguard-xdr-mock
+
+      - name: Checkout XDR specifications
+        uses: actions/checkout@v4
+        with:
+          repository: hdu-sangfor/trustguard-docs
+          path: trustguard-docs
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v8.2.0
+        with:
+          version: 0.11.7
+          enable-cache: true
+
+      - name: Validate live-evaluation configuration
+        shell: bash
+        run: |
+          test -n "$LLM_API_KEY" || {
+            echo "Repository secret ALERT_TRIAGE_LLM_API_KEY is required" >&2
+            exit 1
+          }
+          echo "LLM_BASE_URL=${LLM_BASE_URL:-https://api.openai.com/v1}" >> "$GITHUB_ENV"
+          echo "LLM_MODEL_ID=${LLM_MODEL_ID:-gpt-4o-mini}" >> "$GITHUB_ENV"
+
+      - name: Configure Agent
+        shell: bash
+        run: |
+          {
+            echo "LLM_PROVIDER=openai_compat"
+            echo "LLM_BASE_URL=$LLM_BASE_URL"
+            echo "LLM_API_KEY=$LLM_API_KEY"
+            echo "LLM_MODEL_ID=$LLM_MODEL_ID"
+            echo "KNOWLEDGE_MCP_ENABLED=false"
+            echo "TRUSTGUARD_BIND_HOST=127.0.0.1"
+          } > .env
+
+      - name: Start stateful XDR Mock
+        working-directory: trustguard-xdr-mock
+        run: docker compose up -d --build
+
+      - name: Start Agent stack
+        run: docker compose up -d --build
+
+      - name: Wait for public services
+        shell: bash
+        run: |
+          for attempt in $(seq 1 90); do
+            if curl --fail --silent http://127.0.0.1:8443/health >/dev/null \
+              && curl --fail --silent http://127.0.0.1:18080/health >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose ps
+          exit 1
+
+      - name: Run all alert-triage scenarios
+        working-directory: trustguard-xdr-mock
+        env:
+          TRUSTGUARD_GATEWAY_URL: http://127.0.0.1:18080
+          XDR_MOCK_BASE_URL: http://127.0.0.1:8443
+        run: >-
+          uv run --group dev python scripts/evaluate_agent_scenarios.py
+          --repeat ${{ inputs.repeat }}
+          --timeout ${{ inputs.timeout_seconds }}
+          --output alert-triage-live-eval.json
+
+      - name: Upload evaluation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: alert-triage-live-eval
+          path: trustguard-xdr-mock/alert-triage-live-eval.json
+          if-no-files-found: warn
+
+      - name: Capture service logs on failure
+        if: failure()
+        shell: bash
+        run: |
+          mkdir -p ci-artifacts
+          docker compose logs --no-color > ci-artifacts/agent-stack.log
+          docker compose -f trustguard-xdr-mock/docker-compose.yml logs --no-color > ci-artifacts/xdr-mock.log
+
+      - name: Upload failure logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: alert-triage-live-logs
+          path: ci-artifacts
+          if-no-files-found: warn

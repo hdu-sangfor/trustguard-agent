@@ -63,9 +63,13 @@ const TriagePage = () => {
   }, []);
 
   useEffect(() => {
+    if (!loggedIn) {
+      navigate("/login", { replace: true });
+      return;
+    }
     checkProxy();
     fetchTasks();
-  }, [checkProxy, fetchTasks]);
+  }, [checkProxy, fetchTasks, loggedIn, navigate]);
 
   // Keep the list current while a run is queued or executing; terminal tasks
   // stop polling so the page does not create unnecessary gateway traffic.

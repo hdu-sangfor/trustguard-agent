@@ -70,9 +70,39 @@ def _ensure_reasoning_steps_table() -> None:
         log.exception("failed to ensure tg_reasoning_steps table")
 
 
+def _ensure_recovery_indexes() -> None:
+    """Install small ordering indexes for upgraded databases as well as fresh ones."""
+    definitions = (
+        (
+            "tg_task_context",
+            "idx_task_context_updated_at",
+            "ALTER TABLE tg_task_context ADD INDEX idx_task_context_updated_at (updated_at, task_id)",
+        ),
+        (
+            "tg_trace_events",
+            "idx_trace_created_at",
+            "ALTER TABLE tg_trace_events ADD INDEX idx_trace_created_at (created_at, id)",
+        ),
+    )
+    for table, index_name, ddl in definitions:
+        try:
+            if not _query(f"SHOW INDEX FROM {table} WHERE Key_name = %s", (index_name,)):
+                _execute(ddl)
+        except Exception:
+            # Another replica may have won the DDL race.  Only log if the
+            # desired index is still absent after the failed statement.
+            try:
+                if _query(f"SHOW INDEX FROM {table} WHERE Key_name = %s", (index_name,)):
+                    continue
+            except Exception:
+                pass
+            log.exception("failed to ensure recovery index %s", index_name)
+
+
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     _ensure_reasoning_steps_table()
+    _ensure_recovery_indexes()
     yield
 
 
@@ -285,6 +315,18 @@ class ArtifactIn(BaseModel):
     content: str | None = None
 
 
+class ContextBatchRequest(BaseModel):
+    task_ids: list[str] = Field(min_length=1, max_length=200)
+
+    @field_validator("task_ids")
+    @classmethod
+    def _normalize_task_ids(cls, values: list[str]) -> list[str]:
+        normalized = list(dict.fromkeys(str(value).strip() for value in values))
+        if any(not value or len(value) > 64 for value in normalized):
+            raise ValueError("task_ids must contain non-empty values up to 64 characters")
+        return normalized
+
+
 @app.get("/health")
 def health() -> dict[str, Any]:
     try:
@@ -379,10 +421,15 @@ def list_tasks(limit: int = 200) -> list[dict[str, Any]]:
     if len(merged) < max_rows:
         for row in _query(
             """
-            SELECT task_id, context_json, updated_at
-            FROM tg_task_context
-            ORDER BY updated_at DESC
-            LIMIT %s
+            SELECT ctx.task_id, ctx.context_json, recent.updated_at
+            FROM (
+                SELECT task_id, updated_at
+                FROM tg_task_context
+                ORDER BY updated_at DESC
+                LIMIT %s
+            ) AS recent
+            INNER JOIN tg_task_context AS ctx ON ctx.task_id = recent.task_id
+            ORDER BY recent.updated_at DESC
             """,
             (max_rows * 3,),
         ):
@@ -410,10 +457,15 @@ def list_tasks(limit: int = 200) -> list[dict[str, Any]]:
     if len(merged) < max_rows:
         for row in _query(
             """
-            SELECT task_id, event_type, payload, created_at
-            FROM tg_trace_events
-            ORDER BY created_at DESC
-            LIMIT %s
+            SELECT events.task_id, events.event_type, events.payload, recent.created_at
+            FROM (
+                SELECT id, created_at
+                FROM tg_trace_events
+                ORDER BY created_at DESC
+                LIMIT %s
+            ) AS recent
+            INNER JOIN tg_trace_events AS events ON events.id = recent.id
+            ORDER BY recent.created_at DESC
             """,
             (max_rows * 10,),
         ):
@@ -443,6 +495,23 @@ def list_tasks(limit: int = 200) -> list[dict[str, Any]]:
                 break
 
     return list(merged.values())[:max_rows]
+
+
+@app.post("/internal/tasks/contexts:batch")
+def batch_get_contexts(body: ContextBatchRequest) -> dict[str, dict[str, Any]]:
+    """Read persisted task contexts without one HTTP round trip per task."""
+    placeholders = ",".join(["%s"] * len(body.task_ids))
+    rows = _query(
+        f"SELECT task_id, context_json FROM tg_task_context WHERE task_id IN ({placeholders})",
+        tuple(body.task_ids),
+    )
+    contexts: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        task_id = str(row.get("task_id") or "")
+        context = _json_loads(row.get("context_json"))
+        if task_id and isinstance(context, dict):
+            contexts[task_id] = context
+    return contexts
 
 
 @app.get("/internal/tasks/{task_id}/events")

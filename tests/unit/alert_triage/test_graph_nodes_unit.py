@@ -338,12 +338,20 @@ class TestValidateDecision:
     @pytest.mark.asyncio
     async def test_complete_primary_evidence_uses_suspicious_instead_of_insufficient(self):
         state = _base_state(
-            raw_decision={"verdict": "insufficient_evidence", "confidence": 0.3},
+            raw_decision={
+                "verdict": "insufficient_evidence",
+                "confidence": 0.3,
+                "summary": "无法判断",
+                "reasoning": "原模型认为缺少证据",
+            },
             missing_evidence=[],
         )
         result = await validate_decision(state)
         assert result["raw_decision"]["verdict"] == "suspicious"
         assert result["raw_decision"]["confidence"] == 0.5
+        assert result["raw_decision"]["summary"].startswith("安全策略校验后结论为可疑")
+        assert "覆盖为 suspicious" in result["raw_decision"]["reasoning"]
+        assert "仅保留证据描述参考" in result["raw_decision"]["reasoning"]
 
     @pytest.mark.asyncio
     async def test_deterministic_verdict_with_missing_evidence(self):
@@ -357,13 +365,22 @@ class TestValidateDecision:
     @pytest.mark.asyncio
     async def test_false_positive_requires_exact_whitelist(self):
         state = _base_state(
-            raw_decision={"verdict": "false_positive", "confidence": 0.9, "severity": "medium"},
+            raw_decision={
+                "verdict": "false_positive",
+                "confidence": 0.9,
+                "severity": "medium",
+                "summary": "这是误报",
+                "reasoning": "模型声称脚本可信",
+            },
             whitelist_matches=[],
         )
         result = await validate_decision(state)
         assert result["raw_decision"]["verdict"] == "suspicious"
         assert result["raw_decision"]["confidence"] == 0.7
         assert any("exact whitelist" in error for error in result["validation_errors"])
+        assert "可疑" in result["raw_decision"]["summary"]
+        assert "覆盖为 suspicious" in result["raw_decision"]["reasoning"]
+        assert any("false_positive->suspicious" in warning for warning in result["warnings"])
 
     @pytest.mark.asyncio
     async def test_complete_suspicious_evidence_uses_stable_confidence_band(self):

@@ -1040,6 +1040,9 @@ async def validate_decision(state: TriageState) -> TriageState:
     await _emit(task_id, "AT_VALIDATE_DECISION_START", {})
 
     raw = state.get("raw_decision") or {}
+    original_verdict = str(raw.get("verdict") or "").strip().lower()
+    original_summary = str(raw.get("summary") or "").strip()
+    original_reasoning = str(raw.get("reasoning") or "").strip()
     errors: list[str] = []
 
     # 1) 检查必填字段
@@ -1133,6 +1136,35 @@ async def validate_decision(state: TriageState) -> TriageState:
             "CONFIDENCE_CALIBRATED:"
             f"{confidence_before_calibration:.2f}->{confidence_after_calibration:.2f}:"
             f"{final_verdict}"
+        )
+
+    # Verdict guardrails are authoritative.  If they override the model, the
+    # user-facing prose must say so explicitly instead of continuing to argue
+    # for the now-invalid original conclusion.
+    if final_verdict != original_verdict:
+        summaries = {
+            "true_positive": "安全策略校验后结论为真实攻击，需按人工确认流程处置。",
+            "false_positive": "安全策略校验后结论为误报，依据为精确匹配的有效白名单。",
+            "suspicious": "安全策略校验后结论为可疑，现有证据不足以支持确定性的真实攻击或误报判断，需人工复核。",
+            "insufficient_evidence": "安全策略校验后结论为证据不足，需要补充关键 XDR 原始证据后再研判。",
+        }
+        reason_text = "；".join(errors) or "模型结论不符合确定性判定策略"
+        source_parts = [
+            part
+            for part in (
+                f"原始摘要：{original_summary}" if original_summary else "",
+                f"原始分析：{original_reasoning}" if original_reasoning else "",
+            )
+            if part
+        ]
+        raw["summary"] = summaries.get(final_verdict, summaries["insufficient_evidence"])
+        raw["reasoning"] = (
+            f"策略校验已将模型原始结论 {original_verdict or 'invalid'} 覆盖为 {final_verdict}。"
+            f"覆盖原因：{reason_text}。最终结论以策略校验结果为准。"
+            + ("\n\n原始模型文本（仅保留证据描述参考，不代表最终结论）：" + " ".join(source_parts) if source_parts else "")
+        )
+        state["warnings"].append(
+            f"VERDICT_OVERRIDDEN:{original_verdict or 'invalid'}->{final_verdict}"
         )
 
     state["validation_errors"] = errors

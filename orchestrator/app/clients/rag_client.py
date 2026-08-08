@@ -6,7 +6,7 @@ from typing import Any
 from app.knowledge.config import KnowledgeMcpSettings
 from app.knowledge.gateway import get_knowledge_gateway
 from app.knowledge.mcp_client import KnowledgeCallContext, McpKnowledgeTransportError
-from app.knowledge.models import KnowledgeScope, KnowledgeSearchRequest, RetrievalMode
+from app.knowledge.models import KnowledgeSearchRequest
 
 _MAX_RESOURCES = 3
 _MAX_RESOURCE_CHARS = 1_800
@@ -64,10 +64,14 @@ async def query_rag(
         workflow_type="alert-triage",
         workspace_id=settings.workspace_id,
     )
+    # Scope is a deployment-owned logical alias.  Alert triage identifies
+    # itself through ``workflow_type`` below, but must not bypass the configured
+    # MCP scope mapping by hard-coding an alias that may not exist upstream.
+    request_scope = settings.scope
     request = KnowledgeSearchRequest(
         query=_query_text(questions),
-        scope=KnowledgeScope.ALERT_TRIAGE,
-        mode=RetrievalMode.FOCUSED,
+        scope=request_scope,
+        mode=settings.mode,
         limit=min(settings.limit, _MAX_RESOURCES),
     )
     try:
@@ -83,7 +87,7 @@ async def query_rag(
             resource = await get_knowledge_gateway(settings).read_resource(
                 hit.resource_uri, context=call_context
             )
-            _validate_resource(resource, hit, KnowledgeScope.ALERT_TRIAGE.value)
+            _validate_resource(resource, hit, request_scope.value)
             snippet = resource.text[:_MAX_RESOURCE_CHARS]
             citations.append(
                 {
@@ -114,9 +118,35 @@ async def health_check() -> bool:
 def build_questions_from_alert(alert: dict[str, Any]) -> list[str]:
     """Build bounded queries only from known alert fields."""
     questions: list[str] = []
-    alert_type = str(alert.get("alert_type") or alert.get("type") or "").strip()
-    if alert_type:
-        questions.append(f"{alert_type} 告警的研判证据、常见误报场景和处置建议")
+    alert_name = str(alert.get("name") or alert.get("title") or "").strip()
+    alert_type = str(
+        alert.get("alert_type")
+        or alert.get("type")
+        or alert.get("threatType")
+        or alert.get("threatClass")
+        or ""
+    ).strip()
+    if alert_name or alert_type:
+        topic = " ".join(part[:240] for part in (alert_name, alert_type) if part)
+        questions.append(f"{topic} 告警的攻击手法、研判证据、常见误报场景和处置建议")
+    description = str(alert.get("description") or "").strip()
+    if description:
+        questions.append(f"告警描述涉及的检测证据和处置：{description[:400]}")
+    searchable = " ".join((alert_name, alert_type, description)).lower()
+    entity_hints: list[str] = []
+    hint_rules = (
+        (("webshell", "web shell", "文件上传", "上传并执行"), "CWE-434 Unrestricted Upload of File with Dangerous Type"),
+        (("命令执行", "command execution", "cmd.exe", "shell"), "CWE-78 OS Command Injection"),
+        (("powershell", "编码命令"), "PowerShell ATT&CK T1059.001 Command and Scripting Interpreter"),
+        (("钓鱼", "phishing"), "Phishing ATT&CK T1566"),
+        (("xss", "跨站脚本"), "CWE-79 Cross-site Scripting"),
+        (("路径穿越", "path traversal"), "CWE-22 Path Traversal"),
+    )
+    for needles, hint in hint_rules:
+        if any(needle in searchable for needle in needles):
+            entity_hints.append(hint)
+    if entity_hints:
+        questions.append("相关安全知识实体：" + "；".join(entity_hints))
     process = str(alert.get("process_name") or alert.get("process") or alert.get("image_name") or "").strip()
     command = str(alert.get("command_line") or alert.get("cmd") or "").strip()
     if process or command:

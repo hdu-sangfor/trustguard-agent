@@ -2,6 +2,7 @@ import importlib
 import sys
 
 import pytest
+from fastapi.testclient import TestClient
 
 from tests.paths import REPO_ROOT
 
@@ -83,6 +84,40 @@ def test_triage_task_api_contract_accepts_official_xdr_uuid_field():
         }
     )
     assert task["relatedIncidents"][0]["uuId"] == "incident-1"
+
+
+def test_triage_routes_require_authentication():
+    gw = _load_gateway_main()
+    client = TestClient(gw.app)
+
+    assert client.get("/api/v1/alert-triage/tasks").status_code == 401
+    assert client.get("/api/v1/alert-triage/tasks/at-secret/events").status_code == 401
+    assert client.post(
+        "/api/v1/alert-triage/tasks",
+        json={"alertUuid": "alert-1"},
+    ).status_code == 401
+
+
+def test_viewer_cannot_create_or_review_triage_tasks():
+    gw = _load_gateway_main()
+    gw.app.dependency_overrides[gw.get_current_user] = lambda: gw.CurrentUser(
+        user_id="viewer-1",
+        username="viewer",
+        role="VIEWER",
+        status="ACTIVE",
+    )
+    try:
+        client = TestClient(gw.app)
+        assert client.post(
+            "/api/v1/alert-triage/tasks",
+            json={"alertUuid": "alert-1"},
+        ).status_code == 403
+        assert client.post(
+            "/api/v1/alert-triage/tasks/at-secret/reviews",
+            json={"decision": "CONFIRMED"},
+        ).status_code == 403
+    finally:
+        gw.app.dependency_overrides.clear()
 
 
 def test_triage_terminal_text_explains_verdict_evidence_and_manual_actions():
@@ -216,3 +251,79 @@ async def test_create_triage_failure_raises_and_marks_task_failed(monkeypatch):
 
     assert exc.value.status_code == 502
     assert any("status = 'FAILED'" in sql for sql, _params in updates)
+
+
+@pytest.mark.asyncio
+async def test_list_triage_enriches_all_terminal_tasks_without_first_page_cap(monkeypatch):
+    gw = _load_gateway_main()
+    rows = [
+        {
+            "task_id": f"at-{index}",
+            "target": f"alert-{index}",
+            "status": "DONE",
+            "created_at": f"2026-08-03T07:{index:02d}:00Z",
+        }
+        for index in range(45)
+    ]
+    requested: list[str] = []
+    monkeypatch.setattr(gw, "_query", lambda *_args, **_kwargs: rows)
+
+    async def batch_states(task_ids):
+        requested.extend(task_ids)
+        return {
+            task_id: {"task_id": task_id, "status": "DONE", "result": {"verdict": "suspicious"}}
+            for task_id in task_ids
+        }
+
+    monkeypatch.setattr(gw, "_get_alert_triage_states", batch_states)
+    response = await gw.list_alert_triage_tasks(limit=45)
+
+    assert len(requested) == 45
+    assert len(response["data"]) == 45
+    assert all(task["verdict"] == "suspicious" for task in response["data"])
+
+
+def test_operator_review_is_persisted_as_immutable_audit_record(monkeypatch):
+    gw = _load_gateway_main()
+    writes = []
+    audits = []
+    gw._ALERT_TRIAGE_REVIEW_SCHEMA_READY = False
+    monkeypatch.setattr(gw, "_get_task_row", lambda _task_id: {"task_id": "at-1", "status": "DONE"})
+    monkeypatch.setattr(gw, "_execute", lambda sql, params=(): writes.append((sql, params)) or 1)
+
+    def query(sql, params=()):
+        if "WHERE review_id" not in sql:
+            return []
+        values = next(item[1] for item in writes if "INSERT INTO tg_alert_triage_review" in item[0])
+        return [{
+            "review_id": values[0],
+            "task_id": values[1],
+            "reviewer_user_id": values[2],
+            "reviewer_username": values[3],
+            "decision": values[4],
+            "human_verdict": values[5],
+            "notes": values[6],
+            "selected_actions": values[7],
+            "created_at": "2026-08-08T08:00:00Z",
+        }]
+
+    monkeypatch.setattr(gw, "_query", query)
+    monkeypatch.setattr(gw, "_record_audit", lambda *args: audits.append(args))
+    user = gw.CurrentUser("operator-1", "operator", "OPERATOR", "ACTIVE")
+
+    response = gw.create_alert_triage_review(
+        "at-1",
+        gw.AlertTriageReviewRequest(
+            decision="OVERRIDDEN",
+            humanVerdict="true_positive",
+            notes="端点日志已由人工复核",
+            selectedActions=["隔离主机"],
+        ),
+        user,
+    )
+
+    assert response["data"]["decision"] == "OVERRIDDEN"
+    assert response["data"]["humanVerdict"] == "true_positive"
+    assert response["data"]["selectedActions"] == ["隔离主机"]
+    assert any("INSERT INTO tg_alert_triage_review" in sql for sql, _params in writes)
+    assert audits[0][0] == "ALERT_TRIAGE_REVIEWED"
