@@ -67,6 +67,7 @@ def test_xdr_trace_params_are_redacted_and_bounded():
         "command_line": raw_command,
         "password": "top-secret",
         "hostIp": "10.20.30.40",
+        "hostIps": ["10.20.30.40", "2001:db8::1"],
         "uuIds": [f"log-{index}" for index in range(25)],
         "page": 1,
         "nested": {"Authorization": "Bearer abc", "note": "safe"},
@@ -79,6 +80,7 @@ def test_xdr_trace_params_are_redacted_and_bounded():
     assert redacted["command_line"].startswith("[REDACTED_COMMAND length=")
     assert redacted["password"] == "[REDACTED_SECRET]"
     assert redacted["hostIp"] == "10.20.30.*"
+    assert redacted["hostIps"] == ["10.20.30.*", "2001:0db8:0000:0000:*"]
     assert redacted["page"] == 1
     assert len(redacted["uuIds"]) == 21
     assert redacted["uuIds"][-1] == "[TRUNCATED 5 ITEMS]"
@@ -170,6 +172,43 @@ class TestCollectEvidence:
             )
             assert complete["endpoint_log_ids"] == ["log-1"]
             assert complete["incident_ids"] == ["inc-1"]
+            assert complete["endpoint_log_query_mode"] == "linked_ids"
+
+    @pytest.mark.asyncio
+    async def test_missing_log_ids_falls_back_to_asset_time_window(self):
+        state = _base_state(alert={
+            "uuid": "alert-123",
+            "assetId": "asset-1",
+            "hostIp": "10.20.30.40",
+            "occurTimestamp": 1_786_098_100_000,
+        })
+        with patch("clients.xdr_client.get_alert_proof", new_callable=AsyncMock) as mock_proof, \
+             patch("clients.xdr_client.list_endpoint_security_logs", new_callable=AsyncMock) as mock_logs, \
+             patch("clients.xdr_client.get_assets", new_callable=AsyncMock) as mock_assets, \
+             patch("clients.xdr_client.list_incidents", new_callable=AsyncMock) as mock_incidents, \
+             patch("alert_triage.graph_core._emit", new_callable=AsyncMock) as mock_emit:
+            mock_proof.return_value = {"description": "proof without log ids"}
+            mock_logs.return_value = [{"uuId": "log-window-1"}]
+            mock_assets.return_value = [{"assetId": "asset-1"}]
+            mock_incidents.return_value = []
+
+            result = await collect_evidence(state)
+
+        mock_logs.assert_awaited_once_with({
+            "page": 1,
+            "pageSize": 100,
+            "startTimestamp": 1_786_097_500,
+            "endTimestamp": 1_786_098_700,
+            "assetIds": ["asset-1"],
+            "hostIps": ["10.20.30.40"],
+        })
+        assert result["endpoint_logs"] == [{"uuId": "log-window-1"}]
+        assert "endpoint_logs" not in result["missing_evidence"]
+        complete = next(
+            call.args[2] for call in mock_emit.await_args_list
+            if call.args[1] == "AT_COLLECT_EVIDENCE_COMPLETE"
+        )
+        assert complete["endpoint_log_query_mode"] == "asset_time_window"
 
     @pytest.mark.asyncio
     async def test_persist_result_references_assets_and_incident_proofs(self):

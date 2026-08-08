@@ -192,16 +192,27 @@ _TRACE_COMMAND_KEYS = {
 }
 _TRACE_IP_KEYS = {
     "destination_ip",
+    "destination_ips",
     "destinationip",
+    "destinationips",
     "dst_ip",
+    "dst_ips",
     "dstip",
+    "dstips",
     "host_ip",
+    "host_ips",
     "hostip",
+    "hostips",
     "ip",
+    "ips",
     "source_ip",
+    "source_ips",
     "sourceip",
+    "sourceips",
     "src_ip",
+    "src_ips",
     "srcip",
+    "srcips",
 }
 
 
@@ -396,6 +407,20 @@ async def collect_evidence(state: TriageState) -> TriageState:
     state["incident_proofs"] = []
     state["alert_proof"] = {}
     alert = state.get("alert") or {}
+    hostname = str(
+        alert.get("hostname")
+        or alert.get("hostName")
+        or alert.get("device_name")
+        or ""
+    ).strip()
+    host_ip = str(
+        alert.get("hostIp")
+        or alert.get("host_ip")
+        or alert.get("sourceIp")
+        or alert.get("source_ip")
+        or ""
+    ).strip()
+    asset_id = str(alert.get("assetId") or alert.get("hostAssetId") or "").strip()
 
     # 1) proof
     proof_request_id = f"xdr-proof-{alert_uuid}"
@@ -428,14 +453,57 @@ async def collect_evidence(state: TriageState) -> TriageState:
         state["missing_evidence"].append("alert_proof")
 
     # 1b) 原始端点日志：告警中的 logIds 是最有价值的行为上下文。
-    log_ids = alert.get("logIds") or (state["alert_proof"] or {}).get("logIds") or []
+    proof_body = (state["alert_proof"] or {}).get("proof")
+    proof_log_ids = proof_body.get("logIds") if isinstance(proof_body, dict) else []
+    log_ids = (
+        alert.get("logIds")
+        or (state["alert_proof"] or {}).get("logIds")
+        or proof_log_ids
+        or []
+    )
+    log_params: dict[str, Any] | None = None
+    log_operation = ""
+    log_query_mode = "unavailable"
     if isinstance(log_ids, list) and log_ids:
+        log_params = {
+            "uuIds": [str(item) for item in log_ids],
+            "page": 1,
+            "pageSize": 100,
+        }
+        log_operation = "按告警关联 ID 查询端点日志"
+        log_query_mode = "linked_ids"
+    else:
+        raw_timestamp = (
+            alert.get("occurTimestamp")
+            or alert.get("lastTimestamp")
+            or alert.get("recordTimestamp")
+        )
+        try:
+            alert_timestamp = int(raw_timestamp or 0)
+            if alert_timestamp > 10_000_000_000:
+                alert_timestamp //= 1000
+        except (TypeError, ValueError):
+            alert_timestamp = 0
+        if alert_timestamp > 0 and (asset_id or host_ip):
+            log_params = {
+                "page": 1,
+                "pageSize": 100,
+                "startTimestamp": max(0, alert_timestamp - 600),
+                "endTimestamp": alert_timestamp + 600,
+            }
+            if asset_id:
+                log_params["assetIds"] = [asset_id]
+            if host_ip:
+                log_params["hostIps"] = [host_ip]
+            log_operation = "按资产与告警时间窗回溯端点日志"
+            log_query_mode = "asset_time_window"
+
+    if log_params is not None:
         log_request_id = f"xdr-endpoint-logs-{alert_uuid}"
-        log_params = {"uuIds": [str(item) for item in log_ids], "page": 1, "pageSize": 100}
         await _emit_xdr_request(
             task_id,
             log_request_id,
-            "按告警关联 ID 查询端点日志",
+            log_operation,
             "endpoint_logs",
             log_params,
         )
@@ -462,25 +530,12 @@ async def collect_evidence(state: TriageState) -> TriageState:
 
     # 2) assets
     asset_params: dict[str, Any] = {}
-    hostname = str(
-        alert.get("hostname")
-        or alert.get("hostName")
-        or alert.get("device_name")
-        or ""
-    ).strip()
-    src_ip = str(
-        alert.get("source_ip")
-        or alert.get("hostIp")
-        or alert.get("sourceIp")
-        or ""
-    ).strip()
-    asset_id = str(alert.get("assetId") or alert.get("hostAssetId") or "").strip()
     if asset_id:
         asset_params["assetIds"] = [asset_id]
     if hostname:
         asset_params["hostName"] = hostname
-    if src_ip:
-        asset_params["ip"] = src_ip
+    if host_ip:
+        asset_params["ip"] = host_ip
 
     if asset_params:
         asset_request_id = f"xdr-assets-{alert_uuid}"
@@ -586,6 +641,7 @@ async def collect_evidence(state: TriageState) -> TriageState:
             "endpoint_log_ids": _record_ids(state["endpoint_logs"]),
             "asset_ids": _record_ids(state["assets"]),
             "incident_ids": _record_ids(state["related_incidents"]),
+            "endpoint_log_query_mode": log_query_mode,
             "asset_count": len(state["assets"]),
             "incident_count": len(state["related_incidents"]),
             "missing_evidence": state["missing_evidence"],
