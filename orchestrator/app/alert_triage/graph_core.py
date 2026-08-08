@@ -9,6 +9,8 @@
 """
 from __future__ import annotations
 
+import hashlib
+import ipaddress
 import json
 import logging
 from datetime import datetime, timezone
@@ -164,6 +166,94 @@ def _record_ids(items: list[dict[str, Any]]) -> list[str]:
     ]
 
 
+_TRACE_SECRET_MARKERS = (
+    "authorization",
+    "credential",
+    "password",
+    "passwd",
+    "private_key",
+    "api_key",
+    "apikey",
+    "secret",
+    "cookie",
+    "token",
+)
+_TRACE_COMMAND_KEYS = {
+    "cmd",
+    "cmdline",
+    "command",
+    "command_line",
+    "commandline",
+    "process_param",
+    "processparam",
+    "query_text",
+    "script",
+    "script_content",
+}
+_TRACE_IP_KEYS = {
+    "destination_ip",
+    "destinationip",
+    "dst_ip",
+    "dstip",
+    "host_ip",
+    "hostip",
+    "ip",
+    "source_ip",
+    "sourceip",
+    "src_ip",
+    "srcip",
+}
+
+
+def _trace_key(value: str) -> str:
+    return value.strip().lower().replace("-", "_")
+
+
+def _mask_trace_ip(value: str) -> str:
+    try:
+        parsed = ipaddress.ip_address(value.strip())
+    except ValueError:
+        return "[REDACTED_IP]"
+    if parsed.version == 4:
+        return value.strip().rsplit(".", 1)[0] + ".*"
+    return ":".join(parsed.exploded.split(":")[:4]) + ":*"
+
+
+def _redact_trace_value(key: str, value: Any) -> Any:
+    normalized = _trace_key(key)
+    if any(marker in normalized for marker in _TRACE_SECRET_MARKERS):
+        return "[REDACTED_SECRET]"
+    if normalized in _TRACE_COMMAND_KEYS:
+        raw = str(value or "")
+        digest = hashlib.sha256(raw.encode("utf-8", errors="replace")).hexdigest()[:12]
+        return f"[REDACTED_COMMAND length={len(raw)} sha256={digest}]"
+    if normalized in _TRACE_IP_KEYS:
+        if isinstance(value, list):
+            return [_mask_trace_ip(str(item)) for item in value[:20]]
+        return _mask_trace_ip(str(value))
+    if isinstance(value, dict):
+        return {
+            str(child_key)[:80]: _redact_trace_value(str(child_key), child_value)
+            for child_key, child_value in list(value.items())[:30]
+        }
+    if isinstance(value, list):
+        redacted = [_redact_trace_value(key, item) for item in value[:20]]
+        if len(value) > 20:
+            redacted.append(f"[TRUNCATED {len(value) - 20} ITEMS]")
+        return redacted
+    if isinstance(value, str):
+        return value[:240] + ("...[TRUNCATED]" if len(value) > 240 else "")
+    return value
+
+
+def _redact_xdr_params(params: dict[str, Any]) -> dict[str, Any]:
+    """Return bounded, audit-friendly XDR parameters safe for persistent traces."""
+    return {
+        str(key)[:80]: _redact_trace_value(str(key), value)
+        for key, value in list((params or {}).items())[:30]
+    }
+
+
 async def _emit_xdr_request(
     task_id: str,
     request_id: str,
@@ -178,7 +268,7 @@ async def _emit_xdr_request(
             "request_id": request_id,
             "operation": operation,
             "resource": resource,
-            "params": params,
+            "params": _redact_xdr_params(params),
         },
     )
 
@@ -543,7 +633,10 @@ async def check_whitelist(state: TriageState) -> TriageState:
     await _emit(
         task_id,
         "AT_CHECK_WHITELIST_START",
-        {"request_id": whitelist_request_id, "params": whitelist_params},
+        {
+            "request_id": whitelist_request_id,
+            "params": _redact_xdr_params(whitelist_params),
+        },
     )
     await _emit_xdr_request(
         task_id,

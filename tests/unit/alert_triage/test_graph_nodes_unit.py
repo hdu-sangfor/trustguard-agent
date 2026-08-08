@@ -16,6 +16,7 @@ import pytest
 
 from alert_triage.graph_core import (
     TriageState,
+    _redact_xdr_params,
     load_alert,
     collect_evidence,
     check_whitelist,
@@ -58,6 +59,31 @@ def _base_state(**overrides) -> TriageState:
     }
     state.update(overrides)
     return state
+
+
+def test_xdr_trace_params_are_redacted_and_bounded():
+    raw_command = "powershell -Password top-secret -Token bearer-value"
+    redacted = _redact_xdr_params({
+        "command_line": raw_command,
+        "password": "top-secret",
+        "hostIp": "10.20.30.40",
+        "uuIds": [f"log-{index}" for index in range(25)],
+        "page": 1,
+        "nested": {"Authorization": "Bearer abc", "note": "safe"},
+    })
+
+    encoded = str(redacted)
+    assert raw_command not in encoded
+    assert "top-secret" not in encoded
+    assert "bearer-value" not in encoded
+    assert redacted["command_line"].startswith("[REDACTED_COMMAND length=")
+    assert redacted["password"] == "[REDACTED_SECRET]"
+    assert redacted["hostIp"] == "10.20.30.*"
+    assert redacted["page"] == 1
+    assert len(redacted["uuIds"]) == 21
+    assert redacted["uuIds"][-1] == "[TRUNCATED 5 ITEMS]"
+    assert redacted["nested"]["Authorization"] == "[REDACTED_SECRET]"
+    assert redacted["nested"]["note"] == "safe"
 
 
 class TestLoadAlert:
