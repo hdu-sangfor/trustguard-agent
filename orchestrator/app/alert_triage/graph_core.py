@@ -1057,6 +1057,28 @@ async def validate_decision(state: TriageState) -> TriageState:
         raw["confidence"] = min(float(raw.get("confidence") or 0.0), 0.7)
         verdict = "suspicious"
 
+    # Keep operational confidence within a stable policy band.  This is not a
+    # claim that confidence is a probability: it prevents identical complete
+    # evidence from drifting below the review threshold solely due to model
+    # sampling, while malformed or incomplete results remain degraded.
+    confidence_before_calibration = float(raw.get("confidence") or 0.0)
+    confidence_after_calibration = confidence_before_calibration
+    confidence_format_valid = not any(
+        error.startswith("invalid confidence") for error in errors
+    )
+    final_verdict = str(raw.get("verdict") or verdict)
+    if final_verdict == "suspicious" and not missing and confidence_format_valid:
+        confidence_after_calibration = max(
+            0.45, min(confidence_before_calibration, 0.8)
+        )
+    if confidence_after_calibration != confidence_before_calibration:
+        raw["confidence"] = confidence_after_calibration
+        state["warnings"].append(
+            "CONFIDENCE_CALIBRATED:"
+            f"{confidence_before_calibration:.2f}->{confidence_after_calibration:.2f}:"
+            f"{final_verdict}"
+        )
+
     state["validation_errors"] = errors
     state["raw_decision"] = raw
 
@@ -1066,6 +1088,8 @@ async def validate_decision(state: TriageState) -> TriageState:
         {
             "error_count": len(errors),
             "errors": errors[:5],
+            "confidence_before_calibration": confidence_before_calibration,
+            "confidence_after_calibration": confidence_after_calibration,
         },
     )
     return {

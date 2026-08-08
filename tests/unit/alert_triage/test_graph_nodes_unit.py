@@ -327,6 +327,36 @@ class TestValidateDecision:
         assert any("exact whitelist" in error for error in result["validation_errors"])
 
     @pytest.mark.asyncio
+    async def test_complete_suspicious_evidence_uses_stable_confidence_band(self):
+        low = await validate_decision(_base_state(
+            raw_decision={"verdict": "suspicious", "confidence": 0.4},
+            missing_evidence=[],
+        ))
+        high = await validate_decision(_base_state(
+            raw_decision={"verdict": "suspicious", "confidence": 0.95},
+            missing_evidence=[],
+        ))
+
+        assert low["raw_decision"]["confidence"] == 0.45
+        assert high["raw_decision"]["confidence"] == 0.8
+        assert any("0.40->0.45" in warning for warning in low["warnings"])
+        assert any("0.95->0.80" in warning for warning in high["warnings"])
+
+    @pytest.mark.asyncio
+    async def test_confidence_floor_does_not_raise_invalid_or_incomplete_results(self):
+        invalid = await validate_decision(_base_state(
+            raw_decision={"verdict": "suspicious", "confidence": "high"},
+            missing_evidence=[],
+        ))
+        incomplete = await validate_decision(_base_state(
+            raw_decision={"verdict": "suspicious", "confidence": 0.3},
+            missing_evidence=["endpoint_logs"],
+        ))
+
+        assert invalid["raw_decision"]["confidence"] == 0.3
+        assert incomplete["raw_decision"]["confidence"] == 0.3
+
+    @pytest.mark.asyncio
     async def test_auto_action_demoted(self):
         state = _base_state(raw_decision={
             "verdict": "suspicious",
