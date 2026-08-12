@@ -311,6 +311,108 @@ def test_knowledge_router_dependency_rejects_viewer_write():
     assert response.json()["message"] == "当前角色没有执行此操作的权限"
 
 
+def test_scope_update_is_authorized_and_audited_at_gateway(monkeypatch):
+    knowledge, schemas, auth = _load_gateway_modules()
+    captured = []
+    audits = []
+
+    async def fake_rag(method, path, **kwargs):
+        captured.append((method, path, kwargs))
+        return {"scope": "compliance", **kwargs["json_body"]}
+
+    monkeypatch.setattr(knowledge.rag_client, "request", fake_rag)
+    monkeypatch.setattr(
+        knowledge,
+        "record_audit",
+        lambda *args: audits.append(args),
+    )
+    request = schemas.KnowledgeScopeUpdateRequest(
+        knowledge_base_ids=["kb-a", "kb-b"],
+        default_mode="comprehensive",
+        allowed_workflow_types=["compliance"],
+    )
+
+    response = asyncio.run(
+        knowledge.replace_knowledge_scope(
+            "compliance",
+            request,
+            _user(auth, "OPERATOR"),
+        )
+    )
+
+    assert response["data"]["scope"] == "compliance"
+    assert captured == [
+        (
+            "PUT",
+            "/v1/knowledge-scopes/compliance",
+            {
+                "json_body": request.model_dump(mode="json"),
+                "timeout": 15.0,
+            },
+        )
+    ]
+    assert audits == [("KNOWLEDGE_SCOPE_UPDATED", "tester", "compliance")]
+
+
+def test_experience_status_update_is_gateway_authorized_and_audited(monkeypatch):
+    knowledge, schemas, auth = _load_gateway_modules()
+    captured = []
+    audits = []
+
+    async def fake_rag(method, path, **kwargs):
+        captured.append((method, path, kwargs))
+        return {"id": "exp-1", "status": "proven"}
+
+    monkeypatch.setattr(knowledge.rag_client, "request", fake_rag)
+    monkeypatch.setattr(
+        knowledge,
+        "record_audit",
+        lambda *args: audits.append(args),
+    )
+
+    response = asyncio.run(
+        knowledge.update_experience_status(
+            "exp-1",
+            schemas.ExperienceStatusUpdateRequest(
+                status="proven",
+                reason="reviewed",
+            ),
+            _user(auth, "ADMIN"),
+        )
+    )
+
+    assert response["data"]["status"] == "proven"
+    assert captured[0][0:2] == (
+        "PATCH",
+        "/v1/experiences/exp-1/status",
+    )
+    assert captured[0][2]["json_body"] == {
+        "status": "proven",
+        "reason": "reviewed",
+    }
+    assert audits == [
+        ("EXPERIENCE_STATUS_UPDATED", "tester", "exp-1", "proven")
+    ]
+
+
+def test_viewer_cannot_access_experience_review_routes():
+    _knowledge, _schemas, auth = _load_gateway_modules()
+    gateway = sys.modules["app.main"]
+    from fastapi.testclient import TestClient
+
+    gateway.app.dependency_overrides[auth.get_current_user] = lambda: _user(
+        auth,
+        "VIEWER",
+    )
+    try:
+        response = TestClient(gateway.app).get("/api/v1/knowledge/experiences")
+    finally:
+        gateway.app.dependency_overrides.clear()
+
+    assert response.status_code == 403
+    assert response.json()["message"] == "当前角色没有执行此操作的权限"
+
+
 def test_crawler_presets_only_expose_agent_categories(monkeypatch):
     knowledge, _schemas, auth = _load_gateway_modules()
 

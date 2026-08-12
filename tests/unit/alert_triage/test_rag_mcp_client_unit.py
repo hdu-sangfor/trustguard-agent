@@ -20,14 +20,14 @@ def _settings(*, enabled: bool = True) -> SimpleNamespace:
         enabled=enabled,
         workspace_id="workspace-test",
         limit=5,
-        scope=KnowledgeScope.PENETRATION,
+        alert_triage_scope=KnowledgeScope.ALERT_TRIAGE,
         mode=RetrievalMode.COMPREHENSIVE,
     )
 
 
 def _hit() -> SimpleNamespace:
     return SimpleNamespace(
-        resource_uri="trustguard-rag://penetration/resources/krf1.test",
+        resource_uri="trustguard-rag://alert-triage/resources/krf1.test",
         resource_ref="krf1.test",
         source_revision=3,
         content_hash="sha256:" + "a" * 64,
@@ -39,7 +39,7 @@ def _hit() -> SimpleNamespace:
 def _resource(*, resource_ref: str = "krf1.test") -> SimpleNamespace:
     return SimpleNamespace(
         resource_ref=resource_ref,
-        scope="penetration",
+        scope="alert-triage",
         source_revision=3,
         content_hash="sha256:" + "a" * 64,
         text="PowerShell 编码命令需要结合父进程和网络行为确认。",
@@ -65,7 +65,7 @@ async def test_query_rag_uses_configured_scope_and_alert_triage_workflow_identit
     assert result.citations[0]["resource_uri"].startswith("trustguard-rag://")
     request = gateway.search.await_args.args[0]
     context = gateway.search.await_args.kwargs["context"]
-    assert request.scope.value == "penetration"
+    assert request.scope.value == "alert-triage"
     assert request.mode.value == "comprehensive"
     assert context.workflow_type == "alert-triage"
     assert context.task_id == "at-1"

@@ -64,10 +64,10 @@ async def query_rag(
         workflow_type="alert-triage",
         workspace_id=settings.workspace_id,
     )
-    # Scope is a deployment-owned logical alias.  Alert triage identifies
-    # itself through ``workflow_type`` below, but must not bypass the configured
-    # MCP scope mapping by hard-coding an alias that may not exist upstream.
-    request_scope = settings.scope
+    # Each Workflow has its own deployment-owned logical Scope.  Sharing one
+    # global alias lets penetration and alert triage silently query the wrong
+    # policy, so alert triage always selects its dedicated setting.
+    request_scope = settings.alert_triage_scope
     request = KnowledgeSearchRequest(
         query=_query_text(questions),
         scope=request_scope,
