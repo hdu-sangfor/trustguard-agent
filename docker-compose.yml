@@ -40,8 +40,8 @@ services:
       MYSQL_USER: ${MYSQL_USER:-trustguard}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-trustguard}
     ports:
-      # 宿主机若已有 mysqld 占用 3306，可设 MYSQL_HOST_PORT=3307
-      - "${MYSQL_HOST_PORT:-3306}:3306"
+      # Agent 使用独立宿主机端口，避免与本机 MySQL 或其他项目冲突。
+      - "${AGENT_MYSQL_HOST_PORT:-8110}:3306"
     volumes:
       - mysql_data:/var/lib/mysql
       - ./docker/mysql-init.d:/docker-entrypoint-initdb.d:ro
@@ -56,7 +56,7 @@ services:
     image: ${REDIS_IMAGE:-${DOCKERHUB_REGISTRY:-docker.io}/library/redis:7-alpine}
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "${AGENT_REDIS_HOST_PORT:-8111}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -67,8 +67,8 @@ services:
     image: ${RABBITMQ_IMAGE:-${DOCKERHUB_REGISTRY:-docker.io}/library/rabbitmq:3-management-alpine}
     restart: unless-stopped
     ports:
-      - "5672:5672"
-      - "15672:15672"
+      - "${AGENT_RABBITMQ_HOST_PORT:-8112}:5672"
+      - "${AGENT_RABBITMQ_MANAGEMENT_HOST_PORT:-8113}:15672"
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "ping"]
       interval: 10s
@@ -79,8 +79,8 @@ services:
   qdrant:
     image: ${QDRANT_IMAGE:-${DOCKERHUB_REGISTRY:-docker.io}/qdrant/qdrant:latest}
     ports:
-      - "18104:6333"
-      - "18105:6334"
+      - "${AGENT_QDRANT_HTTP_HOST_PORT:-8114}:6333"
+      - "${AGENT_QDRANT_GRPC_HOST_PORT:-8115}:6334"
     volumes:
       - qdrant_data:/qdrant/storage
     restart: unless-stopped
@@ -95,7 +95,7 @@ services:
     image: ${TRUSTGUARD_IMAGE_PREFIX:-trustguard-}evidence
     restart: unless-stopped
     ports:
-      - "18103:18103"
+      - "${AGENT_EVIDENCE_HOST_PORT:-8103}:18103"
     environment:
       MYSQL_HOST: mysql
       MYSQL_PORT: 3306
@@ -157,7 +157,7 @@ services:
     image: ${TRUSTGUARD_IMAGE_PREFIX:-trustguard-}orchestrator
     restart: unless-stopped
     ports:
-      - "18081:18081"
+      - "${AGENT_ORCHESTRATOR_HOST_PORT:-8101}:18081"
     environment:
       <<: *python-env
       EVIDENCE_BASE_URL: http://evidence:18103
@@ -228,7 +228,7 @@ services:
     working_dir: /srv/executor
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "18102"]
     ports:
-      - "18102:18102"
+      - "${AGENT_EXECUTOR_HOST_PORT:-8102}:18102"
     environment:
       <<: *python-env
       TRUSTGUARD_TOOLS_ROOT: /app/TRUSTGUARD_TOOLS_ROOT
@@ -303,7 +303,7 @@ services:
     image: ${TRUSTGUARD_IMAGE_PREFIX:-trustguard-}gateway
     restart: unless-stopped
     ports:
-      - "18080:18080"
+      - "${AGENT_GATEWAY_HOST_PORT:-8100}:18080"
     environment:
       MYSQL_HOST: mysql
       MYSQL_PORT: 3306
@@ -316,7 +316,7 @@ services:
       EVIDENCE_BASE_URL: http://evidence:18103
       EXECUTOR_BASE_URL: http://executor:18102
       SUPERVISOR_BASE_URL: http://supervisor:18082
-      RAG_SERVICE_BASE_URL: ${RAG_SERVICE_BASE_URL:-http://host.docker.internal:18200}
+      RAG_SERVICE_BASE_URL: ${RAG_SERVICE_BASE_URL:-http://host.docker.internal:8200}
       RAG_GATEWAY_SERVICE_TOKEN: ${RAG_GATEWAY_SERVICE_TOKEN:-}
       AUTH_TOKEN_SECRET: ${AUTH_TOKEN_SECRET:-trustguard-agent-dev-secret}
       AUTH_TOKEN_TTL_SECONDS: ${AUTH_TOKEN_TTL_SECONDS:-86400}
@@ -347,7 +347,7 @@ services:
       network: *build-network
     image: ${TRUSTGUARD_IMAGE_PREFIX:-trustguard-}frontend
     ports:
-      - "127.0.0.1:17999:80"
+      - "127.0.0.1:${AGENT_FRONTEND_HOST_PORT:-8199}:80"
     depends_on:
       gateway: { condition: service_healthy }
     restart: unless-stopped

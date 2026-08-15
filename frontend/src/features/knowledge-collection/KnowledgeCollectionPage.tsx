@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import {
   BookOpenCheck,
   Bot,
+  CalendarClock,
   CircleStop,
   Database,
   Globe2,
@@ -30,10 +31,12 @@ import {
   listKnowledgeBases,
   listKnowledgeCrawlerJobs,
   listKnowledgeCrawlerPresets,
+  listKnowledgeCrawlerSources,
   type ApiKnowledgeBase,
   type ApiKnowledgeCrawlerDefaults,
   type ApiKnowledgeCrawlerJob,
   type ApiKnowledgeCrawlerPreset,
+  type ApiKnowledgeCrawlerSource,
 } from "@/shared/lib/api";
 import "./KnowledgeCollectionPage.css";
 
@@ -84,6 +87,14 @@ function formatDate(value?: string | null): string {
   }).format(date);
 }
 
+function formatScheduleInterval(minutes?: number | null): string {
+  if (!minutes) return "";
+  if (minutes % 10080 === 0) return `每 ${minutes / 10080} 周`;
+  if (minutes % 1440 === 0) return `每 ${minutes / 1440} 天`;
+  if (minutes % 60 === 0) return `每 ${minutes / 60} 小时`;
+  return `每 ${minutes} 分钟`;
+}
+
 function statusLabel(status: ApiKnowledgeCrawlerJob["status"]): string {
   return {
     queued: "排队中",
@@ -102,6 +113,7 @@ export default function KnowledgeCollectionPage() {
 
   const [bases, setBases] = useState<ApiKnowledgeBase[]>([]);
   const [presets, setPresets] = useState<ApiKnowledgeCrawlerPreset[]>([]);
+  const [sources, setSources] = useState<ApiKnowledgeCrawlerSource[]>([]);
   const [defaults, setDefaults] = useState(DEFAULTS);
   const [jobs, setJobs] = useState<ApiKnowledgeCrawlerJob[]>([]);
   const [loading, setLoading] = useState(true);
@@ -123,12 +135,19 @@ export default function KnowledgeCollectionPage() {
   const [force, setForce] = useState(false);
   const [reviewMode, setReviewMode] = useState<"human" | "agent">("human");
   const [reviewCriteria, setReviewCriteria] = useState("");
+  const [scheduleEnabled, setScheduleEnabled] = useState(false);
+  const [scheduleValue, setScheduleValue] = useState(24);
+  const [scheduleUnit, setScheduleUnit] = useState(60);
   const [submitting, setSubmitting] = useState(false);
   const [controllingId, setControllingId] = useState<string | null>(null);
 
   const selectedPreset = useMemo(
     () => presets.find((item) => item.id === selectedPresetId) ?? null,
     [presets, selectedPresetId],
+  );
+  const crawlerSourceForPreset = useCallback(
+    (presetId: string) => sources.find((item) => item.preset_ids.includes(presetId)),
+    [sources],
   );
   const baseNames = useMemo(
     () => new Map(bases.map((item) => [item.id, item.name])),
@@ -153,15 +172,17 @@ export default function KnowledgeCollectionPage() {
     else setLoading(true);
     setError(null);
     try {
-      const [baseResult, presetResult, defaultResult, jobResult] = await Promise.all([
+      const [baseResult, presetResult, sourceResult, defaultResult, jobResult] = await Promise.all([
         listKnowledgeBases(),
         listKnowledgeCrawlerPresets(),
+        listKnowledgeCrawlerSources(),
         getKnowledgeCrawlerDefaults(),
         listKnowledgeCrawlerJobs({ limit: 30 }),
       ]);
       const nextBases = baseResult.items ?? [];
       setBases(nextBases);
       setPresets(presetResult.items ?? []);
+      setSources(sourceResult.items ?? []);
       if (quiet) setDefaults(defaultResult);
       else applyDefaults(defaultResult);
       setJobs(jobResult.items ?? []);
@@ -209,6 +230,14 @@ export default function KnowledgeCollectionPage() {
     setSiteUrls((preset.site_urls ?? []).join("\n"));
     setReviewCriteria(preset.review_criteria ?? "");
     setUrls("");
+    const source = sources.find((item) => item.preset_ids.includes(preset.id));
+    setScheduleEnabled(Boolean(source?.schedule_enabled));
+    if (source?.schedule_interval_minutes) {
+      const minutes = source.schedule_interval_minutes;
+      const unit = minutes % 1440 === 0 ? 1440 : minutes % 60 === 0 ? 60 : 1;
+      setScheduleUnit(unit);
+      setScheduleValue(minutes / unit);
+    }
     const sourceCount = preset.keywords.length + preset.site_urls.length + preset.structured_sources.length;
     setMaxTotalPages(Math.min(200, Math.max(30, sourceCount * 10)));
     const matched = bases.find((base) => base.name === preset.category_name)
@@ -225,6 +254,9 @@ export default function KnowledgeCollectionPage() {
     setKeywords("");
     setSiteUrls("");
     setReviewCriteria("");
+    setScheduleEnabled(false);
+    setScheduleValue(24);
+    setScheduleUnit(60);
     setMaxTotalPages(30);
     window.setTimeout(() => document.getElementById("collection-form")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
   };
@@ -242,6 +274,10 @@ export default function KnowledgeCollectionPage() {
     }
     if (reviewMode === "agent" && !reviewCriteria.trim()) {
       return toast.error("Agent 审核必须填写审核标准");
+    }
+    const scheduleIntervalMinutes = scheduleValue * scheduleUnit;
+    if (scheduleEnabled && (!Number.isInteger(scheduleIntervalMinutes) || scheduleIntervalMinutes < 5 || scheduleIntervalMinutes > 525600)) {
+      return toast.error("采集周期需要在 5 分钟到 365 天之间");
     }
     setSubmitting(true);
     try {
@@ -261,9 +297,16 @@ export default function KnowledgeCollectionPage() {
         force,
         reviewMode,
         reviewCriteria: reviewCriteria.trim(),
+        scheduleEnabled,
+        scheduleIntervalMinutes: scheduleEnabled ? scheduleIntervalMinutes : null,
       });
       setJobs((current) => [job, ...current.filter((item) => item.id !== job.id)]);
-      toast.success("采集任务已提交", { description: "清洗完成后需人工审核，审核通过才会入库" });
+      await loadAll(true);
+      toast.success(scheduleEnabled ? "周期采集已开启" : "一次性采集任务已提交", {
+        description: scheduleEnabled
+          ? `首轮任务已创建，之后${formatScheduleInterval(scheduleIntervalMinutes)}增量采集`
+          : "清洗完成后按所选方式审核，审核通过才会入库",
+      });
     } catch (submitError) {
       toast.error(submitError instanceof Error ? submitError.message : "创建采集任务失败");
     } finally {
@@ -271,13 +314,26 @@ export default function KnowledgeCollectionPage() {
     }
   };
 
-  const controlJob = async (job: ApiKnowledgeCrawlerJob, action: "pause" | "resume" | "stop") => {
+  const controlJob = async (
+    job: ApiKnowledgeCrawlerJob,
+    action: "pause" | "resume" | "stop",
+    stopSchedule = false,
+  ) => {
     if (!canManage) return toast.error("当前角色没有操作采集任务的权限");
     setControllingId(job.id);
     try {
-      const updated = await controlKnowledgeCrawlerJob(job.id, action, job.knowledge_base_id);
+      const updated = await controlKnowledgeCrawlerJob(
+        job.id,
+        action,
+        job.knowledge_base_id,
+        stopSchedule,
+      );
       setJobs((current) => current.map((item) => item.id === updated.id ? updated : item));
-      toast.success({ pause: "已请求暂停", resume: "采集任务已恢复", stop: "已请求停止" }[action]);
+      if (stopSchedule) await loadAll(true);
+      toast.success(stopSchedule
+        ? "周期采集已停止"
+        : { pause: "已请求暂停", resume: "采集任务已恢复", stop: "已请求停止本轮" }[action],
+      stopSchedule ? { description: "后续轮次不会再创建，当前活动轮次也会停止" } : undefined);
     } catch (controlError) {
       toast.error(controlError instanceof Error ? controlError.message : "任务操作失败");
     } finally {
@@ -330,6 +386,9 @@ export default function KnowledgeCollectionPage() {
                   <span className="preset-meta">
                     {preset.site_urls.length + preset.keywords.length + preset.structured_sources.length} 项配置
                     {preset.phases.length ? ` · ${preset.phases.join(" → ")}` : ""}
+                    {crawlerSourceForPreset(preset.id)?.schedule_enabled
+                      ? ` · ${formatScheduleInterval(crawlerSourceForPreset(preset.id)?.schedule_interval_minutes)}增量采集`
+                      : ""}
                   </span>
                 </button>
               ))}
@@ -359,6 +418,55 @@ export default function KnowledgeCollectionPage() {
               <textarea value={keywords} onChange={(event) => setKeywords(event.target.value)} rows={5} placeholder="critical CVE vulnerability exploitation" disabled={!canManage || !mode} />
             </label>
           </div>
+
+          <section className={`collection-schedule-gate ${scheduleEnabled ? "enabled" : ""}`} aria-labelledby="schedule-gate-title">
+            <div className="collection-schedule-heading">
+              <div className="collection-schedule-icon"><CalendarClock size={20} /></div>
+              <div>
+                <span>COLLECTION MODE</span>
+                <h3 id="schedule-gate-title">周期增量采集</h3>
+                <p>开启后保存为数据源并立即执行首轮；后续只处理新增或变化的内容。</p>
+              </div>
+              <label className="collection-schedule-switch">
+                <input
+                  type="checkbox"
+                  checked={scheduleEnabled}
+                  onChange={(event) => setScheduleEnabled(event.target.checked)}
+                  disabled={!canManage || !mode}
+                />
+                <i aria-hidden="true" />
+                <strong>{scheduleEnabled ? "已开启" : "一次性"}</strong>
+              </label>
+            </div>
+            {scheduleEnabled && (
+              <div className="collection-schedule-fields">
+                <label>采集周期
+                  <input
+                    type="number"
+                    min={scheduleUnit === 1 ? 5 : 1}
+                    max={Math.floor(525600 / scheduleUnit)}
+                    value={scheduleValue}
+                    onChange={(event) => setScheduleValue(Number(event.target.value))}
+                  />
+                </label>
+                <label>周期单位
+                  <select value={scheduleUnit} onChange={(event) => {
+                    const nextUnit = Number(event.target.value);
+                    setScheduleUnit(nextUnit);
+                    if (nextUnit === 1 && scheduleValue < 5) setScheduleValue(5);
+                  }}>
+                    <option value={1}>分钟</option>
+                    <option value={60}>小时</option>
+                    <option value={1440}>天</option>
+                  </select>
+                </label>
+                <div className="collection-schedule-preview">
+                  <CalendarClock size={14} />
+                  <span>首轮立即执行，之后<strong>{formatScheduleInterval(scheduleValue * scheduleUnit)}</strong>自动采集</span>
+                </div>
+              </div>
+            )}
+          </section>
 
           <section className="collection-review-gate" aria-labelledby="review-gate-title">
             <div className="collection-review-heading">
@@ -415,8 +523,8 @@ export default function KnowledgeCollectionPage() {
           <div className="collection-submit-row">
             {!canManage && <span>当前为只读角色，可查看预置和任务，但不能创建采集。</span>}
             <button className="collection-button primary" type="submit" disabled={!canManage || !mode || !knowledgeBaseId || submitting}>
-              {submitting ? <LoaderCircle size={15} className="animate-spin" /> : <Send size={15} />}
-              {submitting ? "正在提交…" : "创建采集任务"}
+              {submitting ? <LoaderCircle size={15} className="animate-spin" /> : scheduleEnabled ? <CalendarClock size={15} /> : <Send size={15} />}
+              {submitting ? "正在提交…" : scheduleEnabled ? "开启周期采集" : "创建一次性任务"}
             </button>
           </div>
         </form>
@@ -440,8 +548,13 @@ export default function KnowledgeCollectionPage() {
                 const percent = job.status === "succeeded" ? 100 : Math.min(99, Math.round((fetched / maxPages) * 100));
                 const presetId = Array.isArray(job.config.preset_ids) ? String(job.config.preset_ids[0] ?? "") : "";
                 const preset = presets.find((item) => item.id === presetId);
-                const awaitingReview = job.status === "succeeded"
-                  && job.progress.review_status === "pending"
+                const sourceId = typeof job.config.source_id === "string" ? job.config.source_id : "";
+                const source = sources.find((item) => item.id === sourceId);
+                const scheduleActive = Boolean(source?.schedule_enabled);
+                const waitingForManualReview = Boolean(sourceId && jobs.some((item) => (
+                  item.config.source_id === sourceId && numeric(item.progress.pending_review) > 0
+                )));
+                const awaitingReview = job.progress.review_status === "pending"
                   && pendingReview > 0;
                 const reviewCompleted = job.status === "succeeded"
                   && job.progress.review_status === "completed";
@@ -460,6 +573,7 @@ export default function KnowledgeCollectionPage() {
                       <div className="job-meta">
                         <span><Database size={12} /> {baseNames.get(job.knowledge_base_id) ?? job.knowledge_base_id}</span>
                         <span>{formatDate(job.updated_at ?? job.created_at)}</span>
+                        {sourceId && <span><CalendarClock size={12} /> {scheduleActive ? (waitingForManualReview ? "等待人工审核" : `${formatScheduleInterval(source?.schedule_interval_minutes)}周期采集`) : "周期已关闭"}</span>}
                       </div>
                       <div className="job-progress"><i style={{ width: `${percent}%` }} /></div>
                       <div className="job-stats">
@@ -486,7 +600,9 @@ export default function KnowledgeCollectionPage() {
                         )}
                         {job.status === "running" && <button type="button" onClick={() => void controlJob(job, "pause")} disabled={controllingId === job.id}><Pause size={13} /> 暂停</button>}
                         {(job.status === "paused" || job.status === "failed") && <button type="button" onClick={() => void controlJob(job, "resume")} disabled={controllingId === job.id}><Play size={13} /> 恢复</button>}
-                        {!["succeeded", "cancelled"].includes(job.status) && <button type="button" className="danger" onClick={() => void controlJob(job, "stop")} disabled={controllingId === job.id}><CircleStop size={13} /> 停止</button>}
+                        {scheduleActive
+                          ? <button type="button" className="danger" onClick={() => void controlJob(job, "stop", true)} disabled={controllingId === job.id}><CircleStop size={13} /> 停止周期</button>
+                          : !["succeeded", "cancelled"].includes(job.status) && <button type="button" className="danger" onClick={() => void controlJob(job, "stop")} disabled={controllingId === job.id}><CircleStop size={13} /> 停止本轮</button>}
                       </div>
                     )}
                   </article>

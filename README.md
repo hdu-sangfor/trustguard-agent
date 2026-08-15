@@ -11,11 +11,14 @@
 登录后可通过顶部“数据采集”进入 `/knowledge/collect`，选择 9 类 Agent 知识库预置或自定义采集。
 Agent 发起的采集默认启用人工审核闸门：清洗结果先进入 RAG 暂存区，任务完成后由全局弹窗通知
 `ADMIN` 或 `OPERATOR`，审核页面通过的数据才会进入受控入库队列，驳回数据不会写入知识库。
+采集表单同时支持一次性和周期增量采集。周期模式可按分钟、小时或天配置，提交时立即执行首轮，
+后续由 RAG 数据源调度器执行；分类卡片会显示已经启用的周期，关闭开关后再次提交可停用对应预置
+的后续调度。
 
 配置 `.env` 后通过根目录 `docker compose` 启动 Agent。知识中心相关配置：
 
 ```dotenv
-RAG_SERVICE_BASE_URL=http://host.docker.internal:18200
+RAG_SERVICE_BASE_URL=http://host.docker.internal:8200
 RAG_GATEWAY_SERVICE_TOKEN=replace-with-a-different-long-random-service-token
 AUTH_TOKEN_SECRET=replace-with-a-random-long-secret
 AUTH_TOKEN_TTL_SECONDS=86400

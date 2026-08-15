@@ -395,6 +395,109 @@ def test_create_crawler_job_forwards_agent_review_criteria(monkeypatch):
     assert payload["review_criteria"] == "必须包含漏洞标识、影响范围和修复信息"
 
 
+def test_crawler_registry_exposes_managed_schedule_summaries(monkeypatch):
+    knowledge, _schemas, auth = _load_gateway_modules()
+
+    async def fake_rag(method, path, **_kwargs):
+        assert (method, path) == ("GET", "/v1/crawler/registry")
+        return {
+            "items": [
+                {
+                    "id": "preset:agent_01_asset_fingerprint",
+                    "knowledge_base_id": "kb-assets",
+                    "preset_ids": ["agent_01_asset_fingerprint"],
+                    "schedule_enabled": True,
+                    "schedule_interval_minutes": 360,
+                    "config": {"site_urls": ["https://example.com"]},
+                },
+                {
+                    "id": "private-custom-source",
+                    "knowledge_base_id": "kb-private",
+                    "preset_ids": [],
+                    "schedule_enabled": True,
+                    "endpoint": "https://private.example.com",
+                },
+            ]
+        }
+
+    monkeypatch.setattr(knowledge.rag_client, "request", fake_rag)
+    response = asyncio.run(
+        knowledge.knowledge_crawler_registry(_user(auth, "VIEWER"))
+    )
+
+    assert response["data"] == {
+        "items": [
+            {
+                "id": "preset:agent_01_asset_fingerprint",
+                "knowledge_base_id": "kb-assets",
+                "preset_ids": ["agent_01_asset_fingerprint"],
+                "schedule_enabled": True,
+                "schedule_interval_minutes": 360,
+                "next_run_at": None,
+                "last_run_at": None,
+                "last_success_at": None,
+            },
+            {
+                "id": "private-custom-source",
+                "knowledge_base_id": "kb-private",
+                "preset_ids": [],
+                "schedule_enabled": True,
+                "schedule_interval_minutes": None,
+                "next_run_at": None,
+                "last_run_at": None,
+                "last_success_at": None,
+            }
+        ],
+        "total": 2,
+    }
+
+
+def test_create_scheduled_preset_updates_source_and_runs_first_job(monkeypatch):
+    knowledge, schemas, auth = _load_gateway_modules()
+    captured = []
+
+    async def fake_rag(method, path, **kwargs):
+        captured.append((method, path, kwargs))
+        if method == "GET":
+            return {"id": "preset:agent_02_vulnerability_weakness", "config": {"structured_sources": ["nvd"]}}
+        if method == "PATCH":
+            return {"id": "preset:agent_02_vulnerability_weakness"}
+        return {"id": "crawl-scheduled", "knowledge_base_id": "kb-vuln", "status": "queued"}
+
+    monkeypatch.setattr(knowledge.rag_client, "request", fake_rag)
+    monkeypatch.setattr(knowledge, "record_audit", lambda *_args: None)
+    request = schemas.KnowledgeCrawlerCreateRequest(
+        knowledge_base_id="kb-vuln",
+        preset_ids=["agent_02_vulnerability_weakness"],
+        keywords=["critical CVE"],
+        review_mode="agent",
+        review_criteria="必须包含漏洞编号、影响范围和修复建议",
+        schedule_enabled=True,
+        schedule_interval_minutes=360,
+    )
+
+    response = asyncio.run(
+        knowledge.create_knowledge_crawler_job(request, _user(auth))
+    )
+
+    assert response["data"]["id"] == "crawl-scheduled"
+    source_path = "/v1/crawler/registry/preset%3Aagent_02_vulnerability_weakness"
+    assert [(method, path) for method, path, _kwargs in captured] == [
+        ("GET", source_path),
+        ("PATCH", source_path),
+        ("POST", f"{source_path}/runs"),
+    ]
+    update_payload = captured[1][2]["json_body"]
+    assert update_payload["schedule_enabled"] is True
+    assert update_payload["schedule_interval_minutes"] == 360
+    assert update_payload["config"]["structured_sources"] == ["nvd"]
+    assert update_payload["config"]["keywords"] == ["critical CVE"]
+    assert update_payload["config"]["force"] is False
+    run_payload = captured[2][2]["json_body"]
+    assert run_payload["require_review"] is True
+    assert run_payload["review_mode"] == "agent"
+
+
 def test_crawler_job_control_rejects_cross_base_job(monkeypatch):
     knowledge, _schemas, auth = _load_gateway_modules()
     calls = []
@@ -419,6 +522,35 @@ def test_crawler_job_control_rejects_cross_base_job(monkeypatch):
         raise AssertionError("cross-base crawler control must be rejected")
 
     assert len(calls) == 1
+
+
+def test_stop_crawler_schedule_forwards_schedule_flag(monkeypatch):
+    knowledge, _schemas, auth = _load_gateway_modules()
+    calls = []
+
+    async def fake_rag(method, path, **kwargs):
+        calls.append((method, path, kwargs))
+        return {
+            "id": "crawl-1",
+            "knowledge_base_id": "kb-assets",
+            "status": "cancelled",
+        }
+
+    monkeypatch.setattr(knowledge.rag_client, "request", fake_rag)
+    monkeypatch.setattr(knowledge, "record_audit", lambda *_args: None)
+
+    response = asyncio.run(
+        knowledge.stop_knowledge_crawler_job(
+            "crawl-1",
+            _user(auth),
+            knowledge_base_id="kb-assets",
+            stop_schedule=True,
+        )
+    )
+
+    assert response["data"]["status"] == "cancelled"
+    assert calls[1][0:2] == ("POST", "/v1/crawler/jobs/crawl-1/stop")
+    assert calls[1][2]["params"] == {"stop_schedule": True}
 
 
 def test_crawler_review_approval_is_scoped_and_audited(monkeypatch):

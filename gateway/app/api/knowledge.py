@@ -516,6 +516,33 @@ async def knowledge_crawler_defaults(
     )
 
 
+@router.get("/crawler/registry")
+async def knowledge_crawler_registry(
+    _user: KnowledgeReader,
+) -> dict[str, Any]:
+    result = await rag_client.request(
+        "GET",
+        "/v1/crawler/registry",
+        timeout=10.0,
+    )
+    items = result.get("items", []) if isinstance(result, dict) else []
+    summaries = [
+        {
+            "id": item.get("id"),
+            "knowledge_base_id": item.get("knowledge_base_id"),
+            "preset_ids": item.get("preset_ids") or [],
+            "schedule_enabled": bool(item.get("schedule_enabled")),
+            "schedule_interval_minutes": item.get("schedule_interval_minutes"),
+            "next_run_at": item.get("next_run_at"),
+            "last_run_at": item.get("last_run_at"),
+            "last_success_at": item.get("last_success_at"),
+        }
+        for item in items
+        if isinstance(item, dict)
+    ]
+    return ok({"items": summaries, "total": len(summaries)})
+
+
 @router.get("/crawler/jobs")
 async def knowledge_crawler_jobs(
     _user: KnowledgeReader,
@@ -550,18 +577,99 @@ async def create_knowledge_crawler_job(
     request: KnowledgeCrawlerCreateRequest,
     actor: KnowledgeManager,
 ) -> dict[str, Any]:
-    result = await rag_client.request(
-        "POST",
-        "/v1/crawler/jobs",
-        json_body={**request.model_dump(), "require_review": True},
-        timeout=30.0,
-    )
+    payload = {
+        **request.model_dump(
+            exclude={"schedule_enabled", "schedule_interval_minutes"}
+        ),
+        "require_review": True,
+    }
+    preset_id = request.preset_ids[0] if request.preset_ids else None
+    if request.schedule_enabled:
+        source_config = {
+            key: value
+            for key, value in payload.items()
+            if key != "knowledge_base_id"
+        }
+        source_config["force"] = False
+        if preset_id:
+            source_id = f"preset:{preset_id}"
+            source_path = f"/v1/crawler/registry/{quote(source_id, safe='')}"
+            source = await rag_client.request("GET", source_path, timeout=10.0)
+            current_config = (
+                dict(source.get("config") or {})
+                if isinstance(source, dict)
+                else {}
+            )
+            await rag_client.request(
+                "PATCH",
+                source_path,
+                json_body={
+                    "knowledge_base_id": request.knowledge_base_id,
+                    "config": {**current_config, **source_config},
+                    "enabled": True,
+                    "schedule_enabled": True,
+                    "schedule_interval_minutes": request.schedule_interval_minutes,
+                },
+                timeout=15.0,
+            )
+        else:
+            source = await rag_client.request(
+                "POST",
+                "/v1/crawler/registry",
+                json_body={
+                    "knowledge_base_id": request.knowledge_base_id,
+                    "name": "Agent 自定义周期采集",
+                    "description": "由 TrustGuard Agent 采集表单创建",
+                    "source_kind": "custom",
+                    "config": source_config,
+                    "trust_level": "trusted",
+                    "content_type": "security_knowledge",
+                    "enabled": True,
+                    "schedule_enabled": True,
+                    "schedule_interval_minutes": request.schedule_interval_minutes,
+                },
+                timeout=15.0,
+            )
+            source_id = str(source.get("id") or "") if isinstance(source, dict) else ""
+        if not source_id:
+            raise HTTPException(status_code=502, detail="RAG 未返回周期数据源 ID")
+        result = await rag_client.request(
+            "POST",
+            f"/v1/crawler/registry/{quote(source_id, safe='')}/runs",
+            json_body={
+                "require_review": True,
+                "review_mode": request.review_mode,
+                "review_criteria": request.review_criteria,
+                "force": request.force,
+            },
+            timeout=30.0,
+        )
+    else:
+        if preset_id and "schedule_enabled" in request.model_fields_set:
+            source_id = f"preset:{preset_id}"
+            await rag_client.request(
+                "PATCH",
+                f"/v1/crawler/registry/{quote(source_id, safe='')}",
+                json_body={"schedule_enabled": False},
+                timeout=15.0,
+            )
+        result = await rag_client.request(
+            "POST",
+            "/v1/crawler/jobs",
+            json_body=payload,
+            timeout=30.0,
+        )
     job_id = str(result.get("id") or "") if isinstance(result, dict) else ""
     record_audit(
-        "KNOWLEDGE_CRAWLER_JOB_CREATED",
+        "KNOWLEDGE_CRAWLER_SCHEDULE_CREATED"
+        if request.schedule_enabled
+        else "KNOWLEDGE_CRAWLER_JOB_CREATED",
         actor.username,
         job_id,
-        f"{request.knowledge_base_id};review_mode={request.review_mode}",
+        (
+            f"{request.knowledge_base_id};review_mode={request.review_mode};"
+            f"schedule_minutes={request.schedule_interval_minutes or 0}"
+        ),
     )
     return ok(result)
 
@@ -627,11 +735,13 @@ async def _control_knowledge_crawler_job(
     action: str,
     actor: CurrentUser,
     knowledge_base_id: str | None,
+    stop_schedule: bool = False,
 ) -> dict[str, Any]:
     await _get_scoped_crawler_job(job_id, knowledge_base_id)
     result = await rag_client.request(
         "POST",
         f"/v1/crawler/jobs/{quote(job_id, safe='')}/{action}",
+        params={"stop_schedule": True} if stop_schedule else None,
         timeout=20.0,
     )
     record_audit(
@@ -669,7 +779,8 @@ async def stop_knowledge_crawler_job(
     job_id: str,
     actor: KnowledgeManager,
     knowledge_base_id: str | None = Query(default=None, max_length=36),
+    stop_schedule: bool = Query(default=False),
 ) -> dict[str, Any]:
     return await _control_knowledge_crawler_job(
-        job_id, "stop", actor, knowledge_base_id
+        job_id, "stop", actor, knowledge_base_id, stop_schedule=stop_schedule
     )
