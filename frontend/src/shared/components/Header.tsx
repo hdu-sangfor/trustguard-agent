@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { ChevronDown, Menu, Moon, Sun, X } from "lucide-react";
 import { toast } from "sonner";
 import { useAppSession } from "@/shared/context/AppSessionContext";
+import { DEMO_FALLBACK_ENABLED } from "@/shared/constants/demoFallback";
 import { ORBIT_TASKS_UPDATED_EVENT, SENTINEL_ORBIT_TASKS_KEY, readStoredOrbitTasks, type StoredOrbitTask } from "@/shared/constants/orbitTasksStorage";
 import { listTasks, toFrontendStatus } from "@/shared/lib/api";
 import { applyThemeMode, readThemeMode, writeThemeMode, type ThemeMode } from "@/shared/lib/preferences";
@@ -169,6 +170,7 @@ const Header = ({ currentPhase = 0 }: HeaderProps) => {
     { label: "审计日志", onClick: () => requireLogin("/audit"),    badge: 0,          path: "/audit", group: "运营分析" },
     { label: "管理中心", onClick: () => requireLogin("/dashboard"), badge: 0,          path: "/dashboard", group: "系统管理" },
     { label: "平台管理", onClick: () => requireLogin("/admin"),     badge: 0,          path: "/admin", group: "系统管理" },
+    { label: "平台配置", onClick: () => requireLogin("/config"),    badge: 0,          path: "/config", group: "系统管理" },
     { label: "系统状态", onClick: () => requireLogin("/system"),    badge: 0,          path: "/system", group: "系统管理" },
   ];
   const primaryLinks = navLinks.slice(0, 6);
@@ -326,7 +328,7 @@ const Header = ({ currentPhase = 0 }: HeaderProps) => {
               {backendOnline !== null && (
                   <span
                       className="nav-health"
-                      title={backendOnline ? "后端连接正常 · 数据实时同步" : "后端未连接 · 当前展示演示数据"}
+                      title={backendOnline ? "后端连接正常 · 数据实时同步" : DEMO_FALLBACK_ENABLED ? "后端未连接 · 当前展示演示数据" : "后端未连接"}
                       style={{
                           display: "inline-flex",
                           alignItems: "center",
@@ -347,7 +349,7 @@ const Header = ({ currentPhase = 0 }: HeaderProps) => {
                           background: backendOnline ? "#34d399" : "#fbbf24",
                           boxShadow: backendOnline ? "0 0 5px rgba(52,211,153,0.7)" : "0 0 5px rgba(251,191,36,0.7)",
                       }} />
-                      {backendOnline ? "API" : "演示模式"}
+                      {backendOnline ? "API" : DEMO_FALLBACK_ENABLED ? "演示模式" : "离线"}
                   </span>
               )}
               <button

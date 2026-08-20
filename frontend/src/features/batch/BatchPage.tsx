@@ -8,8 +8,10 @@ import { useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import Header from "@/shared/components/Header";
+import PageTitle from "@/shared/components/PageTitle";
 import { useAppSession } from "@/shared/context/AppSessionContext";
 import { batchCreateTasks, type ApiBatchTaskResult } from "@/shared/lib/api";
+import "@/shared/styles/console-pages.css";
 
 // ── Demo target presets ───────────────────────────────────────────────────────
 const DEMO_PRESETS = [
@@ -45,7 +47,7 @@ function TaskResultRow({ item, idx }: { item: ApiBatchTaskResult & { _status?: s
   const ok = !item.error && !!item.taskId;
   const color = ok ? STATUS_COLORS.ok : STATUS_COLORS.error;
   return (
-    <div style={{
+    <div className="batch-result-row" style={{
       display: "flex", alignItems: "center", gap: 12,
       padding: "10px 14px",
       background: idx % 2 === 0 ? "transparent" : "rgba(15,23,42,0.25)",
@@ -137,26 +139,21 @@ export default function BatchPage() {
   }, [parsedTargets, namePrefix, description, autoStart, isLoggedIn, navigate]);
 
   return (
-    <div style={{ minHeight: "100vh", background: "#020a12", paddingTop: 80, paddingBottom: 60 }}>
+    <div className="tg-console-page tg-console-page--batch" style={{ minHeight: "100vh", background: "#020a12", paddingTop: 80, paddingBottom: 60 }}>
       <Header />
 
-      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "0 24px" }}>
+      <div className="tg-console-shell" style={{ maxWidth: 1100, margin: "0 auto", padding: "0 24px" }}>
 
-        {/* Title */}
-        <div style={{ marginBottom: 28 }}>
-          <h1 style={{ margin: "0 0 6px", fontSize: 22, fontWeight: 800, color: "#e2e8f0", fontFamily: "monospace", letterSpacing: "0.06em" }}>
-            批量渗透调度
-            <span style={{ marginLeft: 12, fontSize: 12, color: "rgba(148,163,184,0.5)", fontWeight: 400 }}>Batch Security Dispatch</span>
-          </h1>
-          <div style={{ fontSize: 12, color: "rgba(148,163,184,0.5)", fontFamily: "monospace" }}>
-            一次提交多个目标，平台并发执行全自动渗透测试 · 每目标独立工作区 · ≥3 并发能力
-          </div>
-        </div>
+        <PageTitle
+          eyebrow="TRUSTGUARD BATCH SECURITY DISPATCH"
+          title="批量渗透调度"
+          description="一次提交多个目标，平台并发执行全自动渗透测试；每目标独立工作区，展示多任务调度能力。"
+        />
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 20, alignItems: "start" }}>
+        <div className="batch-main-grid" style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 20, alignItems: "start" }}>
 
           {/* ── Left: Target list ── */}
-          <div style={{
+          <div className="batch-panel" style={{
             background: "rgba(15,23,42,0.6)", border: "1px solid rgba(51,65,85,0.5)",
             borderRadius: 10, overflow: "hidden",
           }}>
@@ -237,7 +234,7 @@ export default function BatchPage() {
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
 
             {/* Settings card */}
-            <div style={{
+            <div className="batch-panel" style={{
               background: "rgba(15,23,42,0.6)", border: "1px solid rgba(51,65,85,0.5)",
               borderRadius: 10, padding: 16,
             }}>
@@ -332,7 +329,7 @@ export default function BatchPage() {
             </button>
 
             {/* Concurrent capability callout */}
-            <div style={{
+            <div className="batch-callout" style={{
               padding: "12px 14px",
               background: "rgba(34,197,94,0.05)", border: "1px solid rgba(34,197,94,0.15)",
               borderRadius: 8,
@@ -357,7 +354,7 @@ export default function BatchPage() {
 
         {/* ── Results ── */}
         {result && (
-          <div style={{
+          <div className="batch-result-panel" style={{
             marginTop: 28,
             background: "rgba(15,23,42,0.6)", border: "1px solid rgba(51,65,85,0.5)",
             borderRadius: 10, overflow: "hidden",

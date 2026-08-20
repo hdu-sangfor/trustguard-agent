@@ -2,7 +2,9 @@ import { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import Header from "@/shared/components/Header";
+import PageTitle from "@/shared/components/PageTitle";
 import { useAppSession } from "@/shared/context/AppSessionContext";
+import "@/shared/styles/console-pages.css";
 import {
   listCompletedTasks, getTaskReport, getTaskExecutions, getTaskObservation,
   type ApiTask, type ApiReport, type ApiExecutionRecord, type ApiObservation,
@@ -908,24 +910,16 @@ const ReportsPage = () => {
   if (!loggedIn) return null;
 
   return (
-    <div style={{ minHeight: "100vh", background: "linear-gradient(180deg, #020a12 0%, #0f172a 60%, #020a12 100%)" }}>
+    <div className="tg-console-page tg-console-page--reports" style={{ minHeight: "100vh", background: "linear-gradient(180deg, #020a12 0%, #0f172a 60%, #020a12 100%)" }}>
       <Header />
-      <div style={{ paddingTop: 80, paddingBottom: 40, maxWidth: 1100, margin: "0 auto", padding: "80px 24px 40px" }}>
+      <div className="tg-console-shell" style={{ paddingTop: 80, paddingBottom: 40, maxWidth: 1100, margin: "0 auto", padding: "80px 24px 40px" }}>
 
-        {/* Title row */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24, flexWrap: "wrap", gap: 10 }}>
-          <div>
-            <div style={{ color: "#22d3ee", fontFamily: "monospace", fontSize: 11, letterSpacing: "0.18em", textTransform: "uppercase", marginBottom: 4 }}>
-              ◈ REPORTS GALLERY
-            </div>
-            <h1 style={{ color: "#e2e8f0", fontFamily: "monospace", fontSize: 22, fontWeight: 800, margin: 0, letterSpacing: "0.04em" }}>
-              渗透测试报告管理
-            </h1>
-            <div style={{ color: "#475569", fontSize: 12, marginTop: 4 }}>
-              已完成任务的测试报告汇总 · 点击行展开查看详情
-            </div>
-          </div>
-          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+        <PageTitle
+          eyebrow="TRUSTGUARD REPORT CENTER"
+          title="渗透测试报告管理"
+          description="已完成任务的测试报告汇总，点击行展开查看发现、证据、执行记录和修复建议。"
+          actions={
+            <>
             {lastRefresh && (
               <span style={{ color: "#334155", fontFamily: "monospace", fontSize: 10 }}>
                 {lastRefresh.toLocaleTimeString("zh-CN")} 刷新
@@ -941,8 +935,9 @@ const ReportsPage = () => {
                 fontFamily: "monospace", fontSize: 12, cursor: pageLoading ? "wait" : "pointer", fontWeight: 700,
               }}
             >{pageLoading ? "加载中…" : "↻ 刷新"}</button>
-          </div>
-        </div>
+            </>
+          }
+        />
 
         {/* Stats KPI bar */}
         {entries.length > 0 && (() => {
@@ -960,9 +955,9 @@ const ReportsPage = () => {
             { label: "最近完成", value: latest ? latest.toLocaleDateString("zh-CN") : "—", color: "#fb923c", sub: latest ? latest.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }) : "" },
           ];
           return (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 12, marginBottom: 20 }}>
+            <div className="report-kpis" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 12, marginBottom: 20 }}>
               {kpis.map((k) => (
-                <div key={k.label} style={{
+                <div className="report-kpi-card" key={k.label} style={{
                   background: "rgba(2,6,23,0.75)", border: `1px solid ${k.color}20`,
                   borderRadius: 10, padding: "12px 16px",
                 }}>
@@ -977,7 +972,7 @@ const ReportsPage = () => {
 
         {/* Empty state */}
         {!pageLoading && entries.length === 0 && (
-          <div style={{
+          <div className="report-list-shell" style={{
             padding: "60px 20px", textAlign: "center",
             background: "rgba(2,6,23,0.6)", border: "1px solid rgba(51,65,85,0.4)", borderRadius: 12,
           }}>
@@ -1002,7 +997,7 @@ const ReportsPage = () => {
             background: "rgba(2,6,23,0.75)", border: "1px solid rgba(51,65,85,0.4)",
             borderRadius: 12, overflow: "hidden",
           }}>
-            <div style={{ padding: "10px 18px", borderBottom: "1px solid rgba(51,65,85,0.3)", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <div className="report-list-toolbar" style={{ padding: "10px 18px", borderBottom: "1px solid rgba(51,65,85,0.3)", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               <span style={{ color: "#34d399", fontWeight: 800, fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase" }}>
                 已完成任务 ({entries.length})
               </span>
@@ -1037,7 +1032,7 @@ const ReportsPage = () => {
                 : null;
 
               return (
-                <div key={t.taskId} style={{ borderBottom: idx < filtered.length - 1 ? "1px solid rgba(51,65,85,0.2)" : "none" }}>
+                <div className="report-list-row" key={t.taskId} style={{ borderBottom: idx < filtered.length - 1 ? "1px solid rgba(51,65,85,0.2)" : "none" }}>
                   {/* Summary row — clickable */}
                   <div
                     onClick={() => { void toggleExpand(t.taskId); }}

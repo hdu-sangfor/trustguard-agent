@@ -2,11 +2,12 @@
 import { useNavigate, useSearchParams } from "react-router-dom";
 import Header from "@/shared/components/Header";
 import { useAppSession } from "@/shared/context/AppSessionContext";
-import { ORBIT_TASKS_UPDATED_EVENT, SENTINEL_ORBIT_TASKS_KEY, type StoredOrbitTask } from "@/shared/constants/orbitTasksStorage";
+import { ORBIT_TASKS_UPDATED_EVENT, SENTINEL_ORBIT_TASKS_KEY, readStoredOrbitTasks, type StoredOrbitTask } from "@/shared/constants/orbitTasksStorage";
 import { createTask as apiCreateTask, runTask as apiRunTask, stopTask as apiStopTask, resumeTask as apiResumeTask, tickTask as apiTickTask, listTasks as apiListTasks, deleteTask as apiDeleteTask, getTask, getTaskReport, getTaskObservation, getTaskTrace, getTaskTodos, getTaskExecutions, getExecutionRecord, getSliSnapshot, getMqStatus, getV1Overview, getTracePlan, getTraceCompile, toFrontendStatus, TRUSTGUARD_PHASES, type ApiTrace, type ApiSliSnapshot, type ApiMqStatus, type ApiExecutionRecord, type ApiTodo, type ApiV1Overview, type ApiObservation, type ApiTask } from "@/shared/lib/api";
 import { elapsedForStatus, formatElapsed } from "@/shared/lib/time";
 import { readTaskViewMode, writeTaskViewMode } from "@/shared/lib/preferences";
 import { toast } from "sonner";
+import "@/shared/styles/console-pages.css";
 
 const STORAGE_KEY = "sentinel_session_v1";
 const DELETED_TASKS_KEY = "sentinel_deleted_tasks_v1";
@@ -66,10 +67,7 @@ const defaultSession: Session = {
 
 function loadOrbitTasksFromStorage(): OrbitTask[] {
   try {
-    const raw = localStorage.getItem(SENTINEL_ORBIT_TASKS_KEY);
-    if (!raw) return [];
-    const arr = JSON.parse(raw) as StoredOrbitTask[];
-    if (!Array.isArray(arr)) return [];
+    const arr = readStoredOrbitTasks();
     return arr.map((t) => {
       const st = String(t.status ?? "");
       const status: OrbitTask["status"] =
@@ -1358,11 +1356,13 @@ const TasksPage = () => {
 
   return (
       <div
+          className="tg-console-page tg-console-page--tasks"
           style={{
             width: "100vw",
             height: "100vh",
             margin: 0,
-            padding: 0,
+            padding: "60px 0 0",
+            boxSizing: "border-box",
             background: "var(--tg-page-gradient)",
             overflow: "hidden",
             position: "relative",
@@ -1419,6 +1419,7 @@ const TasksPage = () => {
         </div>
 
         <main
+            className="tasks-console-main"
             style={{
               width: "100%",
               height: "calc(100vh - 60px)",
@@ -1432,9 +1433,9 @@ const TasksPage = () => {
         >
           {listView ? (
             /* ── LIST VIEW ─────────────────────────────────────────────── */
-            <div style={{ width: "100%", maxWidth: 960, paddingTop: 20 }}>
+            <div className="tasks-list-shell" style={{ width: "100%", maxWidth: 960, paddingTop: 20 }}>
               {/* Capability badge strip */}
-              <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
+              <div className="tasks-badge-strip" style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
                 {([
                   { label: "30 技能容器", col: "#67e8f9", border: "rgba(34,211,238,0.28)" },
                   { label: "6 阶段链式", col: "#c4b5fd", border: "rgba(167,139,250,0.28)" },
@@ -1450,7 +1451,7 @@ const TasksPage = () => {
                   }}>{b.label}</span>
                 ))}
               </div>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, gap: 10, flexWrap: "wrap" }}>
+              <div className="tasks-list-toolbar" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, gap: 10, flexWrap: "wrap" }}>
                 <div style={{ color: "var(--tg-text-muted)", fontSize: 11, fontFamily: "monospace", whiteSpace: "nowrap" }}>
                   {orbitTasks.length} 个任务
                   {taskStatusCounts.running > 0 && (

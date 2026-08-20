@@ -1,9 +1,12 @@
 import { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import Header from "@/shared/components/Header";
+import PageTitle from "@/shared/components/PageTitle";
 import { useAppSession } from "@/shared/context/AppSessionContext";
+import { DEMO_FALLBACK_ENABLED } from "@/shared/constants/demoFallback";
 import { getVulnsSummary, type ApiVulnEntry, type ApiVulnsTaskRow } from "@/shared/lib/api";
 import { readStoredOrbitTasks } from "@/shared/constants/orbitTasksStorage";
+import "@/shared/styles/console-pages.css";
 
 // ── Severity helpers ──────────────────────────────────────────────────────────
 const SEV_ORDER = ["critical", "high", "medium", "low", "info", "unknown"] as const;
@@ -120,12 +123,12 @@ export default function VulnsPage() {
         setRows(data.by_task);
         setIsDemo(false);
       } else {
-        setRows(buildDemoRows());
-        setIsDemo(true);
+        setRows(DEMO_FALLBACK_ENABLED ? buildDemoRows() : []);
+        setIsDemo(DEMO_FALLBACK_ENABLED);
       }
     } catch {
-      setRows(buildDemoRows());
-      setIsDemo(true);
+      setRows(DEMO_FALLBACK_ENABLED ? buildDemoRows() : []);
+      setIsDemo(DEMO_FALLBACK_ENABLED);
     } finally {
       setLoading(false);
     }
@@ -164,15 +167,15 @@ export default function VulnsPage() {
   });
 
   return (
-    <div style={{ minHeight: "100vh", background: "#020a12", paddingTop: 80, paddingBottom: 60 }}>
+    <div className="tg-console-page tg-console-page--vulns" style={{ minHeight: "100vh", background: "#020a12", paddingTop: 80, paddingBottom: 60 }}>
       <Header />
 
-      <div style={{ maxWidth: 1300, margin: "0 auto", padding: "0 24px" }}>
-        {/* Title */}
-        <div style={{ marginBottom: 28 }}>
-          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: "#e2e8f0", fontFamily: "monospace", letterSpacing: "0.05em" }}>
-            漏洞库 <span style={{ fontSize: 13, color: "rgba(148,163,184,0.7)", fontWeight: 400 }}>Vulnerability Inventory</span>
-          </h1>
+      <div className="tg-console-shell" style={{ maxWidth: 1300, margin: "0 auto", padding: "0 24px" }}>
+        <PageTitle
+          eyebrow="TRUSTGUARD VULNERABILITY INVENTORY"
+          title="漏洞库"
+          description="汇总任务发现的漏洞、影响服务、风险等级和修复建议。"
+        />
           {isDemo && (
             <span style={{
               marginTop: 6, display: "inline-block",
@@ -181,18 +184,18 @@ export default function VulnsPage() {
               background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.3)",
               color: "rgba(251,191,36,0.9)",
             }}>
-              演示数据 — 后端不可达或无已完成任务
+              {DEMO_FALLBACK_ENABLED ? "演示数据 — 后端不可达或无已完成任务" : "后端不可达或暂无已完成任务"}
             </span>
           )}
-        </div>
 
         {/* Stats row */}
-        <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 24 }}>
+        <div className="vuln-stats" style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 24 }}>
           {SEV_ORDER.slice(0, 5).map((sev) => {
             const m = SEV_META[sev];
             const cnt = sevCounts[sev] ?? 0;
             return (
               <div
+                className="vuln-stat-card"
                 key={sev}
                 onClick={() => setFilterSev(filterSev === sev ? "all" : sev)}
                 style={{
@@ -209,7 +212,7 @@ export default function VulnsPage() {
               </div>
             );
           })}
-          <div style={{
+          <div className="vuln-stat-card" style={{
             flex: "1 1 120px", minWidth: 110,
             padding: "14px 18px",
             background: "rgba(15,23,42,0.6)",
@@ -222,7 +225,7 @@ export default function VulnsPage() {
         </div>
 
         {/* Filters */}
-        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 20, alignItems: "center" }}>
+        <div className="vuln-filters" style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 20, alignItems: "center" }}>
           <input
             type="text"
             placeholder="搜索漏洞名称 / CVE / 描述…"
@@ -290,7 +293,7 @@ export default function VulnsPage() {
 
         {/* Error */}
         {error && !loading && (
-          <div style={{
+          <div className="vuln-table-shell" style={{
             padding: 16, borderRadius: 8,
             background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.3)",
             color: "#fca5a5", fontFamily: "monospace", fontSize: 13,
@@ -391,6 +394,7 @@ export default function VulnsPage() {
               }, {});
               return (
                 <div
+                  className="vuln-task-card"
                   key={row.task_id}
                   style={{
                     background: "rgba(15,23,42,0.6)", border: "1px solid rgba(51,65,85,0.5)",

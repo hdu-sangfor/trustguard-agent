@@ -1,0 +1,50 @@
+.tg-page-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 24px;
+}
+
+.tg-page-title-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--tg-accent);
+  font: 700 10px/1 monospace;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+}
+
+.tg-page-title h1 {
+  margin: 8px 0 5px;
+  color: var(--tg-text);
+  font: 700 26px/1.3 monospace;
+  letter-spacing: normal;
+  text-shadow: none;
+}
+
+.tg-page-title p {
+  margin: 0;
+  color: var(--tg-text-muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.tg-page-title-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 760px) {
+  .tg-page-title {
+    flex-direction: column;
+  }
+
+  .tg-page-title-actions {
+    justify-content: flex-start;
+  }
+}

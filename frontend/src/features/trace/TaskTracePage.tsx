@@ -4,13 +4,14 @@
  * - 展示任务元信息、状态、阶段流水线
  * - 展示实时事件流（轮询 4s，仅 RUNNING 时）
  * - 提供运行 / 暂停 / 继续 操作
- * - 后端离线时从 localStorage 读取演示数据
+ * - 开发环境可从 localStorage 读取演示数据
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import Header from "@/shared/components/Header";
 import { useAppSession } from "@/shared/context/AppSessionContext";
+import { DEMO_FALLBACK_ENABLED } from "@/shared/constants/demoFallback";
 import {
   getTask, getTaskEvents, runTask, stopTask, resumeTask,
   getTaskTrace, getTracePlan, getTaskObservation,
@@ -331,6 +332,85 @@ function buildDemoObservation(taskId: string): ApiObservation | null {
   };
 }
 
+function buildDemoFP(taskId: string): ApiFPFindingsResponse {
+  const stored = readStoredOrbitTasks().find(t => t.id === taskId);
+  const target = stored?.url || "http://192.168.1.100/dvwa/";
+  const now = Date.now();
+  const findings: ApiFPFinding[] = [
+    {
+      fpId: `${taskId}-fp-001`,
+      taskId,
+      templateId: "generic-admin-panel",
+      url: `${target.replace(/\/$/, "")}/admin`,
+      title: "后台管理路径暴露",
+      severity: "medium",
+      sourceSkillId: "dirsearch",
+      sourcePhase: "VULN_SCAN",
+      currentVerdict: "FALSE_POSITIVE",
+      verificationSource: "LLM",
+      verificationReasoning: "目录枚举发现 /admin，但返回 302 跳转至统一登录页，未发现默认口令、未授权接口或敏感信息泄露。结合响应头和截图证据，判定为可访问入口而非有效漏洞。",
+      detectedAt: new Date(now - 1000 * 60 * 18).toISOString(),
+      verifiedAt: new Date(now - 1000 * 60 * 12).toISOString(),
+    },
+    {
+      fpId: `${taskId}-fp-002`,
+      taskId,
+      templateId: "exposed-backup-file",
+      url: `${target.replace(/\/$/, "")}/backup.sql`,
+      title: "疑似数据库备份文件暴露",
+      severity: "high",
+      sourceSkillId: "nuclei",
+      sourcePhase: "VULN_SCAN",
+      currentVerdict: "TRUE_POSITIVE",
+      verificationSource: "HEURISTIC",
+      verificationReasoning: "HTTP 200 返回，Content-Type 为 application/sql，响应体包含 CREATE TABLE users 与 password_hash 字段，属于可直接下载的敏感备份文件。",
+      detectedAt: new Date(now - 1000 * 60 * 14).toISOString(),
+      verifiedAt: new Date(now - 1000 * 60 * 11).toISOString(),
+    },
+    {
+      fpId: `${taskId}-fp-003`,
+      taskId,
+      templateId: "spring-actuator-env",
+      url: `${target.replace(/\/$/, "")}/actuator/env`,
+      title: "Spring Actuator 环境变量暴露",
+      severity: "critical",
+      sourceSkillId: "nuclei",
+      sourcePhase: "VULN_SCAN",
+      currentVerdict: "SUSPICIOUS",
+      verificationSource: "LLM",
+      verificationReasoning: "模板命中 actuator/env，但返回内容中敏感字段被后端脱敏为 ******。仍暴露 profile、版本、配置键名等环境信息，建议人工复核业务影响。",
+      detectedAt: new Date(now - 1000 * 60 * 9).toISOString(),
+      verifiedAt: new Date(now - 1000 * 60 * 7).toISOString(),
+    },
+    {
+      fpId: `${taskId}-fp-004`,
+      taskId,
+      templateId: "reflected-xss-low-confidence",
+      url: `${target.replace(/\/$/, "")}/search?q=<svg/onload=alert(1)>`,
+      title: "搜索参数疑似反射型 XSS",
+      severity: "medium",
+      sourceSkillId: "web-vuln-common",
+      sourcePhase: "EXPLOIT",
+      currentVerdict: "UNVERIFIED",
+      verificationSource: null,
+      verificationReasoning: null,
+      detectedAt: new Date(now - 1000 * 60 * 5).toISOString(),
+      verifiedAt: null,
+    },
+  ];
+  return {
+    taskId,
+    total: findings.length,
+    unverified: findings.filter(f => f.currentVerdict === "UNVERIFIED").length,
+    suspicious: findings.filter(f => f.currentVerdict === "SUSPICIOUS").length,
+    falsePositives: findings.filter(f => f.currentVerdict === "FALSE_POSITIVE").length,
+    truePositives: findings.filter(f => f.currentVerdict === "TRUE_POSITIVE").length,
+    inconclusive: findings.filter(f => f.currentVerdict === "INCONCLUSIVE").length,
+    falsePositiveRate: findings.filter(f => f.currentVerdict === "FALSE_POSITIVE").length / findings.length,
+    findings,
+  };
+}
+
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 function StatusBadge({ status }: { status: string }) {
@@ -486,6 +566,7 @@ export default function TaskTracePage() {
   const [events, setEvents] = useState<ApiEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [demoMode, setDemoMode] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const [actionPending, setActionPending] = useState(false);
   const [activeTab, setActiveTab] = useState<"events" | "ai_trace" | "observation" | "fp_review">("events");
   const [traceExecs, setTraceExecs] = useState<ApiTraceExecution[] | null>(null);
@@ -501,7 +582,7 @@ export default function TaskTracePage() {
   const [fpExpanded, setFpExpanded] = useState<Set<string>>(new Set());
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const isDemo = !taskId || /^\d+$/.test(taskId);
+  const isDemo = DEMO_FALLBACK_ENABLED && (!taskId || /^\d+$/.test(taskId));
 
   // Auth guard
   useEffect(() => {
@@ -518,6 +599,7 @@ export default function TaskTracePage() {
       setTask(buildDemoTask(taskId));
       setEvents(buildDemoEvents(taskId));
       setDemoMode(true);
+      setLoadError(false);
       setLoading(false);
       return;
     }
@@ -529,13 +611,21 @@ export default function TaskTracePage() {
       setTask(t);
       setEvents(ev);
       setDemoMode(false);
+      setLoadError(false);
     } catch {
-      // Backend unreachable — try demo fallback
-      const t = buildDemoTask(taskId);
-      if (t) {
-        setTask(t);
-        setEvents(buildDemoEvents(taskId));
-        setDemoMode(true);
+      if (DEMO_FALLBACK_ENABLED) {
+        const t = buildDemoTask(taskId);
+        if (t) {
+          setTask(t);
+          setEvents(buildDemoEvents(taskId));
+          setDemoMode(true);
+          setLoadError(false);
+        }
+      } else {
+        setTask(null);
+        setEvents([]);
+        setDemoMode(false);
+        setLoadError(true);
       }
     } finally {
       setLoading(false);
@@ -601,8 +691,7 @@ export default function TaskTracePage() {
       const obs = await getTaskObservation(taskId);
       setObservation(obs);
     } catch {
-      // Backend might not have observation yet — use demo fallback
-      setObservation(buildDemoObservation(taskId));
+      setObservation(DEMO_FALLBACK_ENABLED ? buildDemoObservation(taskId) : null);
     } finally {
       setObservationLoading(false);
     }
@@ -615,13 +704,16 @@ export default function TaskTracePage() {
   // ── FP 审核面板数据加载 ──
   const loadFP = useCallback(async () => {
     if (!taskId || fpData !== null) return;
-    if (isDemo) return;
+    if (isDemo) {
+      setFpData(buildDemoFP(taskId));
+      return;
+    }
     setFpLoading(true);
     try {
       const data = await getTaskFPFindings(taskId);
       setFpData(data);
     } catch {
-      // backend may not have fp data yet
+      setFpData(DEMO_FALLBACK_ENABLED ? buildDemoFP(taskId) : null);
     } finally {
       setFpLoading(false);
     }
@@ -741,7 +833,7 @@ export default function TaskTracePage() {
             borderRadius: 12, color: TRACE_MUTED, fontSize: 13,
           }}>
             <div style={{ fontSize: 32, marginBottom: 12 }}>⬡</div>
-            任务不存在或已被删除
+            {loadError ? "任务数据加载失败，请检查后端连接后重试。" : "任务不存在或已被删除"}
             <div style={{ marginTop: 12 }}>
               <button type="button" onClick={() => navigate("/tasks")}
                 style={{ background: "none", border: "none", color: "#22d3ee", cursor: "pointer", fontSize: 12 }}>

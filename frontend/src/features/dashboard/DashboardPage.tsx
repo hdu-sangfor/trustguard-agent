@@ -9,7 +9,10 @@ import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import Header from "@/shared/components/Header";
+import PageTitle from "@/shared/components/PageTitle";
 import { useAppSession } from "@/shared/context/AppSessionContext";
+import { DEMO_FALLBACK_ENABLED } from "@/shared/constants/demoFallback";
+import "@/shared/styles/console-pages.css";
 import {
   getDashboardSummary, getSystemHealth,
   bulkStopRunningTasks, cleanupFinishedTasks,
@@ -108,7 +111,7 @@ function buildDemoSummary(): ApiDashboardSummary {
 // ── Sub-components ────────────────────────────────────────────────────────────
 function KpiCard({ label, value, color, sub }: { label: string; value: number; color: string; sub?: string }) {
   return (
-    <div style={{
+    <div className="dashboard-kpi-card" style={{
       background: `${color}08`, border: `1px solid ${color}22`,
       borderRadius: 10, padding: "16px 18px",
       display: "flex", flexDirection: "column", gap: 3,
@@ -237,8 +240,8 @@ export default function DashboardPage() {
         setData(summary.value);
         setIsDemo(false);
       } else {
-        setData(buildDemoSummary());
-        setIsDemo(true);
+        setData(DEMO_FALLBACK_ENABLED ? buildDemoSummary() : null);
+        setIsDemo(DEMO_FALLBACK_ENABLED);
       }
       if (health.status === "fulfilled") {
         setBackendOk(health.value.status === "ok");
@@ -249,8 +252,8 @@ export default function DashboardPage() {
         setPendingTasks(tasks.value.filter((t) => t.status === "PENDING"));
       }
     } catch {
-      setData(buildDemoSummary());
-      setIsDemo(true);
+      setData(DEMO_FALLBACK_ENABLED ? buildDemoSummary() : null);
+      setIsDemo(DEMO_FALLBACK_ENABLED);
       setBackendOk(false);
     } finally {
       setLoading(false);
@@ -273,7 +276,7 @@ export default function DashboardPage() {
       toast.success(`已停止 ${res.stopped} 个运行中任务`, { duration: 4000 });
       setTimeout(() => { void load(); }, 1200);
     } catch {
-      toast.error("停止操作失败（演示模式下不可用）");
+      toast.error(DEMO_FALLBACK_ENABLED ? "停止操作失败（演示模式下不可用）" : "停止操作失败（后端离线）");
     } finally {
       setOpBusy(null);
     }
@@ -287,7 +290,7 @@ export default function DashboardPage() {
       toast.success(`已清理 ${res.deleted} 条已完成/失败记录`, { duration: 4000 });
       setTimeout(() => { void load(); }, 1200);
     } catch {
-      toast.error("清理操作失败（演示模式下不可用）");
+      toast.error(DEMO_FALLBACK_ENABLED ? "清理操作失败（演示模式下不可用）" : "清理操作失败（后端离线）");
     } finally {
       setOpBusy(null);
     }
@@ -324,7 +327,7 @@ export default function DashboardPage() {
       toast.success("任务已启动", { duration: 2000 });
       setTimeout(() => { void load(); }, 1000);
     } catch {
-      toast.error("启动失败（演示模式或后端离线）");
+      toast.error(DEMO_FALLBACK_ENABLED ? "启动失败（演示模式或后端离线）" : "启动失败（后端离线）");
     } finally {
       setStartingTask(null);
     }
@@ -348,30 +351,28 @@ export default function DashboardPage() {
   ];
 
   return (
-    <div style={{ minHeight: "100vh", background: "#020a12", paddingTop: 80, paddingBottom: 60 }}>
+    <div className="tg-console-page tg-console-page--dashboard" style={{ minHeight: "100vh", background: "#020a12", paddingTop: 80, paddingBottom: 60 }}>
       <Header />
 
-      <div style={{ maxWidth: 1280, margin: "0 auto", padding: "0 24px" }}>
+      <div className="tg-console-shell" style={{ maxWidth: 1280, margin: "0 auto", padding: "0 24px" }}>
 
-        {/* ── Page header ── */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
-          <div>
-            <h1 style={{ margin: "0 0 4px", fontSize: 20, fontWeight: 800, color: "#e2e8f0", fontFamily: "monospace", letterSpacing: "0.06em" }}>
-              运营管理中心
-              <span style={{ marginLeft: 12, fontSize: 11, color: "rgba(148,163,184,0.4)", fontWeight: 400 }}>Operations Dashboard</span>
-            </h1>
-            <div style={{ fontSize: 11, fontFamily: "monospace", display: "flex", alignItems: "center", gap: 10 }}>
+        <PageTitle
+          eyebrow="TRUSTGUARD OPERATIONS DASHBOARD"
+          title="运营管理中心"
+          description={
+            <>
               <span style={{ color: backendOk ? "rgba(52,211,153,0.8)" : isDemo ? "rgba(251,191,36,0.7)" : "rgba(148,163,184,0.4)" }}>
-                {backendOk ? "● 实时数据" : isDemo ? "○ 演示模式" : "● 连接中…"}
+                {backendOk ? "● 实时数据" : isDemo ? "○ 演示模式" : "● 后端离线"}
               </span>
               {lastRefresh && (
                 <span style={{ color: "rgba(100,116,139,0.5)" }}>
                   {lastRefresh.toLocaleTimeString("zh-CN", { hour12: false })} · 15s自动刷新
                 </span>
               )}
-            </div>
-          </div>
-          <div style={{ display: "flex", gap: 8 }}>
+            </>
+          }
+          actions={
+            <>
             <button
               type="button"
               onClick={() => { setLoading(true); void load(); }}
@@ -390,12 +391,13 @@ export default function DashboardPage() {
                 color: "#94a3b8", fontSize: 11, cursor: "pointer", fontFamily: "monospace",
               }}
             >平台管理 →</button>
-          </div>
-        </div>
+            </>
+          }
+        />
 
         {/* ── KPI row ── */}
         {stats && (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 12, marginBottom: 20 }}>
+          <div className="dashboard-kpi-grid" style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 12, marginBottom: 20 }}>
             <KpiCard label="总任务" value={stats.total ?? 0} color="#38bdf8" sub={`完成率 ${completionRate}%`} />
             <KpiCard label="运行中" value={stats.running ?? 0} color="#22d3ee" />
             <KpiCard label="已完成" value={stats.done ?? 0} color="#34d399" />
@@ -406,7 +408,7 @@ export default function DashboardPage() {
         )}
 
         {/* ── Admin ops bar ── */}
-        <div style={{
+        <div className="dashboard-action-strip" style={{
           marginBottom: 18,
           padding: "12px 16px",
           background: "rgba(15,23,42,0.5)", border: "1px solid rgba(51,65,85,0.35)",
@@ -474,13 +476,13 @@ export default function DashboardPage() {
         </div>
 
         {/* ── Main grid ── */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 18 }}>
+        <div className="dashboard-main-grid" style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 18 }}>
 
           {/* Left: Active tasks + Recent completed */}
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
 
             {/* Active tasks */}
-            <div style={{
+            <div className="dashboard-panel" style={{
               background: "rgba(15,23,42,0.6)", border: "1px solid rgba(51,65,85,0.5)",
               borderRadius: 10, overflow: "hidden",
             }}>
@@ -540,7 +542,7 @@ export default function DashboardPage() {
 
             {/* Pending tasks */}
             {pendingTasks.length > 0 && (
-              <div style={{
+              <div className="dashboard-panel" style={{
                 background: "rgba(15,23,42,0.6)", border: "1px solid rgba(100,116,139,0.3)",
                 borderRadius: 10, overflow: "hidden",
               }}>
@@ -627,7 +629,7 @@ export default function DashboardPage() {
             )}
 
             {/* Quick create form */}
-            <div style={{
+            <div className="dashboard-panel" style={{
               background: "rgba(15,23,42,0.5)", border: "1px solid rgba(34,211,238,0.2)",
               borderRadius: 10, padding: "14px 16px",
             }}>
@@ -683,7 +685,7 @@ export default function DashboardPage() {
             </div>
 
             {/* Quick nav grid */}
-            <div style={{
+            <div className="dashboard-panel" style={{
               background: "rgba(15,23,42,0.5)", border: "1px solid rgba(51,65,85,0.4)",
               borderRadius: 10, padding: "12px 14px",
             }}>
@@ -717,7 +719,7 @@ export default function DashboardPage() {
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
 
             {/* Real-time event feed */}
-            <div style={{
+            <div className="dashboard-panel" style={{
               background: "rgba(15,23,42,0.6)", border: "1px solid rgba(51,65,85,0.5)",
               borderRadius: 10, overflow: "hidden",
             }}>
@@ -739,7 +741,7 @@ export default function DashboardPage() {
             </div>
 
             {/* Platform compliance */}
-            <div style={{
+            <div className="dashboard-panel" style={{
               background: "rgba(15,23,42,0.5)", border: "1px solid rgba(34,197,94,0.15)",
               borderRadius: 10, padding: "14px 16px",
             }}>
@@ -761,7 +763,7 @@ export default function DashboardPage() {
             </div>
 
             {/* Backend status */}
-            <div style={{
+            <div className="dashboard-panel" style={{
               background: "rgba(15,23,42,0.4)", border: `1px solid ${backendOk ? "rgba(52,211,153,0.2)" : "rgba(251,191,36,0.2)"}`,
               borderRadius: 8, padding: "12px 14px",
             }}>
@@ -787,7 +789,7 @@ export default function DashboardPage() {
         </div>
 
         {/* ── Navigation strip ── */}
-        <div style={{
+        <div className="dashboard-nav-strip" style={{
           marginTop: 22, padding: "10px 16px",
           background: "rgba(15,23,42,0.4)", border: "1px solid rgba(51,65,85,0.3)",
           borderRadius: 8, display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center",

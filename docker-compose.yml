@@ -124,7 +124,7 @@ services:
     image: ${TRUSTGUARD_IMAGE_PREFIX:-trustguard-}supervisor
     restart: unless-stopped
     ports:
-      - "18082:18082"
+      - "${AGENT_SUPERVISOR_HOST_PORT:-8104}:18082"
     environment:
       REDIS_URL: redis://redis:6379/0
       SUPERVISOR_STORE_BACKEND: redis
