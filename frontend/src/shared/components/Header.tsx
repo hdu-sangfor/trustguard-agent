@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { ChevronDown, Menu, Moon, Sun, X } from "lucide-react";
 import { toast } from "sonner";
 import { useAppSession } from "@/shared/context/AppSessionContext";
+import { DEMO_FALLBACK_ENABLED } from "@/shared/constants/demoFallback";
 import { ORBIT_TASKS_UPDATED_EVENT, SENTINEL_ORBIT_TASKS_KEY, readStoredOrbitTasks, type StoredOrbitTask } from "@/shared/constants/orbitTasksStorage";
 import { listTasks, toFrontendStatus } from "@/shared/lib/api";
 import { applyThemeMode, readThemeMode, writeThemeMode, type ThemeMode } from "@/shared/lib/preferences";
@@ -12,6 +13,16 @@ import mainLogoSrc from "@/shared/assets/main.jpg";
 interface HeaderProps {
   currentPhase?: number;
 }
+
+type NavGroup = "安全能力" | "运营分析" | "系统管理";
+
+type NavLink = {
+  label: string;
+  onClick: () => void;
+  badge: number;
+  path: string;
+  group?: NavGroup;
+};
 
 function countRunningTasks(): number {
   return readStoredOrbitTasks().filter((t) => t.status === "running").length;
@@ -142,7 +153,7 @@ const Header = ({ currentPhase = 0 }: HeaderProps) => {
     window.scrollTo({ top: 0 });
   };
 
-  const requireLogin = (path: "/logs" | "/tasks" | "/admin" | "/reports" | "/system" | "/monitor" | "/config" | "/stats" | "/vulns" | "/batch" | "/dashboard" | "/audit" | "/knowledge" | "/knowledge/collect" | "/agent") => {
+  const requireLogin = (path: "/logs" | "/tasks" | "/admin" | "/reports" | "/system" | "/monitor" | "/config" | "/stats" | "/vulns" | "/batch" | "/dashboard" | "/audit" | "/triage" | "/knowledge" | "/knowledge/collect" | "/agent") => {
     if (!loggedIn) {
       toast.error("请先登录");
       localStorage.setItem("sentinel_login_redirect", path);
@@ -152,35 +163,41 @@ const Header = ({ currentPhase = 0 }: HeaderProps) => {
     navigate(path);
   };
 
-  const navLinks = [
-    { label: "首页",     onClick: goHome,                           badge: 0,          path: "/" },
-    { label: "可信卫士", onClick: () => requireLogin("/agent"),    badge: 0,          path: "/agent" },
+  // Keep the top-level tabs aligned with the user's workflow: triage or start an
+  // agent task, follow its execution, then inspect the result and trace.
+  const primaryLinks: NavLink[] = [
+    { label: "首页",     onClick: goHome,                           badge: 0,           path: "/" },
+    { label: "告警研判", onClick: () => requireLogin("/triage"),    badge: 0,           path: "/triage" },
+    { label: "可信卫士", onClick: () => requireLogin("/agent"),     badge: 0,           path: "/agent" },
     { label: "任务管理", onClick: () => requireLogin("/tasks"),     badge: runningCount, path: "/tasks" },
-    { label: "报告中心", onClick: () => requireLogin("/reports"),   badge: 0,          path: "/reports" },
-    { label: "知识中心", onClick: () => requireLogin("/knowledge"), badge: 0,          path: "/knowledge" },
-    { label: "运行日志", onClick: () => requireLogin("/logs"),      badge: 0,          path: "/logs" },
-    { label: "技术特点", onClick: () => navigate("/features"),      badge: 0,          path: "/features", group: "安全能力" },
-    { label: "技能库",   onClick: () => navigate("/skills"),        badge: 0,          path: "/skills", group: "安全能力" },
-    { label: "数据采集", onClick: () => requireLogin("/knowledge/collect"), badge: 0,  path: "/knowledge/collect", group: "安全能力" },
-    { label: "漏洞库",   onClick: () => requireLogin("/vulns"),     badge: 0,          path: "/vulns", group: "安全能力" },
-    { label: "监控大屏", onClick: () => requireLogin("/monitor"),   badge: 0,          path: "/monitor", group: "运营分析" },
-    { label: "统计分析", onClick: () => requireLogin("/stats"),     badge: 0,          path: "/stats", group: "运营分析" },
-    { label: "批量调度", onClick: () => requireLogin("/batch"),     badge: 0,          path: "/batch", group: "运营分析" },
-    { label: "审计日志", onClick: () => requireLogin("/audit"),    badge: 0,          path: "/audit", group: "运营分析" },
-    { label: "管理中心", onClick: () => requireLogin("/dashboard"), badge: 0,          path: "/dashboard", group: "系统管理" },
-    { label: "平台管理", onClick: () => requireLogin("/admin"),     badge: 0,          path: "/admin", group: "系统管理" },
-    { label: "系统状态", onClick: () => requireLogin("/system"),    badge: 0,          path: "/system", group: "系统管理" },
+    { label: "报告中心", onClick: () => requireLogin("/reports"),   badge: 0,           path: "/reports" },
+    { label: "运行日志", onClick: () => requireLogin("/logs"),      badge: 0,           path: "/logs" },
   ];
-  const primaryLinks = navLinks.slice(0, 6);
-  const moreGroups = ["安全能力", "运营分析", "系统管理"].map((label) => ({
+  const secondaryLinks: NavLink[] = [
+    { label: "知识中心", onClick: () => requireLogin("/knowledge"), badge: 0, path: "/knowledge", group: "安全能力" },
+    { label: "技术特点", onClick: () => navigate("/features"),      badge: 0, path: "/features", group: "安全能力" },
+    { label: "技能库",   onClick: () => navigate("/skills"),        badge: 0, path: "/skills", group: "安全能力" },
+    { label: "数据采集", onClick: () => requireLogin("/knowledge/collect"), badge: 0, path: "/knowledge/collect", group: "安全能力" },
+    { label: "漏洞库",   onClick: () => requireLogin("/vulns"),     badge: 0, path: "/vulns", group: "安全能力" },
+    { label: "监控大屏", onClick: () => requireLogin("/monitor"),   badge: 0, path: "/monitor", group: "运营分析" },
+    { label: "统计分析", onClick: () => requireLogin("/stats"),     badge: 0, path: "/stats", group: "运营分析" },
+    { label: "批量调度", onClick: () => requireLogin("/batch"),     badge: 0, path: "/batch", group: "运营分析" },
+    { label: "审计日志", onClick: () => requireLogin("/audit"),     badge: 0, path: "/audit", group: "运营分析" },
+    { label: "管理中心", onClick: () => requireLogin("/dashboard"), badge: 0, path: "/dashboard", group: "系统管理" },
+    { label: "平台管理", onClick: () => requireLogin("/admin"),     badge: 0, path: "/admin", group: "系统管理" },
+    { label: "平台配置", onClick: () => requireLogin("/config"),    badge: 0, path: "/config", group: "系统管理" },
+    { label: "系统状态", onClick: () => requireLogin("/system"),    badge: 0, path: "/system", group: "系统管理" },
+  ];
+  const navLinks = [...primaryLinks, ...secondaryLinks];
+  const moreGroups = (["安全能力", "运营分析", "系统管理"] as NavGroup[]).map((label) => ({
     label,
-    links: navLinks.filter((link) => link.group === label),
+    links: secondaryLinks.filter((link) => link.group === label),
   }));
   const isLinkActive = (path: string) => {
     const isExactPath = path === "/" || path === "/knowledge";
     return isExactPath ? pathname === path : pathname.startsWith(path);
   };
-  const moreMenuActive = navLinks.slice(6).some((link) => isLinkActive(link.path));
+  const moreMenuActive = secondaryLinks.some((link) => isLinkActive(link.path));
 
   const runNavAction = (action: () => void) => {
     setNavMenuOpen(false);
@@ -326,7 +343,7 @@ const Header = ({ currentPhase = 0 }: HeaderProps) => {
               {backendOnline !== null && (
                   <span
                       className="nav-health"
-                      title={backendOnline ? "后端连接正常 · 数据实时同步" : "后端未连接 · 当前展示演示数据"}
+                      title={backendOnline ? "后端连接正常 · 数据实时同步" : DEMO_FALLBACK_ENABLED ? "后端未连接 · 当前展示演示数据" : "后端未连接"}
                       style={{
                           display: "inline-flex",
                           alignItems: "center",
@@ -347,7 +364,7 @@ const Header = ({ currentPhase = 0 }: HeaderProps) => {
                           background: backendOnline ? "#34d399" : "#fbbf24",
                           boxShadow: backendOnline ? "0 0 5px rgba(52,211,153,0.7)" : "0 0 5px rgba(251,191,36,0.7)",
                       }} />
-                      {backendOnline ? "API" : "演示模式"}
+                      {backendOnline ? "API" : DEMO_FALLBACK_ENABLED ? "演示模式" : "离线"}
                   </span>
               )}
               <button

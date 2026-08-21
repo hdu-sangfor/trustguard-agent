@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from app import main
 from app.domain.models import ConversationMessage
+from app.security.confirmation import DraftStore
 from app.stores.conversation_store import InMemoryConversationStore, MirroredConversationStore
 from app.workflows.pentest import intent
 
@@ -115,3 +116,52 @@ def test_draft_messages_can_be_restored_and_are_actor_isolated(monkeypatch):
     assert listed.json()[0]["title"].startswith("对 https://test.example.com")
     assert listed.json()[0]["messageCount"] == 2
     assert isolated_list.json() == []
+
+
+def test_alert_triage_draft_can_be_created_restored_and_consumed(monkeypatch):
+    store = InMemoryConversationStore()
+    monkeypatch.setattr(main, "_conversations", store)
+    monkeypatch.setattr(main, "_drafts", DraftStore())
+    client = TestClient(main.app)
+    headers = {"X-Actor-Id": "actor-triage"}
+
+    draft_response = client.post(
+        "/v1/task-agent/draft",
+        headers=headers,
+        json={
+            "message": "请研判告警 alert-tp-webshell-001，场景ID: webshell-true-positive",
+            "workflowId": "auto",
+        },
+    )
+    body = draft_response.json()
+    consumed = client.post(
+        "/v1/task-agent/drafts/consume",
+        headers=headers,
+        json={
+            "confirmationToken": body["confirmationToken"],
+            "idempotencyKey": "idem-triage",
+        },
+    )
+    restored = client.get(f"/v1/conversations/{body['conversationId']}", headers=headers)
+
+    assert draft_response.status_code == 200
+    assert body["workflowId"] == "alert_triage"
+    assert body["draft"]["alertUuid"] == "alert-tp-webshell-001"
+    assert consumed.json()["workflowId"] == "alert_triage"
+    assert consumed.json()["draft"]["scenarioId"] == "webshell-true-positive"
+    assert restored.json()["messages"][1]["draft"]["workflowId"] == "alert_triage"
+
+
+def test_alert_triage_missing_uuid_returns_clarification_instead_of_validation_error(monkeypatch):
+    monkeypatch.setattr(main, "_conversations", InMemoryConversationStore())
+    monkeypatch.setattr(main, "_drafts", DraftStore())
+    response = TestClient(main.app).post(
+        "/v1/task-agent/draft",
+        headers={"X-Actor-Id": "actor-triage"},
+        json={"message": "请做一次告警研判", "workflowId": "alert_triage"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "NEEDS_CLARIFICATION"
+    assert response.json()["missingFields"] == ["alert_uuid"]
+    assert response.json()["confirmationToken"] is None

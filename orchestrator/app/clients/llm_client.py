@@ -196,7 +196,7 @@ def _load_provider_config() -> LLMProviderConfig:
     )
 
     # 通用覆盖：如果你不想记供应商变量名，就直接用 LLM_*。
-    base_url = (os.getenv("LLM_BASE_URL") or "").strip() or provider_base_url
+    base_url = (os.getenv("LLM_BASE_URL") or "").strip() or provider_base_url or "http://localhost:11434/v1"
     api_key = (os.getenv("LLM_API_KEY") or "").strip() or provider_api_key
     model_id = (os.getenv("LLM_MODEL_ID") or "").strip() or provider_model_id
 
@@ -1183,6 +1183,8 @@ async def _run_decision_llm_parse_loop(
             }
             if getattr(cfg, "json_mode", True):
                 payload["response_format"] = {"type": "json_object"}
+            if cfg.model_id.strip().lower() in ("deepseek-v4-flash", "deepseek-v4-pro"):
+                payload["thinking"] = {"type": "disabled"}
             if _openai_stream_include_usage():
                 payload["stream_options"] = {"include_usage": True}
             content_parts, stream_usage = await _stream_chat_completions_collect(cfg, headers, payload)

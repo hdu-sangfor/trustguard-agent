@@ -32,6 +32,7 @@ class RagClient:
         params: dict[str, Any] | None = None,
         data: dict[str, str] | None = None,
         files: dict[str, tuple[str, bytes, str]] | None = None,
+        extra_headers: dict[str, str] | None = None,
         timeout: float = 20.0,
     ) -> Any:
         """Call a fixed RAG path and translate upstream errors at the BFF boundary."""
@@ -44,7 +45,7 @@ class RagClient:
                 response = await client.request(
                     method,
                     f"{self.base_url}{path}",
-                    headers=self._service_headers(),
+                    headers=self._service_headers(extra_headers),
                     json=json_body,
                     params=params,
                     data=data,
@@ -88,10 +89,15 @@ class RagClient:
                 detail="RAG 服务返回了无效 JSON",
             ) from exc
 
-    def _service_headers(self) -> dict[str, str] | None:
+    def _service_headers(
+        self,
+        extra_headers: dict[str, str] | None = None,
+    ) -> dict[str, str] | None:
+        headers = dict(extra_headers or {})
         if not self.service_token:
-            return None
-        return {"Authorization": f"Bearer {self.service_token}"}
+            return headers or None
+        headers["Authorization"] = f"Bearer {self.service_token}"
+        return headers
 
 
 rag_client = RagClient()

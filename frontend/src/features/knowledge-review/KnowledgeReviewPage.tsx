@@ -18,6 +18,7 @@ import {
 import { toast } from "sonner";
 
 import Header from "@/shared/components/Header";
+import { DEMO_FALLBACK_ENABLED } from "@/shared/constants/demoFallback";
 import { useAppSession } from "@/shared/context/AppSessionContext";
 import {
   AlertDialog,
@@ -67,6 +68,132 @@ function canApprove(item: ApiKnowledgeCrawlerReviewItem): boolean {
   return item.status === "pending" || canReReview(item);
 }
 
+function buildDemoReview(jobId: string, knowledgeBaseId = "kb-demo-default"): ApiKnowledgeCrawlerReview {
+  const now = Date.now();
+  const items: ApiKnowledgeCrawlerReviewItem[] = [
+    {
+      id: "review-demo-001",
+      knowledge_base_id: knowledgeBaseId,
+      title: "Struts2 S2-045 远程代码执行漏洞处置要点",
+      source_type: "web",
+      content_preview: "漏洞成因来自 Jakarta Multipart 解析异常路径中的 OGNL 表达式执行，攻击者可通过 Content-Type 头触发命令执行...",
+      content_chars: 4280,
+      source_uri: "https://demo.trustguard.local/kb/cve-2017-5638",
+      original_filename: "cve-2017-5638-struts2.md",
+      status: "pending",
+      reviewer: null,
+      review_reason: null,
+      review_confidence: null,
+      agent_decision: null,
+      manual_reviewer: null,
+      manual_reviewed_at: null,
+      rejected_at: null,
+      review_content_expires_at: null,
+      review_content_expired_at: null,
+      review_content_available: true,
+      created_at: new Date(now - 1000 * 60 * 38).toISOString(),
+    },
+    {
+      id: "review-demo-002",
+      knowledge_base_id: knowledgeBaseId,
+      title: "Nuclei 模板误报复核规则",
+      source_type: "document",
+      content_preview: "当模板只命中响应状态码或标题关键字时，不应直接判定漏洞成立，需要结合响应体证据、认证状态、资产上下文和二次验证结果...",
+      content_chars: 3150,
+      source_uri: "https://demo.trustguard.local/kb/nuclei-fp-rules",
+      original_filename: "nuclei-false-positive-review.md",
+      status: "pending",
+      reviewer: "agent",
+      review_reason: "内容包含明确的误报判定策略，可用于 RAG 约束漏洞确认流程。",
+      review_confidence: 0.91,
+      agent_decision: "approve",
+      manual_reviewer: null,
+      manual_reviewed_at: null,
+      rejected_at: null,
+      review_content_expires_at: null,
+      review_content_expired_at: null,
+      review_content_available: true,
+      created_at: new Date(now - 1000 * 60 * 26).toISOString(),
+    },
+    {
+      id: "review-demo-003",
+      knowledge_base_id: knowledgeBaseId,
+      title: "过期 PoC 转载：Apache 2.2 默认页面误判",
+      source_type: "web",
+      content_preview: "该文章将 Apache 默认欢迎页直接判定为高危漏洞，缺少版本、配置和可利用条件说明...",
+      content_chars: 1760,
+      source_uri: "https://demo.trustguard.local/kb/outdated-apache-poc",
+      original_filename: "outdated-apache-poc.html",
+      status: "rejected",
+      reviewer: "agent",
+      review_reason: "证据链不足且结论过度泛化，容易污染漏洞确认知识库。",
+      review_confidence: 0.86,
+      agent_decision: "reject",
+      manual_reviewer: null,
+      manual_reviewed_at: null,
+      rejected_at: new Date(now - 1000 * 60 * 14).toISOString(),
+      review_content_expires_at: new Date(now + 1000 * 60 * 60 * 24 * 29).toISOString(),
+      review_content_expired_at: null,
+      review_content_available: true,
+      created_at: new Date(now - 1000 * 60 * 50).toISOString(),
+    },
+    {
+      id: "review-demo-004",
+      knowledge_base_id: knowledgeBaseId,
+      title: "WebShell 上传漏洞修复建议清单",
+      source_type: "document",
+      content_preview: "建议从上传目录权限、扩展名白名单、MIME 校验、内容魔数识别、对象存储隔离和执行权限关闭等维度进行修复...",
+      content_chars: 2890,
+      source_uri: "https://demo.trustguard.local/kb/upload-remediation",
+      original_filename: "webshell-upload-remediation.md",
+      status: "approved",
+      reviewer: "human",
+      review_reason: "修复建议完整，适合报告生成阶段引用。",
+      review_confidence: null,
+      agent_decision: null,
+      manual_reviewer: "operator",
+      manual_reviewed_at: new Date(now - 1000 * 60 * 9).toISOString(),
+      rejected_at: null,
+      review_content_expires_at: null,
+      review_content_expired_at: null,
+      review_content_available: true,
+      created_at: new Date(now - 1000 * 60 * 42).toISOString(),
+    },
+  ];
+  return {
+    job_id: jobId,
+    review_status: "pending",
+    review_mode: "human",
+    review_criteria: "仅允许证据充分、可复核、适合安全任务编排和报告生成的内容进入知识库。",
+    items,
+    pending: items.filter((item) => item.status === "pending").length,
+    approved: items.filter((item) => item.status === "approved").length,
+    rejected: items.filter((item) => item.status === "rejected").length,
+  };
+}
+
+function buildDemoReviewContent(jobId: string, itemId: string, knowledgeBaseId?: string): ApiKnowledgeCrawlerReviewContent {
+  const review = buildDemoReview(jobId, knowledgeBaseId);
+  const item = review.items.find((entry) => entry.id === itemId) ?? review.items[0];
+  return {
+    item,
+    content: [
+      `# ${item.title}`,
+      "",
+      "## 适用场景",
+      "用于 TrustGuard Agent 在任务规划、RAG 检索、漏洞确认和报告生成阶段引用。内容必须能解释触发条件、验证方式、误报边界和修复建议。",
+      "",
+      "## 关键证据",
+      "- 资产指纹：服务版本、框架组件、端口和访问路径需要可复核。",
+      "- 验证动作：至少包含一次主动请求、响应片段或执行结果。",
+      "- 风险判断：区分信息泄露、可利用漏洞和模板误报。",
+      "",
+      "## Agent 使用方式",
+      "当扫描技能返回弱证据时，优先使用该知识片段约束二次验证；当漏洞成立时，将证据和修复建议写入最终报告。",
+    ].join("\n"),
+  };
+}
+
 export default function KnowledgeReviewPage() {
   const { jobId = "" } = useParams();
   const [searchParams] = useSearchParams();
@@ -93,8 +220,17 @@ export default function KnowledgeReviewPage() {
       setActiveItemId((current) => current && result.items.some((item) => item.id === current) ? current : firstPending?.id ?? null);
       setSelected((current) => new Set([...current].filter((id) => result.items.some((item) => item.id === id && canApprove(item)))));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "审核任务加载失败");
-      setReview(null);
+      if (DEMO_FALLBACK_ENABLED) {
+        const result = buildDemoReview(jobId, knowledgeBaseId);
+        setReview(result);
+        setActiveItemId((current) => current && result.items.some((item) => item.id === current) ? current : result.items[0]?.id ?? null);
+        toast.warning(`审核任务加载失败，已显示演示数据：${error instanceof Error ? error.message : "后端未连接"}`);
+      } else {
+        setReview(null);
+        setActiveItemId(null);
+        toast.error(error instanceof Error ? error.message : "审核任务加载失败");
+      }
+      setSelected(new Set());
     } finally {
       setLoading(false);
     }
@@ -105,8 +241,13 @@ export default function KnowledgeReviewPage() {
     try {
       setContent(await getKnowledgeCrawlerReviewContent(jobId, itemId, knowledgeBaseId));
     } catch (error) {
-      setContent(null);
-      toast.error(error instanceof Error ? error.message : "正文加载失败");
+      if (DEMO_FALLBACK_ENABLED) {
+        setContent(buildDemoReviewContent(jobId, itemId, knowledgeBaseId));
+        toast.warning(`正文加载失败，已显示演示正文：${error instanceof Error ? error.message : "后端未连接"}`);
+      } else {
+        setContent(null);
+        toast.error(error instanceof Error ? error.message : "正文加载失败");
+      }
     } finally {
       setContentLoading(false);
     }

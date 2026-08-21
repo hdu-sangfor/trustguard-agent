@@ -54,7 +54,8 @@ CREATE TABLE IF NOT EXISTS tg_trace_events (
     run_duration_ms BIGINT NULL COMMENT '事件实际耗时（毫秒）',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_task_id (task_id),
-    INDEX idx_task_ts (task_id, ts)
+    INDEX idx_task_ts (task_id, ts),
+    INDEX idx_trace_created_at (created_at, id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Evidence：结构化 CoT 推理步骤（与 tg_trace_events 并行；step_type 为字符串以便扩展）
@@ -82,8 +83,26 @@ CREATE TABLE IF NOT EXISTS tg_task_context (
     task_id VARCHAR(64) NOT NULL,
     context_json JSON,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    UNIQUE KEY uk_task_id (task_id)
+    UNIQUE KEY uk_task_id (task_id),
+    INDEX idx_task_context_updated_at (updated_at, task_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 告警研判人工复核：保留追加式审计记录，不覆盖 Agent 原始结论。
+CREATE TABLE IF NOT EXISTS tg_alert_triage_review (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    review_id VARCHAR(64) NOT NULL,
+    task_id VARCHAR(64) NOT NULL,
+    reviewer_user_id VARCHAR(64) NOT NULL,
+    reviewer_username VARCHAR(128) NOT NULL,
+    decision VARCHAR(32) NOT NULL COMMENT 'CONFIRMED|OVERRIDDEN|NEEDS_MORE_EVIDENCE',
+    human_verdict VARCHAR(32) NULL COMMENT 'true_positive|false_positive|suspicious|insufficient_evidence',
+    notes TEXT NULL,
+    selected_actions JSON NULL,
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    UNIQUE KEY uk_alert_triage_review_id (review_id),
+    INDEX idx_alert_triage_review_task (task_id, created_at),
+    INDEX idx_alert_triage_review_user (reviewer_user_id, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='告警研判人工复核审计记录';
 
 -- Evidence：任务断点（停止时保存，续跑时恢复）
 CREATE TABLE IF NOT EXISTS tg_task_checkpoint (

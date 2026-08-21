@@ -19,7 +19,9 @@ import {
 import { toast } from "sonner";
 
 import Header from "@/shared/components/Header";
+import PageTitle from "@/shared/components/PageTitle";
 import KnowledgeAnswerPanel from "@/features/knowledge/KnowledgeAnswerPanel";
+import { DEMO_FALLBACK_ENABLED } from "@/shared/constants/demoFallback";
 import { useAppSession } from "@/shared/context/AppSessionContext";
 import {
   createKnowledgeBase,
@@ -80,6 +82,244 @@ const inputStyle = {
   fontSize: 14,
   outline: "none",
 } as const;
+
+const demoUpdatedAt = "2026-08-20T09:30:00+08:00";
+
+const demoCapabilities: ApiKnowledgeSourceCapabilities = {
+  gateway: { max_upload_bytes: 50 * 1024 * 1024 },
+  embedding_profiles: [
+    { id: "configured", provider: "bge", model: "bge-large-zh-v1.5", dimension: 1024, default: true },
+  ],
+  sources: [
+    {
+      source_type: "file",
+      mime_types: [
+        "application/pdf",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "text/plain",
+        "text/markdown",
+        "application/json",
+      ],
+      max_bytes: 50 * 1024 * 1024,
+      max_pdf_pages: 120,
+    },
+  ],
+};
+
+const demoBases: ApiKnowledgeBase[] = [
+  {
+    id: "kb-trustguard-demo",
+    name: "TrustGuard 攻防知识库",
+    description: "覆盖漏洞验证、误报判定、修复建议与竞赛靶场经验的演示知识库。",
+    embedding_profile: "configured",
+    embedding_provider: "bge",
+    embedding_model: "bge-large-zh-v1.5",
+    embedding_dim: 1024,
+    content_revision: 18,
+    is_default: true,
+    is_system: true,
+    document_count: 4,
+    created_at: "2026-08-12T10:10:00+08:00",
+    updated_at: demoUpdatedAt,
+  },
+  {
+    id: "kb-competition-cases",
+    name: "竞赛场景案例库",
+    description: "沉淀 CTF/Web 渗透任务中的目标识别、利用链和报告模板。",
+    embedding_profile: "configured",
+    embedding_provider: "bge",
+    embedding_model: "bge-large-zh-v1.5",
+    embedding_dim: 1024,
+    content_revision: 7,
+    is_default: false,
+    is_system: false,
+    document_count: 3,
+    created_at: "2026-08-14T16:22:00+08:00",
+    updated_at: "2026-08-19T21:15:00+08:00",
+  },
+];
+
+const demoDocuments: ApiKnowledgeDocument[] = [
+  {
+    id: "doc-shiro-rememberme",
+    knowledge_base_id: "kb-trustguard-demo",
+    source_type: "file",
+    source_uri: "knowledge://trustguard/shiro-rememberme.md",
+    content_hash: "demo-shiro-rememberme",
+    status: "indexed",
+    title: "Apache Shiro RememberMe 风险验证流程",
+    mime_type: "text/markdown",
+    original_filename: "shiro-rememberme-validation.md",
+    doc_version: 3,
+    metadata: { tags: ["shiro", "rce", "false-positive"], owner: "agent" },
+    created_at: "2026-08-16T11:24:00+08:00",
+    updated_at: demoUpdatedAt,
+  },
+  {
+    id: "doc-struts2-s2045",
+    knowledge_base_id: "kb-trustguard-demo",
+    source_type: "file",
+    source_uri: "knowledge://trustguard/struts2-s2045.pdf",
+    content_hash: "demo-struts2-s2045",
+    status: "indexed",
+    title: "Struts2 S2-045 检测与修复建议",
+    mime_type: "application/pdf",
+    original_filename: "struts2-s2-045-playbook.pdf",
+    doc_version: 2,
+    metadata: { tags: ["struts2", "ognl", "rce"], pages: 12 },
+    created_at: "2026-08-17T15:10:00+08:00",
+    updated_at: demoUpdatedAt,
+  },
+  {
+    id: "doc-agent-report-template",
+    knowledge_base_id: "kb-trustguard-demo",
+    source_type: "file",
+    source_uri: "knowledge://trustguard/report-template.docx",
+    content_hash: "demo-report-template",
+    status: "indexed",
+    title: "Agent 证据链报告模板",
+    mime_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    original_filename: "agent-evidence-report-template.docx",
+    doc_version: 5,
+    metadata: { tags: ["report", "evidence", "competition"] },
+    created_at: "2026-08-18T09:40:00+08:00",
+    updated_at: demoUpdatedAt,
+  },
+  {
+    id: "doc-bugku-upload",
+    knowledge_base_id: "kb-competition-cases",
+    source_type: "file",
+    source_uri: "knowledge://competition/bugku-upload.md",
+    content_hash: "demo-bugku-upload",
+    status: "indexed",
+    title: "Bugku 文件上传题利用链记录",
+    mime_type: "text/markdown",
+    original_filename: "bugku-upload-case.md",
+    doc_version: 1,
+    metadata: { tags: ["ctf", "upload", "webshell"] },
+    created_at: "2026-08-19T20:32:00+08:00",
+    updated_at: "2026-08-19T21:15:00+08:00",
+  },
+];
+
+const demoDocumentChunks: Record<string, ApiKnowledgeChunk[]> = {
+  "doc-shiro-rememberme": [
+    {
+      id: "chunk-shiro-1",
+      chunk_index: 0,
+      page_no: 1,
+      token_count: 168,
+      text: "识别 Shiro RememberMe 后，不应仅凭 Cookie 字段直接判定高危。Agent 需要先提取响应特征、确认 rememberMe 序列化行为，再使用安全 payload 做最小化验证，并记录请求、响应、时间戳与命中规则。",
+      metadata: { section: "验证前置条件" },
+    },
+    {
+      id: "chunk-shiro-2",
+      chunk_index: 1,
+      page_no: 2,
+      token_count: 154,
+      text: "误报审核需要区分框架指纹与可利用漏洞。若目标仅返回 rememberMe=deleteMe 且无可控反序列化回显，应标记为 SUSPICIOUS 或 UNVERIFIED，等待人工复核或进一步旁路验证。",
+      metadata: { section: "误报判定" },
+    },
+  ],
+  "doc-struts2-s2045": [
+    {
+      id: "chunk-struts-1",
+      chunk_index: 0,
+      page_no: 4,
+      token_count: 142,
+      text: "S2-045 验证重点是 Content-Type OGNL 触发链。执行阶段应使用无破坏命令验证环境变量或短字符串回显，禁止直接执行写文件、反弹 shell 等高风险动作。",
+      metadata: { section: "安全验证" },
+    },
+    {
+      id: "chunk-struts-2",
+      chunk_index: 1,
+      page_no: 7,
+      token_count: 160,
+      text: "修复建议包括升级 Struts2 至安全版本、限制异常处理链路、关闭不必要的上传入口，并在网关侧增加 Content-Type 异常检测。报告需保留漏洞路径、payload 摘要和修复优先级。",
+      metadata: { section: "修复建议" },
+    },
+  ],
+  "doc-agent-report-template": [
+    {
+      id: "chunk-report-1",
+      chunk_index: 0,
+      token_count: 150,
+      text: "报告模板按任务概览、发现摘要、证据链、误报审核、修复建议和复测结论组织。每条发现必须关联到任务阶段、工具输出、Agent 决策和人工确认状态。",
+      metadata: { section: "报告结构" },
+    },
+  ],
+  "doc-bugku-upload": [
+    {
+      id: "chunk-bugku-1",
+      chunk_index: 0,
+      token_count: 132,
+      text: "文件上传类题目需要记录前端限制、服务端 MIME 校验、扩展名黑名单、解析差异和最终访问路径。若 Agent 生成 webshell 验证，应限制为靶场环境并保留清理记录。",
+      metadata: { section: "利用链记录" },
+    },
+  ],
+};
+
+function getDemoDocuments(knowledgeBaseId: string, queryText = ""): ApiKnowledgeDocument[] {
+  const normalizedQuery = queryText.trim().toLowerCase();
+  return demoDocuments.filter((document) => {
+    if (document.knowledge_base_id !== knowledgeBaseId) return false;
+    if (!normalizedQuery) return true;
+    const haystack = `${document.title ?? ""} ${document.original_filename ?? ""} ${document.source_uri}`.toLowerCase();
+    return haystack.includes(normalizedQuery);
+  });
+}
+
+function buildDemoSearchResult(
+  queryText: string,
+  knowledgeBaseId: string,
+  retrievalMode: RetrievalMode,
+): ApiKnowledgeSearchResponse {
+  const documents = getDemoDocuments(knowledgeBaseId);
+  const hits = documents.flatMap((document) =>
+    (demoDocumentChunks[document.id] ?? []).map((chunk, index) => ({
+      chunk_id: chunk.id,
+      text: chunk.text,
+      score: 0.91 - index * 0.05,
+      vector_score: 0.88 - index * 0.04,
+      keyword_score: 0.74 - index * 0.03,
+      rerank_score: 0.93 - index * 0.04,
+      title: document.title,
+      entity_id: document.id,
+      entity_type: "knowledge_document",
+      exact_entity_match: null,
+      source: {
+        document_id: document.id,
+        source_uri: document.source_uri,
+        original_filename: document.original_filename,
+        chunk_index: chunk.chunk_index,
+        page_no: chunk.page_no,
+      },
+      metadata: chunk.metadata,
+      expanded: false,
+    })),
+  ).slice(0, 4);
+
+  return {
+    schema_version: "demo.v1",
+    request_id: "demo-search-20260820",
+    query: queryText,
+    knowledge_base_id: knowledgeBaseId,
+    content_revision: demoBases.find((base) => base.id === knowledgeBaseId)?.content_revision ?? 1,
+    search_status: "ok",
+    effective_mode: retrievalMode,
+    results: hits,
+    total: hits.length,
+    fusion_method: "hybrid_rrf_rerank",
+    retrieval_time_ms: 42.6,
+    components: { vector: 24.1, keyword: 11.8, rerank: 6.7 },
+    degraded_components: [],
+    query_entities: ["Shiro", "Struts2", "误报审核"].filter((entity) => queryText.includes(entity)),
+    abstained: false,
+    query_plan: { demo: true, route: "agent-rag-security-playbook" },
+    coverage: { status: "sufficient", warning: null },
+    coverage_warning: null,
+  };
+}
 
 function formatDate(value?: string | null): string {
   if (!value) return "—";
@@ -209,9 +449,9 @@ export default function KnowledgePage() {
     ]);
 
     if (healthResult.status === "fulfilled") setHealth(healthResult.value);
-    else setHealth(null);
+    else setHealth(DEMO_FALLBACK_ENABLED ? { status: "demo", service: "RAG demo data" } : null);
     if (capabilitiesResult.status === "fulfilled") setCapabilities(capabilitiesResult.value);
-    else setCapabilities(null);
+    else setCapabilities(DEMO_FALLBACK_ENABLED ? demoCapabilities : null);
 
     if (basesResult.status === "fulfilled") {
       const nextBases = basesResult.value.items ?? [];
@@ -221,9 +461,10 @@ export default function KnowledgePage() {
         return nextBases.find((item) => item.is_default)?.id ?? nextBases[0]?.id ?? "";
       });
     } else {
-      setBases([]);
-      setSelectedBaseId("");
-      setBootstrapError(basesResult.reason instanceof Error ? basesResult.reason.message : "知识库列表加载失败");
+      setBases(DEMO_FALLBACK_ENABLED ? demoBases : []);
+      setSelectedBaseId((current) => (DEMO_FALLBACK_ENABLED && current && demoBases.some((item) => item.id === current) ? current : DEMO_FALLBACK_ENABLED ? demoBases[0].id : ""));
+      setBootstrapError(DEMO_FALLBACK_ENABLED ? null : basesResult.reason instanceof Error ? basesResult.reason.message : "知识库列表加载失败");
+      if (DEMO_FALLBACK_ENABLED) toast.warning("RAG 后端未连接，当前展示本地演示知识库");
     }
     setBootstrapLoading(false);
   }, []);
@@ -244,9 +485,16 @@ export default function KnowledgePage() {
       setDocuments(data.items ?? []);
       setDocumentTotal(data.total ?? 0);
     } catch (error) {
-      setDocuments([]);
-      setDocumentTotal(0);
-      toast.error(error instanceof Error ? error.message : "文档列表加载失败");
+      if (DEMO_FALLBACK_ENABLED) {
+        const demoItems = getDemoDocuments(selectedBaseId, documentQuery);
+        setDocuments(demoItems);
+        setDocumentTotal(demoItems.length);
+        toast.warning(error instanceof Error ? `文档接口不可用，已切换演示数据：${error.message}` : "文档接口不可用，已切换演示数据");
+      } else {
+        setDocuments([]);
+        setDocumentTotal(0);
+        toast.error(error instanceof Error ? error.message : "文档列表加载失败");
+      }
     } finally {
       setDocumentsLoading(false);
     }
@@ -293,7 +541,12 @@ export default function KnowledgePage() {
         enableRerank,
       }));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "知识检索失败");
+      if (DEMO_FALLBACK_ENABLED) {
+        setSearchResult(buildDemoSearchResult(normalizedQuery, selectedBaseId, mode));
+        toast.warning(error instanceof Error ? `知识检索接口不可用，已返回演示结果：${error.message}` : "知识检索接口不可用，已返回演示结果");
+      } else {
+        toast.error(error instanceof Error ? error.message : "知识检索失败");
+      }
     } finally {
       setSearching(false);
     }
@@ -315,8 +568,14 @@ export default function KnowledgePage() {
       setDocumentDetails((current) => ({ ...current, [document.id]: detail }));
       setDocumentChunks((current) => ({ ...current, [document.id]: chunks }));
     } catch (error) {
-      setExpandedDocumentId(null);
-      toast.error(error instanceof Error ? error.message : "文档详情加载失败");
+      if (DEMO_FALLBACK_ENABLED) {
+        setDocumentDetails((current) => ({ ...current, [document.id]: document }));
+        setDocumentChunks((current) => ({ ...current, [document.id]: demoDocumentChunks[document.id] ?? [] }));
+        toast.warning(error instanceof Error ? `文档详情接口不可用，已展示演示切片：${error.message}` : "文档详情接口不可用，已展示演示切片");
+      } else {
+        setExpandedDocumentId(null);
+        toast.error(error instanceof Error ? error.message : "文档详情加载失败");
+      }
     } finally {
       setDocumentDetailLoading(null);
     }
@@ -495,18 +754,11 @@ export default function KnowledgePage() {
     <div className="knowledge-page" style={{ minHeight: "100vh", background: "var(--tg-page-gradient)", paddingTop: 82, paddingBottom: 60 }}>
       <Header />
       <main className="knowledge-page-content" style={{ maxWidth: 1380, margin: "0 auto", padding: "0 24px" }}>
-        <div className="knowledge-page-heading" style={{ display: "flex", justifyContent: "space-between", gap: 18, alignItems: "flex-start", flexWrap: "wrap" }}>
-          <div>
-            <div style={{ color: "var(--tg-accent)", fontSize: 11, letterSpacing: "0.18em", fontFamily: "var(--tg-font-mono)", fontWeight: 700 }}>
-              TRUSTGUARD KNOWLEDGE
-            </div>
-            <h1 style={{ margin: "7px 0 7px", color: "var(--tg-text)", fontSize: 28, fontWeight: 800 }}>
-              知识中心
-            </h1>
-            <p style={{ margin: 0, color: "var(--tg-text-muted)", fontSize: 14, lineHeight: 1.7 }}>
-              单租户共享知识中心：通过 Agent Gateway 完成知识问答、检索、知识库与文档管理。
-            </p>
-          </div>
+        <PageTitle
+          eyebrow="TRUSTGUARD KNOWLEDGE"
+          title="知识中心"
+          description="单租户共享知识中心：通过 Agent Gateway 完成知识问答、检索、知识库与文档管理。"
+          actions={
           <button
             type="button"
             onClick={() => void loadBootstrap()}
@@ -525,7 +777,8 @@ export default function KnowledgePage() {
             <RefreshCw size={14} className={bootstrapLoading ? "animate-spin" : undefined} />
             刷新连接
           </button>
-        </div>
+          }
+        />
 
         <div className="knowledge-metrics" style={{ display: "flex", gap: 13, flexWrap: "wrap", marginTop: 24 }}>
           <MetricCard

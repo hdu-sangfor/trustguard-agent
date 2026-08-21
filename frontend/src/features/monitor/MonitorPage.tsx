@@ -5,13 +5,16 @@
  *   - 活跃任务 + 阶段流水线可视化
  *   - 实时全局事件流
  *   - 平台并发能力指示
- * 离线时从 localStorage 读取演示数据。
+ * 开发环境可启用本地演示数据兜底。
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import Header from "@/shared/components/Header";
+import PageTitle from "@/shared/components/PageTitle";
 import { useAppSession } from "@/shared/context/AppSessionContext";
+import { DEMO_FALLBACK_ENABLED } from "@/shared/constants/demoFallback";
+import "@/shared/styles/console-pages.css";
 import { getMonitorSnapshot, TRUSTGUARD_PHASES, type ApiActiveTask, type ApiGlobalEvent, type ApiMonitorSnapshot, type ApiTaskStats } from "@/shared/lib/api";
 import { readStoredOrbitTasks } from "@/shared/constants/orbitTasksStorage";
 import { formatLocalDateTime, formatLocalTime, parseTimestampMs } from "@/shared/lib/time";
@@ -99,7 +102,7 @@ function buildDemoSnapshot(): ApiMonitorSnapshot {
 /** Single stat metric card */
 function StatCard({ label, value, color, dim }: { label: string; value: number | string; color: string; dim?: boolean }) {
   return (
-    <div style={{
+    <div className="monitor-stat-card" style={{
       flex: "1 1 130px",
       minWidth: 120,
       background: dim ? "var(--tg-panel-muted)" : "var(--tg-panel-bg)",
@@ -174,6 +177,7 @@ function ActiveTaskCard({ task, idx }: { task: ApiActiveTask; idx: number }) {
 
   return (
     <div
+      className="monitor-active-card"
       onClick={() => navigate(`/trace/${task.taskId}`)}
       style={{
         background: "var(--tg-panel-bg)",
@@ -311,8 +315,8 @@ export default function MonitorPage() {
       setError(null);
     } catch {
       setOnline(false);
-      setError(null);
-      setSnapshot(buildDemoSnapshot());
+      setError(DEMO_FALLBACK_ENABLED ? null : "监控接口暂不可用");
+      setSnapshot(DEMO_FALLBACK_ENABLED ? buildDemoSnapshot() : null);
     }
     setLastRefresh(formatLocalTime(Date.now()));
   }, []);
@@ -364,27 +368,22 @@ export default function MonitorPage() {
   const sortedRecentTasks = filteredAndSorted;
 
   return (
-    <div style={{ minHeight: "100vh", background: "var(--tg-page-gradient)", paddingTop: 60 }}>
+    <div className="tg-console-page tg-console-page--monitor" style={{ minHeight: "100vh", background: "var(--tg-page-gradient)", paddingTop: 60 }}>
       <Header />
 
-      <div style={{ maxWidth: 1400, margin: "0 auto", padding: "24px 20px" }}>
+      <div className="tg-console-shell" style={{ maxWidth: 1400, margin: "0 auto", padding: "24px 20px" }}>
 
-        {/* ── Page header ── */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 28 }}>
-          <div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-              <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#22d3ee", boxShadow: "0 0 6px rgba(34,211,238,0.35)" }} />
-              <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: "var(--tg-text)", fontFamily: "monospace", letterSpacing: "0.1em" }}>
-                实时监控大屏
-              </h1>
-            </div>
-            <div style={{ fontSize: 12, color: "var(--tg-text-muted)", fontFamily: "monospace" }}>
-              {online === true ? "● 后端实时数据" : online === false ? "○ 演示模式 · 本地数据" : "正在连接…"}
+        <PageTitle
+          eyebrow="TRUSTGUARD REALTIME MONITOR"
+          title="实时监控大屏"
+          description={
+            <>
+              {online === true ? "● 后端实时数据" : online === false ? DEMO_FALLBACK_ENABLED ? "○ 演示模式 · 本地数据" : "○ 后端离线" : "正在连接…"}
               {lastRefresh && <span style={{ marginLeft: 12 }}>上次刷新 {lastRefresh}（本地时间）</span>}
-            </div>
-          </div>
-
-          <div style={{ display: "flex", gap: 10 }}>
+            </>
+          }
+          actions={
+            <>
             <button
               type="button"
               onClick={() => { void fetchSnapshot(); }}
@@ -407,8 +406,9 @@ export default function MonitorPage() {
             >
               → 任务管理
             </button>
-          </div>
-        </div>
+            </>
+          }
+        />
 
         {error && (
           <div style={{
@@ -418,14 +418,14 @@ export default function MonitorPage() {
         )}
 
         {/* ── Stat cards ── */}
-        <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 28 }}>
+        <div className="monitor-stat-grid" style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 28 }}>
           <StatCard label="总任务" value={totalCount} color="#64748b" dim={totalCount === 0} />
           <StatCard label="运行中" value={runningCount} color="#22d3ee" dim={runningCount === 0} />
           <StatCard label="已暂停" value={pausedCount} color="#fbbf24" dim={pausedCount === 0} />
           <StatCard label="已完成" value={doneCount} color="#34d399" dim={doneCount === 0} />
           <StatCard label="已失败" value={failedCount} color="#f87171" dim={failedCount === 0} />
           {/* Concurrent capacity indicator */}
-          <div style={{
+          <div className="monitor-stat-card monitor-concurrency-card" style={{
             flex: "1 1 200px", minWidth: 180,
             background: "var(--tg-panel-bg)", border: "1px solid var(--tg-panel-border)",
             borderRadius: 10, padding: "18px 20px",
@@ -437,7 +437,7 @@ export default function MonitorPage() {
         </div>
 
         {/* ── Main body: active tasks + event feed ── */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 380px", gap: 20, alignItems: "start" }}>
+        <div className="monitor-main-grid" style={{ display: "grid", gridTemplateColumns: "1fr 380px", gap: 20, alignItems: "start" }}>
 
           {/* Active tasks */}
           <div>
@@ -461,7 +461,7 @@ export default function MonitorPage() {
                 </span>
               </div>
             ) : (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 12 }}>
+              <div className="monitor-active-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 12 }}>
                 {activeTasks.map((t, i) => (
                   <ActiveTaskCard key={t.taskId} task={t} idx={i} />
                 ))}
@@ -519,7 +519,7 @@ export default function MonitorPage() {
                     ))}
                   </div>
                 </div>
-                <div style={{ background: "var(--tg-table-bg)", border: "1px solid var(--tg-panel-border)", borderRadius: 10, overflow: "hidden" }}>
+                <div className="monitor-table-shell" style={{ background: "var(--tg-table-bg)", border: "1px solid var(--tg-panel-border)", borderRadius: 10, overflow: "hidden" }}>
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                     <thead>
                       <tr style={{ borderBottom: "1px solid rgba(71,85,105,0.3)" }}>
@@ -564,7 +564,7 @@ export default function MonitorPage() {
               实时事件流
               <span style={{ fontSize: 11, color: "rgba(34,211,238,0.6)", marginLeft: 8 }}>●</span>
             </div>
-            <div style={{
+            <div className="monitor-panel" style={{
               background: "var(--tg-panel-bg)", border: "1px solid var(--tg-panel-border)",
               borderRadius: 12, overflow: "hidden",
             }}>
@@ -609,7 +609,7 @@ export default function MonitorPage() {
             </div>
 
             {/* Platform capability summary */}
-            <div style={{
+            <div className="monitor-panel" style={{
               marginTop: 16, padding: "14px 16px",
               background: "var(--tg-panel-bg)", border: "1px solid var(--tg-panel-border)",
               borderRadius: 10, fontSize: 11, fontFamily: "monospace", color: "rgba(148,163,184,0.6)",
@@ -631,7 +631,7 @@ export default function MonitorPage() {
         </div>
 
         {/* Quick nav */}
-        <div style={{
+        <div className="monitor-nav-strip" style={{
           marginTop: 16, padding: "10px 16px",
           background: "var(--tg-panel-muted)", border: "1px solid var(--tg-panel-border)",
           borderRadius: 8, display: "flex", gap: 12, flexWrap: "wrap" as const, alignItems: "center",

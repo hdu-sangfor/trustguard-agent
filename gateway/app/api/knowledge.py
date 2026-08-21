@@ -1,21 +1,26 @@
 from __future__ import annotations
 
 import os
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query, Request
 
 from app.audit import record_audit
 from app.clients.rag_client import rag_client
 from app.responses import ok
 from app.schemas.knowledge import (
+    ExperienceFeedbackRequest,
+    ExperienceStatusUpdateRequest,
+    ExperienceUpsertRequest,
     IngestConflictResolveRequest,
     KnowledgeBaseCreateRequest,
     KnowledgeBaseUpdateRequest,
     KnowledgeDocumentUpdateRequest,
     KnowledgeCrawlerCreateRequest,
     KnowledgeCrawlerReviewRequest,
+    KnowledgeScopeName,
+    KnowledgeScopeUpdateRequest,
     RagAnswerRequest,
     RagSearchRequest,
 )
@@ -36,6 +41,10 @@ KnowledgeManager = Annotated[
 ]
 
 router = APIRouter(prefix="/api/v1/knowledge", tags=["knowledge"])
+
+
+def _idempotency_headers(value: str | None) -> dict[str, str] | None:
+    return {"Idempotency-Key": value} if value else None
 
 
 def _safe_upload_filename(filename: str) -> str:
@@ -516,6 +525,33 @@ async def knowledge_crawler_defaults(
     )
 
 
+@router.get("/crawler/registry")
+async def knowledge_crawler_registry(
+    _user: KnowledgeReader,
+) -> dict[str, Any]:
+    result = await rag_client.request(
+        "GET",
+        "/v1/crawler/registry",
+        timeout=10.0,
+    )
+    items = result.get("items", []) if isinstance(result, dict) else []
+    summaries = [
+        {
+            "id": item.get("id"),
+            "knowledge_base_id": item.get("knowledge_base_id"),
+            "preset_ids": item.get("preset_ids") or [],
+            "schedule_enabled": bool(item.get("schedule_enabled")),
+            "schedule_interval_minutes": item.get("schedule_interval_minutes"),
+            "next_run_at": item.get("next_run_at"),
+            "last_run_at": item.get("last_run_at"),
+            "last_success_at": item.get("last_success_at"),
+        }
+        for item in items
+        if isinstance(item, dict)
+    ]
+    return ok({"items": summaries, "total": len(summaries)})
+
+
 @router.get("/crawler/jobs")
 async def knowledge_crawler_jobs(
     _user: KnowledgeReader,
@@ -550,18 +586,99 @@ async def create_knowledge_crawler_job(
     request: KnowledgeCrawlerCreateRequest,
     actor: KnowledgeManager,
 ) -> dict[str, Any]:
-    result = await rag_client.request(
-        "POST",
-        "/v1/crawler/jobs",
-        json_body={**request.model_dump(), "require_review": True},
-        timeout=30.0,
-    )
+    payload = {
+        **request.model_dump(
+            exclude={"schedule_enabled", "schedule_interval_minutes"}
+        ),
+        "require_review": True,
+    }
+    preset_id = request.preset_ids[0] if request.preset_ids else None
+    if request.schedule_enabled:
+        source_config = {
+            key: value
+            for key, value in payload.items()
+            if key != "knowledge_base_id"
+        }
+        source_config["force"] = False
+        if preset_id:
+            source_id = f"preset:{preset_id}"
+            source_path = f"/v1/crawler/registry/{quote(source_id, safe='')}"
+            source = await rag_client.request("GET", source_path, timeout=10.0)
+            current_config = (
+                dict(source.get("config") or {})
+                if isinstance(source, dict)
+                else {}
+            )
+            await rag_client.request(
+                "PATCH",
+                source_path,
+                json_body={
+                    "knowledge_base_id": request.knowledge_base_id,
+                    "config": {**current_config, **source_config},
+                    "enabled": True,
+                    "schedule_enabled": True,
+                    "schedule_interval_minutes": request.schedule_interval_minutes,
+                },
+                timeout=15.0,
+            )
+        else:
+            source = await rag_client.request(
+                "POST",
+                "/v1/crawler/registry",
+                json_body={
+                    "knowledge_base_id": request.knowledge_base_id,
+                    "name": "Agent 自定义周期采集",
+                    "description": "由 TrustGuard Agent 采集表单创建",
+                    "source_kind": "custom",
+                    "config": source_config,
+                    "trust_level": "trusted",
+                    "content_type": "security_knowledge",
+                    "enabled": True,
+                    "schedule_enabled": True,
+                    "schedule_interval_minutes": request.schedule_interval_minutes,
+                },
+                timeout=15.0,
+            )
+            source_id = str(source.get("id") or "") if isinstance(source, dict) else ""
+        if not source_id:
+            raise HTTPException(status_code=502, detail="RAG 未返回周期数据源 ID")
+        result = await rag_client.request(
+            "POST",
+            f"/v1/crawler/registry/{quote(source_id, safe='')}/runs",
+            json_body={
+                "require_review": True,
+                "review_mode": request.review_mode,
+                "review_criteria": request.review_criteria,
+                "force": request.force,
+            },
+            timeout=30.0,
+        )
+    else:
+        if preset_id and "schedule_enabled" in request.model_fields_set:
+            source_id = f"preset:{preset_id}"
+            await rag_client.request(
+                "PATCH",
+                f"/v1/crawler/registry/{quote(source_id, safe='')}",
+                json_body={"schedule_enabled": False},
+                timeout=15.0,
+            )
+        result = await rag_client.request(
+            "POST",
+            "/v1/crawler/jobs",
+            json_body=payload,
+            timeout=30.0,
+        )
     job_id = str(result.get("id") or "") if isinstance(result, dict) else ""
     record_audit(
-        "KNOWLEDGE_CRAWLER_JOB_CREATED",
+        "KNOWLEDGE_CRAWLER_SCHEDULE_CREATED"
+        if request.schedule_enabled
+        else "KNOWLEDGE_CRAWLER_JOB_CREATED",
         actor.username,
         job_id,
-        f"{request.knowledge_base_id};review_mode={request.review_mode}",
+        (
+            f"{request.knowledge_base_id};review_mode={request.review_mode};"
+            f"schedule_minutes={request.schedule_interval_minutes or 0}"
+        ),
     )
     return ok(result)
 
@@ -627,11 +744,13 @@ async def _control_knowledge_crawler_job(
     action: str,
     actor: CurrentUser,
     knowledge_base_id: str | None,
+    stop_schedule: bool = False,
 ) -> dict[str, Any]:
     await _get_scoped_crawler_job(job_id, knowledge_base_id)
     result = await rag_client.request(
         "POST",
         f"/v1/crawler/jobs/{quote(job_id, safe='')}/{action}",
+        params={"stop_schedule": True} if stop_schedule else None,
         timeout=20.0,
     )
     record_audit(
@@ -669,7 +788,177 @@ async def stop_knowledge_crawler_job(
     job_id: str,
     actor: KnowledgeManager,
     knowledge_base_id: str | None = Query(default=None, max_length=36),
+    stop_schedule: bool = Query(default=False),
 ) -> dict[str, Any]:
     return await _control_knowledge_crawler_job(
-        job_id, "stop", actor, knowledge_base_id
+        job_id, "stop", actor, knowledge_base_id, stop_schedule=stop_schedule
     )
+
+
+@router.get("/scopes")
+async def list_knowledge_scopes(_user: KnowledgeReader) -> dict[str, Any]:
+    return ok(
+        await rag_client.request(
+            "GET",
+            "/v1/knowledge-scopes",
+            timeout=10.0,
+        )
+    )
+
+
+@router.get("/scopes/{scope}")
+async def get_knowledge_scope(
+    scope: KnowledgeScopeName,
+    _user: KnowledgeReader,
+) -> dict[str, Any]:
+    return ok(
+        await rag_client.request(
+            "GET",
+            f"/v1/knowledge-scopes/{quote(scope, safe='')}",
+            timeout=10.0,
+        )
+    )
+
+
+@router.put("/scopes/{scope}")
+async def replace_knowledge_scope(
+    scope: KnowledgeScopeName,
+    request: KnowledgeScopeUpdateRequest,
+    actor: KnowledgeManager,
+) -> dict[str, Any]:
+    result = await rag_client.request(
+        "PUT",
+        f"/v1/knowledge-scopes/{quote(scope, safe='')}",
+        json_body=request.model_dump(mode="json"),
+        timeout=15.0,
+    )
+    record_audit("KNOWLEDGE_SCOPE_UPDATED", actor.username, scope)
+    return ok(result)
+
+
+@router.delete("/scopes/{scope}")
+async def clear_knowledge_scope(
+    scope: KnowledgeScopeName,
+    actor: KnowledgeManager,
+) -> dict[str, Any]:
+    result = await rag_client.request(
+        "DELETE",
+        f"/v1/knowledge-scopes/{quote(scope, safe='')}",
+        timeout=15.0,
+    )
+    record_audit("KNOWLEDGE_SCOPE_CLEARED", actor.username, scope)
+    return ok(result)
+
+
+@router.get("/experiences")
+async def list_experiences(
+    _user: KnowledgeManager,
+    status: Literal[
+        "candidate", "pending", "proven", "deprecated", "archived"
+    ]
+    | None = Query(default=None),
+    workflow_type: Literal["penetration", "alert-triage"] | None = Query(
+        default=None
+    ),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> dict[str, Any]:
+    params: dict[str, Any] = {"limit": limit, "offset": offset}
+    if status:
+        params["status"] = status
+    if workflow_type:
+        params["workflow_type"] = workflow_type
+    return ok(
+        await rag_client.request(
+            "GET",
+            "/v1/experiences",
+            params=params,
+            timeout=10.0,
+        )
+    )
+
+
+@router.get("/experiences/{experience_id}")
+async def get_experience(
+    experience_id: Annotated[str, Path(min_length=1, max_length=128)],
+    _user: KnowledgeManager,
+) -> dict[str, Any]:
+    return ok(
+        await rag_client.request(
+            "GET",
+            f"/v1/experiences/{quote(experience_id, safe='')}",
+            timeout=10.0,
+        )
+    )
+
+
+@router.put("/experiences/{external_id}")
+async def upsert_experience(
+    external_id: Annotated[str, Path(min_length=1, max_length=128)],
+    request: ExperienceUpsertRequest,
+    actor: KnowledgeManager,
+    idempotency_key: Annotated[
+        str | None,
+        Header(alias="Idempotency-Key", min_length=1, max_length=128),
+    ] = None,
+) -> dict[str, Any]:
+    if request.external_id != external_id:
+        raise HTTPException(status_code=422, detail="路径与请求体 external_id 必须一致")
+    result = await rag_client.request(
+        "PUT",
+        f"/v1/experiences/{quote(external_id, safe='')}",
+        json_body=request.model_dump(mode="json"),
+        extra_headers=_idempotency_headers(idempotency_key),
+        timeout=20.0,
+    )
+    record_audit("EXPERIENCE_UPSERTED", actor.username, external_id)
+    return ok(result)
+
+
+@router.post("/experiences/{experience_id}/feedback")
+async def submit_experience_feedback(
+    experience_id: Annotated[str, Path(min_length=1, max_length=128)],
+    request: ExperienceFeedbackRequest,
+    actor: KnowledgeManager,
+    idempotency_key: Annotated[
+        str | None,
+        Header(alias="Idempotency-Key", min_length=1, max_length=128),
+    ] = None,
+) -> dict[str, Any]:
+    if request.experience_id != experience_id:
+        raise HTTPException(status_code=422, detail="路径与请求体 experience_id 必须一致")
+    result = await rag_client.request(
+        "POST",
+        f"/v1/experiences/{quote(experience_id, safe='')}/feedback",
+        json_body=request.model_dump(mode="json"),
+        extra_headers=_idempotency_headers(idempotency_key),
+        timeout=15.0,
+    )
+    record_audit(
+        "EXPERIENCE_FEEDBACK_RECORDED",
+        actor.username,
+        experience_id,
+        request.event_id,
+    )
+    return ok(result)
+
+
+@router.patch("/experiences/{experience_id}/status")
+async def update_experience_status(
+    experience_id: Annotated[str, Path(min_length=1, max_length=128)],
+    request: ExperienceStatusUpdateRequest,
+    actor: KnowledgeManager,
+) -> dict[str, Any]:
+    result = await rag_client.request(
+        "PATCH",
+        f"/v1/experiences/{quote(experience_id, safe='')}/status",
+        json_body=request.model_dump(mode="json"),
+        timeout=20.0,
+    )
+    record_audit(
+        "EXPERIENCE_STATUS_UPDATED",
+        actor.username,
+        experience_id,
+        request.status,
+    )
+    return ok(result)

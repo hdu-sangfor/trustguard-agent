@@ -1,0 +1,341 @@
+.tg-console-page {
+  background: var(--tg-page-gradient) !important;
+  color: var(--tg-text);
+}
+
+.tg-console-shell {
+  width: min(1440px, calc(100% - 48px)) !important;
+  margin: 0 auto !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+}
+
+.tg-console-page input,
+.tg-console-page select,
+.tg-console-page textarea {
+  border: 1px solid var(--tg-panel-border) !important;
+  border-radius: 7px !important;
+  background: var(--tg-input-bg) !important;
+  color: var(--tg-text) !important;
+  font: 12px/1.55 monospace !important;
+}
+
+.tg-console-page table th {
+  color: var(--tg-text-muted) !important;
+  font: 700 10px monospace !important;
+  letter-spacing: .08em !important;
+  text-transform: uppercase !important;
+}
+
+.tg-console-page table td {
+  font-size: 12px !important;
+}
+
+.tg-console-page--reports .report-kpis {
+  margin-bottom: 18px !important;
+  gap: 12px !important;
+}
+
+.tg-console-page--reports .report-kpi-card,
+.tg-console-page--vulns .vuln-stat-card,
+.tg-console-page--skills .skill-phase-card,
+.tg-console-page--skills .skill-card {
+  border: 1px solid var(--tg-panel-border) !important;
+  border-radius: 9px !important;
+  background: var(--tg-panel-bg) !important;
+  box-shadow: var(--tg-shadow) !important;
+}
+
+.tg-console-page--reports .report-kpi-card {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 7px;
+  padding: 14px 16px !important;
+}
+
+.tg-console-page--reports .report-list-shell,
+.tg-console-page--vulns .vuln-table-shell,
+.tg-console-page--vulns .vuln-task-card,
+.tg-console-page--skills .skill-flow-note {
+  border: 1px solid var(--tg-panel-border) !important;
+  border-radius: 10px !important;
+  background: var(--tg-panel-bg) !important;
+  box-shadow: var(--tg-shadow) !important;
+}
+
+.tg-console-page--reports .report-list-toolbar {
+  padding: 11px 13px !important;
+  border-bottom: 1px solid var(--tg-panel-border) !important;
+  background: var(--tg-panel-muted) !important;
+}
+
+.tg-console-page--reports .report-list-row {
+  border-bottom: 1px solid var(--tg-panel-border) !important;
+}
+
+.tg-console-page--reports .report-list-row:hover {
+  background: var(--tg-hover-bg) !important;
+}
+
+.tg-console-page--skills .skill-phase-grid {
+  gap: 12px !important;
+  margin-bottom: 18px !important;
+}
+
+.tg-console-page--skills .skill-phase-card {
+  padding: 13px 15px !important;
+}
+
+.tg-console-page--skills .skill-grid {
+  gap: 10px !important;
+}
+
+.tg-console-page--skills .skill-card {
+  padding: 13px !important;
+}
+
+.tg-console-page--vulns .vuln-stats {
+  gap: 12px !important;
+  margin-bottom: 18px !important;
+}
+
+.tg-console-page--vulns .vuln-stat-card {
+  padding: 14px 16px !important;
+}
+
+.tg-console-page--vulns .vuln-filters {
+  gap: 10px !important;
+  margin-bottom: 16px !important;
+}
+
+.tg-console-page--vulns .vuln-table-shell table {
+  background: var(--tg-panel-bg);
+}
+
+.tg-console-page--vulns .vuln-table-shell thead tr {
+  background: var(--tg-panel-muted) !important;
+  border-bottom: 1px solid var(--tg-panel-border) !important;
+}
+
+.tg-console-page--vulns .vuln-table-shell tbody tr {
+  border-bottom: 1px solid var(--tg-panel-border) !important;
+}
+
+.tg-console-page--dashboard .dashboard-kpi-card,
+.tg-console-page--dashboard .dashboard-panel,
+.tg-console-page--monitor .monitor-stat-card,
+.tg-console-page--monitor .monitor-active-card,
+.tg-console-page--monitor .monitor-panel,
+.tg-console-page--monitor .monitor-table-shell,
+.tg-console-page--stats .stats-summary-card,
+.tg-console-page--stats .stats-panel {
+  border: 1px solid var(--tg-panel-border) !important;
+  border-radius: 9px !important;
+  background: var(--tg-panel-bg) !important;
+  box-shadow: var(--tg-shadow) !important;
+}
+
+.tg-console-page--dashboard .dashboard-kpi-grid,
+.tg-console-page--monitor .monitor-stat-grid,
+.tg-console-page--stats .stats-summary-grid {
+  gap: 12px !important;
+  margin-bottom: 18px !important;
+}
+
+.tg-console-page--dashboard .dashboard-kpi-card,
+.tg-console-page--monitor .monitor-stat-card,
+.tg-console-page--stats .stats-summary-card {
+  padding: 14px 16px !important;
+}
+
+.tg-console-page--dashboard .dashboard-kpi-card > div:nth-child(2),
+.tg-console-page--monitor .monitor-stat-card > div:first-child,
+.tg-console-page--stats .stats-summary-card > div:nth-child(2) {
+  font-size: 26px !important;
+  text-shadow: none !important;
+}
+
+.tg-console-page--dashboard .dashboard-action-strip,
+.tg-console-page--dashboard .dashboard-nav-strip,
+.tg-console-page--monitor .monitor-nav-strip,
+.tg-console-page--stats .stats-nav-strip {
+  border: 1px solid var(--tg-panel-border) !important;
+  border-radius: 9px !important;
+  background: var(--tg-panel-muted) !important;
+  box-shadow: var(--tg-shadow) !important;
+}
+
+.tg-console-page--dashboard .dashboard-main-grid,
+.tg-console-page--monitor .monitor-main-grid,
+.tg-console-page--stats .stats-grid-row {
+  gap: 16px !important;
+}
+
+.tg-console-page--monitor .monitor-active-grid {
+  gap: 10px !important;
+}
+
+.tg-console-page--admin .admin-metric-card,
+.tg-console-page--system .system-panel,
+.tg-console-page--system .system-kpi-card,
+.tg-console-page--audit .audit-kpi-card,
+.tg-console-page--audit .audit-table-shell {
+  border: 1px solid var(--tg-panel-border) !important;
+  border-radius: 9px !important;
+  background: var(--tg-panel-bg) !important;
+  box-shadow: var(--tg-shadow) !important;
+}
+
+.tg-console-page--admin .admin-status-strip,
+.tg-console-page--system .system-nav-strip,
+.tg-console-page--audit .audit-demo-banner,
+.tg-console-page--audit .audit-filter-bar,
+.tg-console-page--audit .audit-nav-strip {
+  border: 1px solid var(--tg-panel-border) !important;
+  border-radius: 9px !important;
+  background: var(--tg-panel-muted) !important;
+  box-shadow: var(--tg-shadow) !important;
+}
+
+.tg-console-page--admin .admin-tabs {
+  border-bottom: 1px solid var(--tg-panel-border) !important;
+  margin-bottom: 18px !important;
+}
+
+.tg-console-page--admin .admin-metric-grid,
+.tg-console-page--system .system-kpi-grid,
+.tg-console-page--audit .audit-kpi-grid {
+  gap: 12px !important;
+  margin-bottom: 18px !important;
+}
+
+.tg-console-page--admin .admin-metric-card,
+.tg-console-page--system .system-panel,
+.tg-console-page--system .system-kpi-card,
+.tg-console-page--audit .audit-kpi-card {
+  padding: 14px 16px !important;
+}
+
+.tg-console-page--system .system-kpi-card {
+  text-align: left !important;
+}
+
+.tg-console-page--system .system-kpi-card > div:first-child,
+.tg-console-page--audit .audit-kpi-card > div:nth-child(2) {
+  font-size: 26px !important;
+  text-shadow: none !important;
+}
+
+.tg-console-page--system .system-main-grid {
+  gap: 16px !important;
+}
+
+.tg-console-page--admin table,
+.tg-console-page--system table,
+.tg-console-page--audit table {
+  background: transparent !important;
+}
+
+.tg-console-page--admin thead tr,
+.tg-console-page--system thead tr,
+.tg-console-page--audit thead tr {
+  background: var(--tg-panel-muted) !important;
+  border-bottom: 1px solid var(--tg-panel-border) !important;
+}
+
+.tg-console-page--admin tbody tr,
+.tg-console-page--system tbody tr,
+.tg-console-page--audit tbody tr {
+  border-bottom: 1px solid var(--tg-panel-border) !important;
+}
+
+.tg-console-page--config .config-section-card,
+.tg-console-page--batch .batch-panel,
+.tg-console-page--batch .batch-result-panel,
+.tg-console-page--tasks .tasks-list-shell {
+  border: 1px solid var(--tg-panel-border) !important;
+  border-radius: 9px !important;
+  background: var(--tg-panel-bg) !important;
+  box-shadow: var(--tg-shadow) !important;
+}
+
+.tg-console-page--config .config-info-strip,
+.tg-console-page--config .config-nav-strip,
+.tg-console-page--batch .batch-callout,
+.tg-console-page--tasks .tasks-list-toolbar {
+  border: 1px solid var(--tg-panel-border) !important;
+  border-radius: 9px !important;
+  background: var(--tg-panel-muted) !important;
+  box-shadow: var(--tg-shadow) !important;
+}
+
+.tg-console-page--config .config-grid,
+.tg-console-page--batch .batch-main-grid {
+  gap: 16px !important;
+  margin-bottom: 18px !important;
+}
+
+.tg-console-page--config .config-section-card > div:first-child,
+.tg-console-page--batch .batch-panel > div:first-child {
+  background: var(--tg-panel-muted) !important;
+  border-bottom: 1px solid var(--tg-panel-border) !important;
+}
+
+.tg-console-page--batch .batch-result-row {
+  border-bottom: 1px solid var(--tg-panel-border) !important;
+}
+
+.tg-console-page--tasks .tasks-list-shell {
+  max-width: 1040px !important;
+  padding: 14px !important;
+}
+
+.tg-console-page--tasks .tasks-badge-strip {
+  margin-bottom: 10px !important;
+}
+
+.tg-console-page--tasks .tasks-list-toolbar {
+  padding: 10px 12px !important;
+  margin-bottom: 0 !important;
+  border-bottom-left-radius: 0 !important;
+  border-bottom-right-radius: 0 !important;
+}
+
+.tg-console-page--tasks .tasks-list-shell table {
+  background: var(--tg-panel-bg) !important;
+}
+
+.tg-console-page--tasks .tasks-list-shell thead tr {
+  background: var(--tg-panel-muted) !important;
+  border-bottom: 1px solid var(--tg-panel-border) !important;
+}
+
+.tg-console-page--tasks .tasks-list-shell tbody tr {
+  border-bottom: 1px solid var(--tg-panel-border) !important;
+}
+
+@media (max-width: 760px) {
+  .tg-console-shell {
+    width: min(100% - 24px, 1440px) !important;
+  }
+}
+
+@media (max-width: 1000px) {
+  .tg-console-page--dashboard .dashboard-kpi-grid,
+  .tg-console-page--stats .stats-summary-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+
+  .tg-console-page--dashboard .dashboard-main-grid,
+  .tg-console-page--monitor .monitor-main-grid,
+  .tg-console-page--stats .stats-grid-row,
+  .tg-console-page--system .system-main-grid,
+  .tg-console-page--batch .batch-main-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .tg-console-page--config .config-grid {
+    grid-template-columns: 1fr !important;
+  }
+}

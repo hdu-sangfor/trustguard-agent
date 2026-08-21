@@ -1,6 +1,6 @@
 /**
- * API client for the TrustGuard gateway backend (port 18080).
- * Dev: requests are proxied from /api → http://localhost:18080 via vite.config.ts.
+ * API client for the TrustGuard gateway backend.
+ * Dev: requests are proxied from /api → http://localhost:8100 by default via vite.config.ts.
  * Prod: configure VITE_API_BASE env var or serve frontend from the same origin.
  */
 
@@ -18,6 +18,7 @@ export interface ApiTask {
   currentPhase: string;
   createdAt: string;
   updatedAt: string;
+  workflowId?: 'pentest' | 'alert_triage' | string;
   executionPolicy?: { allow_exploit?: boolean; allow_destructive_actions?: boolean };
 }
 
@@ -35,6 +36,7 @@ export interface ApiAgentActivity {
 }
 
 export interface ApiPentestDraft {
+  workflowId: 'pentest';
   name: string;
   target: string;
   description: string;
@@ -46,12 +48,22 @@ export interface ApiPentestDraft {
   maxDurationSeconds: number;
 }
 
+export interface ApiAlertTriageDraft {
+  workflowId: 'alert_triage';
+  alertUuid: string;
+  scenarioId?: string | null;
+  enableRag: boolean;
+  callerNotes: string;
+}
+
+export type ApiTaskAgentDraftModel = ApiPentestDraft | ApiAlertTriageDraft;
+
 export interface ApiTaskAgentDraft {
   status: 'NEEDS_CLARIFICATION' | 'NEEDS_CONFIRMATION' | 'REJECTED' | 'READY';
   conversationId: string;
   draftId?: string | null;
   confirmationToken?: string | null;
-  draft?: ApiPentestDraft | null;
+  draft?: ApiTaskAgentDraftModel | null;
   missingFields: string[];
   warnings: string[];
   assistantMessage: string;
@@ -66,6 +78,7 @@ export interface ApiTaskAgentConfirmation {
   started: boolean;
   activities: ApiAgentActivity[];
   message: ApiConversationMessage;
+  workflowId?: 'pentest' | 'alert_triage' | string;
 }
 
 export interface ApiConversationMessage {
@@ -73,7 +86,7 @@ export interface ApiConversationMessage {
   role: 'user' | 'assistant';
   text: string;
   activities: ApiAgentActivity[];
-  draft?: ApiPentestDraft | null;
+  draft?: ApiTaskAgentDraftModel | null;
   confirmationToken?: string | null;
   taskId?: string | null;
   taskStatus?: string | null;
@@ -1506,6 +1519,17 @@ export interface ApiKnowledgeCrawlerDefaults {
   agent_review_model?: string | null;
 }
 
+export interface ApiKnowledgeCrawlerSource {
+  id: string;
+  knowledge_base_id: string;
+  preset_ids: string[];
+  schedule_enabled: boolean;
+  schedule_interval_minutes?: number | null;
+  next_run_at?: string | null;
+  last_run_at?: string | null;
+  last_success_at?: string | null;
+}
+
 export interface ApiKnowledgeCrawlerJob {
   id: string;
   knowledge_base_id: string;
@@ -1580,6 +1604,10 @@ export async function getKnowledgeCrawlerDefaults(): Promise<ApiKnowledgeCrawler
   return apiFetch<ApiKnowledgeCrawlerDefaults>('/api/v1/knowledge/crawler/defaults');
 }
 
+export async function listKnowledgeCrawlerSources(): Promise<{ items: ApiKnowledgeCrawlerSource[]; total: number }> {
+  return apiFetch<{ items: ApiKnowledgeCrawlerSource[]; total: number }>('/api/v1/knowledge/crawler/registry');
+}
+
 export async function listKnowledgeCrawlerJobs(params?: {
   knowledgeBaseId?: string;
   offset?: number;
@@ -1621,6 +1649,8 @@ export async function createKnowledgeCrawlerJob(params: {
   force: boolean;
   reviewMode: 'human' | 'agent';
   reviewCriteria: string;
+  scheduleEnabled: boolean;
+  scheduleIntervalMinutes?: number | null;
 }): Promise<ApiKnowledgeCrawlerJob> {
   return apiFetch<ApiKnowledgeCrawlerJob>('/api/v1/knowledge/crawler/jobs', {
     method: 'POST',
@@ -1641,6 +1671,8 @@ export async function createKnowledgeCrawlerJob(params: {
       force: params.force,
       review_mode: params.reviewMode,
       review_criteria: params.reviewCriteria,
+      schedule_enabled: params.scheduleEnabled,
+      schedule_interval_minutes: params.scheduleEnabled ? params.scheduleIntervalMinutes : null,
     }),
   });
 }
@@ -1649,9 +1681,11 @@ export async function controlKnowledgeCrawlerJob(
   jobId: string,
   action: 'pause' | 'resume' | 'stop',
   knowledgeBaseId?: string,
+  stopSchedule = false,
 ): Promise<ApiKnowledgeCrawlerJob> {
   const search = new URLSearchParams();
   if (knowledgeBaseId) search.set('knowledge_base_id', knowledgeBaseId);
+  if (action === 'stop' && stopSchedule) search.set('stop_schedule', 'true');
   const suffix = search.size ? `?${search.toString()}` : '';
   return apiFetch<ApiKnowledgeCrawlerJob>(
     `/api/v1/knowledge/crawler/jobs/${encodeURIComponent(jobId)}/${action}${suffix}`,
@@ -2041,6 +2075,105 @@ export async function getMe(): Promise<ApiUser> {
     throw new Error(json.message ?? '未授权');
   }
   return normalizeUser(json.data);
+}
+
+// ── XDR Proxy — Alert Triage ──────────────────────────────────────────────────
+
+export interface ApiTriageTask {
+  taskId: string;
+  alertUuid: string;
+  status: 'PENDING' | 'RUNNING' | 'DONE' | 'FAILED';
+  verdict: 'true_positive' | 'false_positive' | 'suspicious' | 'insufficient_evidence' | null;
+  confidence: number | null;
+  severity: number | null;
+  summary: string;
+  reasoning: string;
+  ragEnabled: boolean;
+  createdAt: string;
+  finishedAt: string | null;
+  alertSummary?: {
+    name: string;
+    uuId: string;
+    severity: number | null;
+    threatDefine: unknown;
+    direction: unknown;
+    proofType: unknown;
+    proofSummary: string;
+  };
+  matchedWhitelists?: Array<Record<string, unknown>>;
+  relatedIncidents?: Array<{ uuId: string; name: string; severity: number | null }>;
+  recommendedActions?: Array<{ action: string; label: string; category: string; description?: string }>;
+  warnings?: string[];
+  missingEvidence?: string[];
+  enrichmentEvidence?: string[];
+  ragCitations?: unknown[];
+  ragDegraded?: boolean;
+  ragNote?: string;
+  errors?: string[];
+  humanReviews?: ApiTriageReview[];
+}
+
+export interface ApiTriageReview {
+  reviewId: string;
+  taskId: string;
+  reviewerUserId: string;
+  reviewerUsername: string;
+  decision: 'CONFIRMED' | 'OVERRIDDEN' | 'NEEDS_MORE_EVIDENCE';
+  humanVerdict: ApiTriageTask['verdict'];
+  notes: string;
+  selectedActions: string[];
+  createdAt: string;
+}
+
+export async function createTriageTask(alertUuid: string, ragEnabled = false): Promise<ApiTriageTask> {
+  return apiFetch<ApiTriageTask>('/api/v1/alert-triage/tasks', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ alertUuid, enableRag: ragEnabled }),
+    signal: AbortSignal.timeout(30000),
+  } as RequestInit);
+}
+
+export async function listTriageTasks(): Promise<ApiTriageTask[]> {
+  return apiFetch<ApiTriageTask[]>('/api/v1/alert-triage/tasks', {
+    signal: AbortSignal.timeout(10000),
+  });
+}
+
+export async function getTriageTask(taskId: string): Promise<ApiTriageTask> {
+  return apiFetch<ApiTriageTask>(`/api/v1/alert-triage/tasks/${encodeURIComponent(taskId)}`, {
+    signal: AbortSignal.timeout(10000),
+  });
+}
+
+export async function getXdrProxyHealth(): Promise<{ status: string; xdrMockStatus: string }> {
+  const resp = await fetch('/health', { signal: AbortSignal.timeout(5000) });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  return resp.json();
+}
+
+export async function runTriageTask(taskId: string): Promise<ApiTriageTask> {
+  return apiFetch<ApiTriageTask>(`/api/v1/alert-triage/tasks/${encodeURIComponent(taskId)}/run`, {
+    method: 'POST',
+    signal: AbortSignal.timeout(120000),
+  });
+}
+
+export async function submitTriageReview(
+  taskId: string,
+  review: {
+    decision: ApiTriageReview['decision'];
+    humanVerdict?: Exclude<ApiTriageTask['verdict'], null>;
+    notes?: string;
+    selectedActions?: string[];
+  },
+): Promise<ApiTriageReview> {
+  return apiFetch<ApiTriageReview>(`/api/v1/alert-triage/tasks/${encodeURIComponent(taskId)}/reviews`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(review),
+    signal: AbortSignal.timeout(10000),
+  });
 }
 
 // ── 误报追踪 API ──────────────────────────────────────────

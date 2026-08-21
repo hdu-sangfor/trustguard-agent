@@ -50,7 +50,8 @@ class KnowledgeMcpSettings:
     inject_enabled: bool
     endpoint: str
     access_token: str | None
-    scope: KnowledgeScope
+    penetration_scope: KnowledgeScope
+    alert_triage_scope: KnowledgeScope
     mode: RetrievalMode
     limit: int
     rewrite: bool
@@ -71,7 +72,15 @@ class KnowledgeMcpSettings:
         ).strip()
         if not endpoint:
             endpoint = "http://localhost:18201/mcp"
-        raw_scope = (env.get("KNOWLEDGE_MCP_SCOPE") or "penetration").strip()
+        legacy_scope = (env.get("KNOWLEDGE_MCP_SCOPE") or "").strip()
+        raw_penetration_scope = (
+            env.get("KNOWLEDGE_MCP_PENETRATION_SCOPE")
+            or legacy_scope
+            or "penetration"
+        ).strip()
+        raw_alert_triage_scope = (
+            env.get("KNOWLEDGE_MCP_ALERT_TRIAGE_SCOPE") or "alert-triage"
+        ).strip()
         raw_mode = (env.get("KNOWLEDGE_MCP_MODE") or "comprehensive").strip()
         inject_enabled = _bool_env(env, "KNOWLEDGE_MCP_INJECT_ENABLED", False)
         materialize_enabled = _bool_env(
@@ -86,7 +95,8 @@ class KnowledgeMcpSettings:
             inject_enabled=inject_enabled,
             endpoint=endpoint,
             access_token=(env.get("KNOWLEDGE_MCP_ACCESS_TOKEN") or "").strip() or None,
-            scope=KnowledgeScope(raw_scope),
+            penetration_scope=KnowledgeScope(raw_penetration_scope),
+            alert_triage_scope=KnowledgeScope(raw_alert_triage_scope),
             mode=RetrievalMode(raw_mode),
             limit=_int_env(env, "KNOWLEDGE_MCP_LIMIT", 5, minimum=1, maximum=20),
             rewrite=_bool_env(env, "KNOWLEDGE_MCP_REWRITE", False),
@@ -122,6 +132,11 @@ class KnowledgeMcpSettings:
     @property
     def effective_inject_enabled(self) -> bool:
         return self.inject_enabled and not self.shadow_mode
+
+    @property
+    def scope(self) -> KnowledgeScope:
+        """Backward-compatible alias for the penetration Workflow scope."""
+        return self.penetration_scope
 
 
 def knowledge_mcp_enabled(environ: Mapping[str, str] | None = None) -> bool:

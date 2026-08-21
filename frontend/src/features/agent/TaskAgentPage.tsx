@@ -13,6 +13,7 @@ import {
   streamTaskAgentDraft,
   streamTaskEvents,
   type ApiAgentActivity,
+  type ApiAlertTriageDraft,
   type ApiConversationMessage,
   type ApiEvent,
   type ApiPentestDraft,
@@ -25,7 +26,7 @@ const CONVERSATION_STORAGE_KEY = 'trustguard.agent.conversationId';
 const WELCOME_MESSAGE: ChatMessage = {
   id: 'welcome',
   role: 'assistant',
-  text: '告诉我你想测试什么目标、测试范围和限制条件。我会先整理任务草稿，确认后再启动现有 Pentest Workflow。',
+  text: '告诉我你想测试的目标，或提供需要研判的 XDR 告警 UUID。我会先整理工作流草稿，确认后再执行并在对话中展示每一步。',
 };
 
 type ChatMessage = {
@@ -34,7 +35,7 @@ type ChatMessage = {
   text: string;
   taskId?: string | null;
   activities?: ApiAgentActivity[];
-  draft?: ApiPentestDraft | null;
+  draft?: ApiPentestDraft | ApiAlertTriageDraft | null;
   confirmationToken?: string | null;
   streaming?: boolean;
 };
@@ -71,7 +72,6 @@ function conversationStatus(status?: string | null): string {
   return '';
 }
 
-const phases = ['RECON', 'THREAT_MODEL', 'VULN_SCAN', 'EXPLOIT', 'REPORT'];
 const terminalStatuses = new Set<ApiTask['status']>(['DONE', 'FAILED', 'CANCELLED']);
 
 function settleActivities(activities: ApiAgentActivity[] | undefined): ApiAgentActivity[] | undefined {
@@ -113,6 +113,172 @@ function eventActivity(event: ApiEvent, index: number): ApiAgentActivity {
     title: type.replaceAll('_', ' '),
     detail,
     status: isBlocked ? 'blocked' : 'done',
+    timestamp: event.timestamp ?? new Date().toISOString(),
+  };
+}
+
+const triageResourceLabels: Record<string, string> = {
+  alert: '告警详情',
+  alert_proof: '告警原始证据',
+  endpoint_logs: '端点日志',
+  assets: '资产信息',
+  incidents: '关联事件',
+  incident_proof: '事件证据',
+  whitelist: '白名单',
+};
+
+const triageStageLabels: Record<string, string> = {
+  LOAD_ALERT: '读取告警详情',
+  COLLECT_EVIDENCE: '收集关联证据',
+  CHECK_WHITELIST: '核验白名单',
+  QUERY_RAG: '查询辅助知识',
+  MAKE_DECISION: '整理证据并判断',
+  VALIDATE_DECISION: '校验研判结论',
+  PERSIST_RESULT: '保存研判结果',
+  RECOMMEND_ACTION: '生成处置建议',
+  WORKFLOW: '完成告警研判',
+};
+
+type WorkflowPhase = {
+  id: string;
+  label: string;
+};
+
+const pentestPhases: WorkflowPhase[] = [
+  { id: 'RECON', label: '信息收集' },
+  { id: 'THREAT_MODEL', label: '威胁建模' },
+  { id: 'VULN_SCAN', label: '漏洞扫描' },
+  { id: 'EXPLOIT', label: '利用验证' },
+  { id: 'REPORT', label: '生成报告' },
+];
+
+const alertTriagePhases: WorkflowPhase[] = [
+  'LOAD_ALERT',
+  'COLLECT_EVIDENCE',
+  'CHECK_WHITELIST',
+  'QUERY_RAG',
+  'MAKE_DECISION',
+  'VALIDATE_DECISION',
+  'PERSIST_RESULT',
+  'RECOMMEND_ACTION',
+].map((id) => ({ id, label: triageStageLabels[id] }));
+
+function triageStage(eventType: string): string {
+  const normalized = eventType.replace(/^AT_/, '');
+  return Object.keys(triageStageLabels).find((key) => normalized.startsWith(key)) ?? 'WORKFLOW';
+}
+
+function triageParamsDetail(resource: string, params: Record<string, unknown>): string {
+  const values = Object.entries(params)
+    .map(([key, value]) => `${key}=${typeof value === 'string' ? value : JSON.stringify(value)}`)
+    .join('，');
+  return `${triageResourceLabels[resource] ?? resource}，请求条件：${values}`.slice(0, 520);
+}
+
+function triageEventActivity(event: ApiEvent, index: number): ApiAgentActivity {
+  const payload = event.payload ?? {};
+  const type = String(event.eventType ?? 'EVENT').toUpperCase();
+  const requestId = String(payload.request_id ?? event.eventId ?? `triage-${index}`);
+  const isRequest = type === 'AT_XDR_REQUEST' || type === 'AT_LLM_REQUEST';
+  const isResponse = type === 'AT_XDR_RESPONSE' || type === 'AT_LLM_RESPONSE';
+  const resource = String(payload.resource ?? (type.includes('LLM') ? 'llm' : ''));
+  const stage = triageStage(type);
+  let title = triageStageLabels[stage] ?? type.replaceAll('_', ' ');
+  let detail = '';
+  let status: ApiAgentActivity['status'] = 'done';
+  let kind: ApiAgentActivity['kind'] = 'analysis';
+  let id = `triage-stage-${stage}`;
+
+  if (isRequest) {
+    id = `triage-request-${requestId}`;
+    kind = 'tool';
+    status = 'running';
+    title = type === 'AT_LLM_REQUEST' ? '请求 AI 生成结构化结论' : `查询 XDR：${payload.operation ?? triageResourceLabels[resource] ?? resource}`;
+    detail = type === 'AT_LLM_REQUEST'
+      ? `模型：${payload.model ?? '当前配置'}；输入包括告警、原始证据、端点日志、资产、关联事件和白名单结果。`
+      : triageParamsDetail(resource, (payload.params as Record<string, unknown>) ?? {});
+  } else if (isResponse) {
+    id = `triage-request-${requestId}`;
+    kind = 'tool';
+    const responseStatus = String(payload.status ?? 'success').toLowerCase();
+    status = responseStatus === 'failed' ? 'blocked' : 'done';
+    title = type === 'AT_LLM_RESPONSE' ? '收到 AI 结构化响应' : `收到 XDR：${triageResourceLabels[resource] ?? resource}`;
+    if (type === 'AT_LLM_RESPONSE') {
+      detail = `模型已返回结构化结果，输入 token ${payload.input_tokens ?? '-'}，输出 token ${payload.output_tokens ?? '-'}。`;
+    } else {
+      const ids = Array.isArray(payload.record_ids) ? payload.record_ids.filter(Boolean).join('、') : '';
+      detail = responseStatus === 'failed'
+        ? `请求失败：${payload.error ?? 'XDR 查询失败'}`
+        : `${responseStatus === 'empty' ? '没有返回记录' : `返回 ${payload.record_count ?? 0} 条记录`}${ids ? `；证据 ID：${ids}` : ''}`;
+    }
+  } else {
+    id = `triage-stage-${stage}`;
+    if (type.endsWith('_START')) {
+      status = 'running';
+      kind = type.includes('WHITELIST') ? 'guard' : 'analysis';
+      title = triageStageLabels[stage] ?? title;
+      detail = stage === 'COLLECT_EVIDENCE'
+        ? '依次查询告警 proof、端点日志、资产、关联事件及事件证据。'
+        : stage === 'MAKE_DECISION'
+          ? '将已收集的 XDR 原始证据整理后提交给 AI，生成结构化 verdict。'
+          : stage === 'CHECK_WHITELIST'
+            ? '用告警特征匹配有效白名单，误报结论必须有精确匹配。'
+            : String(payload.detail ?? '正在执行当前研判阶段。');
+    } else if (type.endsWith('_COMPLETE')) {
+      title = triageStageLabels[stage] ?? title;
+      kind = stage === 'CHECK_WHITELIST' ? 'guard' : stage === 'WORKFLOW' ? 'result' : 'analysis';
+      if (stage === 'LOAD_ALERT') {
+        detail = `告警：${payload.name ?? payload.alert_uuid ?? '未知'}；严重度：${payload.severity ?? '未知'}；资产：${payload.asset_id ?? '未关联'}；主机：${payload.host_ip ?? '未提供'}。`;
+      } else if (stage === 'COLLECT_EVIDENCE') {
+        const endpointLogCount = Array.isArray(payload.endpoint_log_ids) ? payload.endpoint_log_ids.length : 0;
+        detail = `证据收集完成：${payload.has_proof ? '有原始 proof' : '缺少 proof'}，端点日志 ${endpointLogCount} 条，资产 ${payload.asset_count ?? 0} 个，关联事件 ${payload.incident_count ?? 0} 个。`;
+      } else if (stage === 'CHECK_WHITELIST') {
+        const matches = Array.isArray(payload.match_ids) ? payload.match_ids.filter(Boolean).join('、') : '';
+        detail = Number(payload.match_count ?? 0) > 0
+          ? `精确命中 ${payload.match_count} 条有效白名单：${matches}。该结果将参与误报判断。`
+          : '未命中有效白名单，不能仅凭相似脚本名或历史审批判定为误报。';
+      } else if (stage === 'QUERY_RAG') {
+        const citations = Array.isArray(payload.citation_ids) ? payload.citation_ids.filter(Boolean).join('、') : '';
+        detail = `辅助知识查询完成，获得 ${payload.citation_count ?? 0} 条引用${citations ? `：${citations}` : ''}。RAG 只作为参考，不覆盖 XDR 原始证据。`;
+      } else if (stage === 'MAKE_DECISION') {
+        const confidence = typeof payload.confidence === 'number' ? `${Math.round(payload.confidence * 100)}%` : '未提供';
+        detail = `AI 判断：${payload.verdict ?? '未知'}，置信度 ${confidence}。${payload.summary ?? ''}${payload.reasoning ? `\n判断依据：${payload.reasoning}` : ''}`;
+      } else if (stage === 'VALIDATE_DECISION') {
+        const errors = Array.isArray(payload.errors) ? payload.errors.join('；') : '';
+        detail = Number(payload.error_count ?? 0) === 0
+          ? '结构化结论通过校验：verdict、置信度、证据充分性和动作权限均符合策略。'
+          : `结论校验发现 ${payload.error_count} 个问题并执行降级：${errors}`;
+      } else if (stage === 'PERSIST_RESULT') {
+        const refs = Array.isArray(payload.evidence_refs) ? payload.evidence_refs.join('、') : '';
+        detail = `结果已保存。${refs ? `关键证据：${refs}` : ''}`;
+      } else if (stage === 'RECOMMEND_ACTION') {
+        detail = `已生成 ${payload.action_count ?? 0} 条处置建议；所有动作保持人工确认级别，Agent 未自动执行。`;
+      } else if (stage === 'WORKFLOW') {
+        detail = `流程状态：${payload.status ?? 'DONE'}；结论：${payload.verdict ?? '待查看详情'}。`;
+      } else {
+        detail = String(payload.detail ?? payload.reason ?? '当前阶段已完成。');
+      }
+    } else if (type.includes('FAILED') || type.includes('ERROR')) {
+      status = 'blocked';
+      kind = 'guard';
+      title = `${triageStageLabels[stage] ?? title}失败`;
+      detail = String(payload.error ?? payload.message ?? payload.reason ?? '阶段执行失败。');
+    } else if (type === 'AT_QUERY_RAG_SKIPPED') {
+      title = '跳过辅助知识查询';
+      detail = '按请求不启用 RAG，继续只依据 XDR 原始证据判断。';
+    } else if (type === 'AT_QUERY_RAG_DEGRADED') {
+      title = '辅助知识不可用';
+      detail = `RAG 已降级：${payload.reason ?? '未返回知识引用'}。不会阻断 XDR 原始证据研判。`;
+      status = 'blocked';
+    }
+  }
+
+  return {
+    id,
+    kind,
+    title,
+    detail: detail.slice(0, 900),
+    status,
     timestamp: event.timestamp ?? new Date().toISOString(),
   };
 }
@@ -327,10 +493,25 @@ function ActivityList({ activities, label = '实时执行轨迹' }: { activities
   );
 }
 
-function DraftCard({ draft, onConfirm, busy }: { draft: ApiPentestDraft; onConfirm: () => void; busy: boolean }) {
+function DraftCard({ draft, onConfirm, busy }: { draft: ApiPentestDraft | ApiAlertTriageDraft; onConfirm: () => void; busy: boolean }) {
+  if (draft.workflowId === 'alert_triage') {
+    return (
+      <div className="task-agent-draft">
+        <div className="task-agent-draft-title"><ShieldCheck size={15} /> 告警研判草稿</div>
+        <div className="task-agent-draft-grid">
+          <span>告警 UUID</span><strong>{draft.alertUuid}</strong>
+          <span>场景</span><strong>{draft.scenarioId || '未指定'}</strong>
+          <span>知识辅助</span><strong>{draft.enableRag ? '已启用（仅辅助）' : '未启用'}</strong>
+        </div>
+        <button type="button" onClick={onConfirm} disabled={busy}>
+          {busy ? '正在创建并启动…' : '确认并启动告警研判'}
+        </button>
+      </div>
+    );
+  }
   return (
     <div className="task-agent-draft">
-      <div className="task-agent-draft-title"><ShieldCheck size={15} /> 任务草稿</div>
+        <div className="task-agent-draft-title"><ShieldCheck size={15} /> 渗透测试草稿</div>
       <div className="task-agent-draft-grid">
         <span>名称</span><strong>{draft.name}</strong>
         <span>目标</span><strong>{draft.target}</strong>
@@ -480,6 +661,10 @@ export default function TaskAgentPage() {
         ? [...items, activity]
         : items.map((item, index) => index === existing ? activity : item);
     });
+    const mergeTriageEvent = (event: ApiEvent) => {
+      if (task.workflowId !== 'alert_triage') return;
+      setReasoningActivities((items) => mergeActivity(items, triageEventActivity(event, items.length)));
+    };
     const mergeReasoning = (step: ApiReasoningStep) => setReasoningActivities((items) => {
       return mergeReasoningStep(items, step, items.length);
     });
@@ -491,9 +676,11 @@ export default function TaskAgentPage() {
           getTaskReasoningSteps(task.taskId, 500).catch(() => []),
         ]);
         if (!active) return;
-        setTask(latest);
+        setTask({ ...latest, workflowId: latest.workflowId || task.workflowId });
         setLiveActivities(events.map(eventActivity));
-        setReasoningActivities(reasoningStepActivities(reasoningSteps));
+        setReasoningActivities(task.workflowId === 'alert_triage'
+          ? events.reduce<ApiAgentActivity[]>((items, event, index) => mergeActivity(items, triageEventActivity(event, index)), [])
+          : reasoningStepActivities(reasoningSteps));
         if (terminalStatuses.has(latest.status)) {
           setMessages((items) => settleMessages(items));
           setLiveActivities((items) => settleActivities(items) ?? []);
@@ -502,10 +689,10 @@ export default function TaskAgentPage() {
             id: `task-${task.taskId}-terminal`,
             role: 'assistant',
             text: latest.status === 'DONE'
-              ? `渗透测试任务 ${task.taskId} 已完成。可以打开报告中心查看测试结果。`
+              ? `${task.workflowId === 'alert_triage' ? '告警研判' : '渗透测试'}任务 ${task.taskId} 已完成。`
               : latest.status === 'FAILED'
-                ? `渗透测试任务 ${task.taskId} 执行失败。你可以查看执行轨迹定位失败步骤。`
-                : `渗透测试任务 ${task.taskId} 已取消。`,
+                ? `${task.workflowId === 'alert_triage' ? '告警研判' : '渗透测试'}任务 ${task.taskId} 执行失败。你可以查看执行轨迹定位失败步骤。`
+                : `${task.workflowId === 'alert_triage' ? '告警研判' : '渗透测试'}任务 ${task.taskId} 已取消。`,
           });
           void refreshConversations();
           if (interval !== undefined) window.clearInterval(interval);
@@ -515,11 +702,14 @@ export default function TaskAgentPage() {
     void streamTaskEvents(
       task.taskId,
       {
-        onEvent: mergeEvent,
+        onEvent: (event) => {
+          mergeEvent(event);
+          mergeTriageEvent(event);
+        },
         onReasoning: mergeReasoning,
         onStatus: (latest) => {
           if (!active) return;
-          setTask(latest);
+          setTask({ ...latest, workflowId: latest.workflowId || task.workflowId });
           if (terminalStatuses.has(latest.status)) {
             setMessages((items) => settleMessages(items));
             setLiveActivities((items) => settleActivities(items) ?? []);
@@ -639,10 +829,29 @@ export default function TaskAgentPage() {
     } finally { setDraftBusy(false); }
   };
 
-  const phaseIndex = useMemo(
-    () => task?.status === 'DONE' ? phases.length : Math.max(0, phases.indexOf(task?.currentPhase ?? 'RECON')),
-    [task?.currentPhase, task?.status],
-  );
+  const isAlertTriage = task?.workflowId === 'alert_triage' || task?.taskId.startsWith('at-') === true;
+  const workflowPhases = isAlertTriage ? alertTriagePhases : pentestPhases;
+  const phaseIndex = useMemo(() => {
+    if (task?.status === 'DONE') return workflowPhases.length;
+    if (!isAlertTriage) {
+      return Math.max(0, pentestPhases.findIndex((phase) => phase.id === (task?.currentPhase ?? 'RECON')));
+    }
+
+    let latestIndex = -1;
+    let latestStatus: ApiAgentActivity['status'] | undefined;
+    workflowPhases.forEach((phase, index) => {
+      const activity = reasoningActivities.find((item) => item.id === `triage-stage-${phase.id}`);
+      if (activity) {
+        latestIndex = index;
+        latestStatus = activity.status;
+      }
+    });
+    if (latestIndex < 0) return 0;
+    if (task?.status === 'RUNNING' && latestStatus !== 'running') {
+      return Math.min(latestIndex + 1, workflowPhases.length);
+    }
+    return latestIndex;
+  }, [isAlertTriage, reasoningActivities, task?.currentPhase, task?.status, workflowPhases]);
   const traceActivities = useMemo(() => {
     if (liveActivities.length > 0) return liveActivities;
     for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -658,13 +867,6 @@ export default function TaskAgentPage() {
       : undefined;
     return taskMessage?.id;
   }, [messages, reasoningActivities.length, task?.taskId]);
-  const phaseLabels: Record<string, string> = {
-    RECON: '信息收集',
-    THREAT_MODEL: '威胁建模',
-    VULN_SCAN: '漏洞扫描',
-    EXPLOIT: '利用验证',
-    REPORT: '生成报告',
-  };
   if (!loggedIn) {
     return <><Header /><main style={{ paddingTop: 110, maxWidth: 760, margin: '0 auto', paddingInline: 24 }}><h2>请先登录可信卫士</h2><button type="button" onClick={() => navigate('/login')}>前往登录</button></main></>;
   }
@@ -734,7 +936,7 @@ export default function TaskAgentPage() {
           </div>
           <div className="task-agent-composer-wrap">
             <div className="task-agent-composer">
-              <textarea value={input} disabled={conversationLoading} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void submit(); } }} placeholder="描述测试目标、范围和限制条件" rows={2} />
+              <textarea value={input} disabled={conversationLoading} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void submit(); } }} placeholder="描述测试目标，或输入告警 UUID 进行研判" rows={2} />
               <button type="button" onClick={() => busy ? draftAbortRef.current?.abort() : void submit()} disabled={conversationLoading || (!busy && !input.trim())} aria-label={busy ? '停止生成' : '发送'}>{busy ? <Square size={13} fill="currentColor" /> : <Send size={16} />}</button>
             </div>
             <span className="task-agent-composer-hint">Enter 发送 · Shift + Enter 换行</span>
@@ -751,14 +953,14 @@ export default function TaskAgentPage() {
                 <div className="task-agent-id-label">任务 ID</div>
                 <div className="task-agent-id">{task.taskId}</div>
                 <div className="task-agent-phases">
-                  {phases.map((phase, index) => (
-                    <div key={phase} className={index <= phaseIndex ? 'active' : ''}>
-                      <span>{index < phaseIndex ? <Check size={11} /> : index === phaseIndex ? <Loader2 size={11} className="tg-spin" /> : <Circle size={7} />}</span>
-                      {phaseLabels[phase]}
+                  {workflowPhases.map((phase, index) => (
+                    <div key={phase.id} className={index <= phaseIndex ? 'active' : ''}>
+                      <span>{index < phaseIndex ? <Check size={11} /> : index === phaseIndex && task.status === 'RUNNING' ? <Loader2 size={11} className="tg-spin" /> : <Circle size={7} />}</span>
+                      {phase.label}
                     </div>
                   ))}
                 </div>
-                {(task.status === 'DONE' || task.status === 'FAILED') && <button type="button" className="task-agent-report-button" onClick={() => navigate(`/reports?taskId=${task.taskId}`)}>打开报告中心</button>}
+                {(task.status === 'DONE' || task.status === 'FAILED') && <button type="button" className="task-agent-report-button" onClick={() => navigate(task.workflowId === 'alert_triage' ? `/triage/${task.taskId}` : `/reports?taskId=${task.taskId}`)}>{task.workflowId === 'alert_triage' ? '打开研判详情' : '打开报告中心'}</button>}
               </>
             ) : <p className="task-agent-monitor-empty">确认任务草稿后，这里会显示执行阶段和状态。</p>}
           </section>
