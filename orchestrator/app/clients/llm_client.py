@@ -1183,6 +1183,8 @@ async def _run_decision_llm_parse_loop(
             }
             if getattr(cfg, "json_mode", True):
                 payload["response_format"] = {"type": "json_object"}
+            if cfg.model_id.strip().lower() in ("deepseek-v4-flash", "deepseek-v4-pro"):
+                payload["thinking"] = {"type": "disabled"}
             if _openai_stream_include_usage():
                 payload["stream_options"] = {"include_usage": True}
             content_parts, stream_usage = await _stream_chat_completions_collect(cfg, headers, payload)
