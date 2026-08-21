@@ -7,7 +7,10 @@ import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import Header from "@/shared/components/Header";
+import PageTitle from "@/shared/components/PageTitle";
+import { DEMO_FALLBACK_ENABLED } from "@/shared/constants/demoFallback";
 import { useAppSession } from "@/shared/context/AppSessionContext";
+import "@/shared/styles/console-pages.css";
 import {
   getRuntimeConfig,
   getConfigOverrides, setConfigOverride, clearConfigOverrides,
@@ -67,7 +70,7 @@ function SectionCard({
   title, color, children,
 }: { title: string; color: string; children: React.ReactNode }) {
   return (
-    <div style={{
+    <div className="config-section-card" style={{
       background: "rgba(15,23,42,0.82)",
       border: `1px solid ${color}28`,
       borderRadius: 12, overflow: "hidden",
@@ -225,7 +228,7 @@ export default function ConfigPage() {
       setEditValues(overridesList ?? {});
       setOnline(true);
     } catch {
-      setConfig(DEMO_CONFIG);
+      setConfig(DEMO_FALLBACK_ENABLED ? DEMO_CONFIG : null);
       setOverrides({});
       setEditValues({});
       setOnline(false);
@@ -270,7 +273,7 @@ export default function ConfigPage() {
     }
   };
 
-  const cfg = config ?? DEMO_CONFIG;
+  const cfg = config ?? (DEMO_FALLBACK_ENABLED ? DEMO_CONFIG : null);
 
   // Quick nav links
   const quickLinks = [
@@ -283,31 +286,61 @@ export default function ConfigPage() {
     { label: "技能库",   path: "/skills",   color: "#fb923c" },
   ];
 
+  if (!cfg) {
+    return (
+      <div className="tg-console-page tg-console-page--config" style={{ minHeight: "100vh", background: "linear-gradient(180deg, #0a0f1e 0%, #0f172a 50%, #0a0f1e 100%)", paddingTop: 60 }}>
+        <Header />
+        <div className="tg-console-shell" style={{ maxWidth: 1200, margin: "0 auto", padding: "28px 20px" }}>
+          <PageTitle
+            eyebrow="TRUSTGUARD RUNTIME CONFIG"
+            title="平台配置中心"
+            description="无法读取后端运行时配置。正式部署环境不会使用本地演示配置填充页面。"
+            actions={
+              <button
+                type="button"
+                onClick={() => { setLoading(true); void loadConfig(); }}
+                style={{
+                  background: "rgba(34,211,238,0.1)", border: "1px solid rgba(34,211,238,0.35)",
+                  color: "#22d3ee", borderRadius: 7, padding: "7px 16px",
+                  fontSize: 12, cursor: "pointer", fontFamily: "monospace",
+                }}
+              >
+                {loading ? "刷新中…" : "⟳ 刷新"}
+              </button>
+            }
+          />
+          <div style={{ marginTop: 18, padding: 28, border: "1px solid rgba(71,85,105,0.35)", borderRadius: 10, color: "rgba(148,163,184,0.85)", background: "rgba(15,23,42,0.62)" }}>
+            后端配置接口暂不可用，请检查 Gateway 服务状态。
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div style={{ minHeight: "100vh", background: "linear-gradient(180deg, #0a0f1e 0%, #0f172a 50%, #0a0f1e 100%)", paddingTop: 60 }}>
+    <div className="tg-console-page tg-console-page--config" style={{ minHeight: "100vh", background: "linear-gradient(180deg, #0a0f1e 0%, #0f172a 50%, #0a0f1e 100%)", paddingTop: 60 }}>
       <Header />
 
-      <div style={{ maxWidth: 1200, margin: "0 auto", padding: "28px 20px" }}>
+      <div className="tg-console-shell" style={{ maxWidth: 1200, margin: "0 auto", padding: "28px 20px" }}>
 
-        {/* ── Page header ── */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 28 }}>
-          <div>
-            <h1 style={{ margin: "0 0 4px", fontSize: 22, fontWeight: 800, color: "#e2e8f0", fontFamily: "monospace", letterSpacing: "0.08em" }}>
-              平台配置中心
-            </h1>
-            <div style={{ fontSize: 12, color: "rgba(148,163,184,0.5)", fontFamily: "monospace" }}>
+        <PageTitle
+          eyebrow="TRUSTGUARD RUNTIME CONFIG"
+          title="平台配置中心"
+          description={
+            <>
               {online === true ? (
                 <span style={{ color: "rgba(52,211,153,0.8)" }}>● 实时配置 · 后端数据</span>
               ) : online === false ? (
-                <span style={{ color: "rgba(251,191,36,0.7)" }}>○ 演示模式 · 典型配置值</span>
+                <span style={{ color: "rgba(251,191,36,0.7)" }}>○ {DEMO_FALLBACK_ENABLED ? "演示模式 · 典型配置值" : "后端离线"}</span>
               ) : "正在加载…"}
               {Object.keys(overrides).length > 0 && (
                 <span style={{ marginLeft: 12, color: "rgba(129,140,248,0.7)" }}>⚙ {Object.keys(overrides).length} 个覆盖项</span>
               )}
               {lastRefresh && <span style={{ marginLeft: 12 }}>更新于 {lastRefresh}</span>}
-            </div>
-          </div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            </>
+          }
+          actions={
+            <>
             <button
               type="button"
               onClick={() => { setLoading(true); void loadConfig(); }}
@@ -389,8 +422,9 @@ export default function ConfigPage() {
             >
               ← 平台管理
             </button>
-          </div>
-        </div>
+            </>
+          }
+        />
 
         {loading ? (
           <div style={{ textAlign: "center", padding: "80px 0", color: "rgba(148,163,184,0.35)", fontFamily: "monospace" }}>
@@ -399,7 +433,7 @@ export default function ConfigPage() {
         ) : (
           <>
             {/* ── Config grid ── */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(500px, 1fr))", gap: 18, marginBottom: 20 }}>
+            <div className="config-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(500px, 1fr))", gap: 18, marginBottom: 20 }}>
 
               {/* AI 引擎 */}
               <SectionCard title="AI 引擎配置" color="#818cf8">
@@ -530,7 +564,7 @@ export default function ConfigPage() {
             </div>
 
             {/* ── LLM Provider info bar ── */}
-            <div style={{
+            <div className="config-info-strip" style={{
               padding: "14px 20px", marginBottom: 20,
               background: "rgba(15,23,42,0.7)", border: "1px solid rgba(129,140,248,0.2)",
               borderRadius: 10,
@@ -556,7 +590,7 @@ export default function ConfigPage() {
             </div>
 
             {/* ── Quick nav ── */}
-            <div style={{
+            <div className="config-nav-strip" style={{
               padding: "14px 18px",
               background: "rgba(15,23,42,0.55)", border: "1px solid rgba(71,85,105,0.2)",
               borderRadius: 10, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap",

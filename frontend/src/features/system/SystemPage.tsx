@@ -2,7 +2,9 @@ import { useEffect, useCallback, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import Header from "@/shared/components/Header";
+import PageTitle from "@/shared/components/PageTitle";
 import { useAppSession } from "@/shared/context/AppSessionContext";
+import "@/shared/styles/console-pages.css";
 import {
   getSystemInfoFull, getSystemHealth, getSliSnapshot, getMqStatus, getTaskStats, listUsers,
   type ApiSystemInfo, type ApiHealthStatus, type ApiSliSnapshot, type ApiMqStatus, type ApiTaskStats,
@@ -35,7 +37,7 @@ function Card({ title, children, accent = "rgba(34,211,238,0.35)" }: {
   title: string; children: React.ReactNode; accent?: string;
 }) {
   return (
-    <div style={{
+    <div className="system-panel" style={{
       background: "rgba(2,6,23,0.75)", borderRadius: 10,
       border: `1px solid ${accent}`,
       padding: "16px 20px",
@@ -96,7 +98,6 @@ const SystemPage = () => {
 
   useEffect(() => {
     if (!loggedIn) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     void refresh();
     const iv = window.setInterval(() => { void refresh(); }, 15000);
     return () => window.clearInterval(iv);
@@ -166,21 +167,16 @@ const SystemPage = () => {
   ];
 
   return (
-    <div style={{ minHeight: "100vh", background: "#020a12", paddingTop: 60 }}>
+    <div className="tg-console-page tg-console-page--system" style={{ minHeight: "100vh", background: "#020a12", paddingTop: 60 }}>
       <Header />
-      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "32px 24px 60px" }}>
+      <div className="tg-console-shell" style={{ maxWidth: 1100, margin: "0 auto", padding: "32px 24px 60px" }}>
 
-        {/* Page title */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
-          <div>
-            <h1 style={{ margin: 0, fontFamily: "monospace", fontSize: "1.5rem", fontWeight: 900, color: "#22d3ee", letterSpacing: "0.06em" }}>
-              系统状态
-            </h1>
-            <p style={{ margin: "4px 0 0", color: "#475569", fontFamily: "monospace", fontSize: 11 }}>
-              SYSTEM DASHBOARD · 平台健康监控与配置概览
-            </p>
-          </div>
-          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+        <PageTitle
+          eyebrow="TRUSTGUARD SYSTEM DASHBOARD"
+          title="系统状态"
+          description="平台健康监控、运行队列、任务统计与用户概览。"
+          actions={
+            <>
             {lastRefresh && (
               <span style={{ color: "#334155", fontFamily: "monospace", fontSize: 10 }}>
                 {lastRefresh.toLocaleTimeString("zh-CN")} 刷新
@@ -196,11 +192,12 @@ const SystemPage = () => {
                 fontFamily: "monospace", fontSize: 11, cursor: loading ? "default" : "pointer",
               }}
             >{loading ? "刷新中…" : "↻ 刷新"}</button>
-          </div>
-        </div>
+            </>
+          }
+        />
 
         {/* ── Top KPI row ─────────────────────────────────────────────── */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 12, marginBottom: 20 }}>
+        <div className="system-kpi-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 12, marginBottom: 20 }}>
           {[
             { label: "累计任务", value: totalTasks, color: "#22d3ee" },
             { label: "运行中",   value: runningTasks, color: "#fbbf24" },
@@ -209,7 +206,7 @@ const SystemPage = () => {
             { label: "平台用户", value: users.length, color: "#a78bfa" },
             { label: "活跃用户", value: users.filter((u) => u.status === "ACTIVE").length, color: "#38bdf8" },
           ].map((kpi) => (
-            <div key={kpi.label} style={{
+            <div className="system-kpi-card" key={kpi.label} style={{
               background: "rgba(2,6,23,0.75)", borderRadius: 8,
               border: `1px solid ${kpi.color}22`,
               padding: "14px 16px", textAlign: "center",
@@ -225,7 +222,7 @@ const SystemPage = () => {
         </div>
 
         {/* ── Main grid ────────────────────────────────────────────────── */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+        <div className="system-main-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
 
           {/* Service Health */}
           <Card title="服务健康状态" accent="rgba(34,211,238,0.3)">
@@ -350,7 +347,7 @@ const SystemPage = () => {
         </div>
 
         {/* ── Quick Navigation ─────────────────────────────────────────── */}
-        <div style={{ marginTop: 16, padding: "14px 18px", borderRadius: 10, background: "rgba(2,6,23,0.6)", border: "1px solid rgba(51,65,85,0.4)" }}>
+        <div className="system-nav-strip" style={{ marginTop: 16, padding: "14px 18px", borderRadius: 10, background: "rgba(2,6,23,0.6)", border: "1px solid rgba(51,65,85,0.4)" }}>
           <div style={{ color: "#475569", fontFamily: "monospace", fontSize: 10, marginBottom: 10 }}>快速操作</div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             {[

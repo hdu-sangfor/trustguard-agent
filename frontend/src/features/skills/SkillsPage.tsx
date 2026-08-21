@@ -7,7 +7,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import Header from "@/shared/components/Header";
+import PageTitle from "@/shared/components/PageTitle";
+import { DEMO_FALLBACK_ENABLED } from "@/shared/constants/demoFallback";
 import { getSkillRegistry, TRUSTGUARD_PHASES, type ApiSkillEntry } from "@/shared/lib/api";
+import "@/shared/styles/console-pages.css";
 
 // ─── Static skill descriptions (indexed by skill_id) ──────────────────────────
 const SKILL_META: Record<string, { desc: string; phases: string[]; tags: string[] }> = {
@@ -82,7 +85,7 @@ function SkillCard({ skill, meta }: { skill: ApiSkillEntry; meta: typeof SKILL_M
   const desc   = meta?.desc ?? skill.category;
 
   return (
-    <div style={{
+    <div className="skill-card" style={{
       background: "rgba(15,23,42,0.78)", border: "1px solid rgba(71,85,105,0.3)",
       borderRadius: 9, padding: "13px 15px",
       transition: "border-color 0.2s, box-shadow 0.2s",
@@ -156,11 +159,11 @@ export default function SkillsPage() {
         setSkills(enriched);
         setOnline(true);
       } else {
-        setSkills(DEMO_SKILLS);
+        setSkills(DEMO_FALLBACK_ENABLED ? DEMO_SKILLS : []);
         setOnline(false);
       }
     } catch {
-      setSkills(DEMO_SKILLS);
+      setSkills(DEMO_FALLBACK_ENABLED ? DEMO_SKILLS : []);
       setOnline(false);
     }
     setLoading(false);
@@ -194,27 +197,26 @@ export default function SkillsPage() {
   }, {});
 
   return (
-    <div style={{ minHeight: "100vh", background: "linear-gradient(180deg, #0a0f1e 0%, #0f172a 60%, #0a0f1e 100%)", paddingTop: 60 }}>
+    <div className="tg-console-page tg-console-page--skills" style={{ minHeight: "100vh", background: "linear-gradient(180deg, #0a0f1e 0%, #0f172a 60%, #0a0f1e 100%)", paddingTop: 60 }}>
       <Header />
 
-      <div style={{ maxWidth: 1400, margin: "0 auto", padding: "24px 20px 60px" }}>
+      <div className="tg-console-shell" style={{ maxWidth: 1400, margin: "0 auto", padding: "24px 20px 60px" }}>
 
-        {/* Page header */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24 }}>
-          <div>
-            <h1 style={{ margin: 0, fontFamily: "monospace", fontWeight: 900, fontSize: 22, color: "#e2e8f0", letterSpacing: "0.08em" }}>
-              技能注册表
-            </h1>
-            <div style={{ fontSize: 12, color: "rgba(148,163,184,0.55)", marginTop: 4, fontFamily: "monospace" }}>
-              SKILL REGISTRY · {loading ? "加载中…" : `${skills.length} 个安全技能容器`}
+        <PageTitle
+          eyebrow="TRUSTGUARD SKILL REGISTRY"
+          title="技能注册表"
+          description={
+            <>
+              {loading ? "加载中…" : `${skills.length} 个安全技能容器`}
               {online !== null && (
                 <span style={{ marginLeft: 12, color: online ? "rgba(52,211,153,0.8)" : "rgba(251,191,36,0.8)" }}>
-                  ● {online ? "实时注册表" : "演示数据"}
+                  ● {online ? "实时注册表" : DEMO_FALLBACK_ENABLED ? "演示数据" : "后端离线"}
                 </span>
               )}
-            </div>
-          </div>
-          <div style={{ display: "flex", gap: 10 }}>
+            </>
+          }
+          actions={
+            <>
             <button
               type="button"
               onClick={() => { void load(); }}
@@ -233,11 +235,12 @@ export default function SkillsPage() {
                 fontSize: 12, cursor: "pointer", fontFamily: "monospace",
               }}
             >平台管理 →</button>
-          </div>
-        </div>
+            </>
+          }
+        />
 
         {/* ── Stats bar ── */}
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 20 }}>
+        <div className="skill-phase-grid" style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 20 }}>
           {[
             { label: "全部技能", count: skills.length, color: "#64748b" },
             ...((TRUSTGUARD_PHASES as readonly string[]).map(ph => ({
@@ -246,7 +249,7 @@ export default function SkillsPage() {
               color: PHASE_COLORS[ph] ?? "#64748b",
             }))),
           ].map(({ label, count, color }) => (
-            <div key={label} style={{
+            <div className="skill-phase-card" key={label} style={{
               padding: "8px 14px", borderRadius: 8,
               background: "rgba(15,23,42,0.7)", border: `1px solid ${color}25`,
               display: "flex", alignItems: "center", gap: 8,
@@ -315,7 +318,7 @@ export default function SkillsPage() {
             没有匹配的技能
           </div>
         ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 12 }}>
+          <div className="skill-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 12 }}>
             {filtered.map(skill => (
               <SkillCard key={skill.skill_id} skill={skill} meta={SKILL_META[skill.skill_id]} />
             ))}
@@ -323,7 +326,7 @@ export default function SkillsPage() {
         )}
 
         {/* ── Platform note ── */}
-        <div style={{ marginTop: 32, padding: "14px 20px", borderRadius: 10, background: "rgba(15,23,42,0.5)", border: "1px solid rgba(71,85,105,0.2)", fontSize: 11, fontFamily: "monospace", color: "rgba(148,163,184,0.45)" }}>
+        <div className="skill-flow-note" style={{ marginTop: 32, padding: "14px 20px", borderRadius: 10, background: "rgba(15,23,42,0.5)", border: "1px solid rgba(71,85,105,0.2)", fontSize: 11, fontFamily: "monospace", color: "rgba(148,163,184,0.45)" }}>
           <span style={{ color: "#22d3ee", fontWeight: 700 }}>Skill Container 架构：</span>
           每个技能运行于独立 Docker 容器，由 LLM 状态机（Orchestrator）根据目标特征自动调度。
           技能通过 <span style={{ color: "#94a3b8" }}>docker/tools_registry.yaml</span> 注册，输出遵循统一 JSON 契约，

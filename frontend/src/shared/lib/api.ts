@@ -1,6 +1,6 @@
 /**
- * API client for the TrustGuard gateway backend (port 18080).
- * Dev: requests are proxied from /api → http://localhost:18080 via vite.config.ts.
+ * API client for the TrustGuard gateway backend.
+ * Dev: requests are proxied from /api → http://localhost:8100 by default via vite.config.ts.
  * Prod: configure VITE_API_BASE env var or serve frontend from the same origin.
  */
 
