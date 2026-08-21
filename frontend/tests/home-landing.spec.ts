@@ -31,11 +31,69 @@ test("首页沿用产品菜单而不显示独立落地页菜单", async ({ page 
 });
 
 test("首页沿用原产品的浅色背景和蓝色强调色", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("sentinel_theme_mode_v1", "light");
+  });
   await page.goto("/");
   const hero = page.getByLabel("让每一次安全测试，都有计划、有边界、有证据。");
 
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   await expect(page.locator(".landing-page")).toHaveCSS("background-color", "rgb(244, 247, 251)");
   await expect(hero.getByRole("link", { name: "开始安全任务" })).toHaveCSS("background-color", "rgb(3, 105, 161)");
+});
+
+test("首页暗色模式覆盖主要内容区域", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("sentinel_theme_mode_v1", "dark");
+  });
+  await page.goto("/");
+
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await expect(page.locator(".landing-page")).toHaveCSS("background-color", "rgb(2, 10, 18)");
+  await expect(page.locator(".landing-advantages")).not.toHaveCSS("background-color", "rgba(255, 255, 255, 0.54)");
+  await expect(page.locator(".landing-domains")).not.toHaveCSS("background-color", "rgb(248, 250, 252)");
+  await expect(page.locator(".landing-workflow-stage")).not.toHaveCSS("background-color", "rgb(238, 246, 255)");
+  await expect(page.locator(".landing-architecture")).not.toHaveCSS("background-color", "rgb(238, 246, 255)");
+  await expect(page.locator(".landing-experience")).not.toHaveCSS("background-color", "rgb(248, 250, 252)");
+});
+
+test("Hero 不展示右上角装饰编号", async ({ page }) => {
+  await page.goto("/");
+
+  await expect(page.locator(".landing-hero-number")).toHaveCount(0);
+});
+
+test("Hero 右侧展示项目标志且不遮挡 CTA", async ({ page }) => {
+  await page.goto("/");
+
+  const visual = page.locator(".landing-hero-visual");
+  await expect(visual).toHaveCount(1);
+  const logo = visual.locator("img");
+  await expect(logo).toBeVisible();
+  await expect(logo).toHaveAttribute("alt", "");
+  await expect(page.getByLabel("让每一次安全测试，都有计划、有边界、有证据。").getByRole("link", { name: "开始安全任务" })).toBeVisible();
+});
+
+test("桌面 Hero 标志位于文案右侧不重叠", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto("/");
+
+  const copy = await page.locator(".landing-hero-copy").boundingBox();
+  const visual = await page.locator(".landing-hero-visual").boundingBox();
+  expect(copy).not.toBeNull();
+  expect(visual).not.toBeNull();
+  expect((visual?.x ?? 0)).toBeGreaterThan((copy?.x ?? 0) + (copy?.width ?? 0));
+});
+
+test("暗色下 03/06 区块背景与整页底色区分开", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("sentinel_theme_mode_v1", "dark");
+  });
+  await page.goto("/");
+
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await expect(page.locator(".landing-domains")).not.toHaveCSS("background-color", "rgb(2, 10, 18)");
+  await expect(page.locator(".landing-experience")).not.toHaveCSS("background-color", "rgb(2, 10, 18)");
 });
 
 test("移动端主标题的三条语义不会被再次拆行", async ({ page }) => {
@@ -87,11 +145,12 @@ test("滚轮推进时会在六阶段安全流程中切换", async ({ page }) => 
     const rect = element.getBoundingClientRect();
     return { top: rect.top + window.scrollY, height: rect.height };
   });
-  await page.evaluate(({ top, height }) => {
+  await page.evaluate(async ({ top, height }) => {
     window.scrollTo(0, top + (height - window.innerHeight) * 0.52);
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   }, bounds);
 
-  await expect(workflow).toHaveAttribute("data-active-step", "4");
+  await expect.poll(async () => workflow.getAttribute("data-active-step")).toBe("4");
   await expect(workflow.locator(".landing-workflow-stage")).toBeInViewport();
   await expect(workflow.getByRole("heading", { name: "授权验证" })).toBeVisible();
 });

@@ -4,6 +4,7 @@ import { ArrowDown, ArrowRight, Check, ShieldCheck } from "lucide-react";
 import gsap from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import Header from "@/shared/components/Header";
+import mainLogoSrc from "@/shared/assets/main.jpg";
 import "./Index.css";
 
 gsap.registerPlugin(ScrollTrigger);
@@ -342,7 +343,9 @@ export default function IndexPage() {
                 </div>
               </div>
             </div>
-            <span className="landing-hero-number" aria-hidden="true">01</span>
+            <div className="landing-hero-visual" aria-hidden="true">
+              <img src={mainLogoSrc} alt="" />
+            </div>
           </div>
         </section>
 
