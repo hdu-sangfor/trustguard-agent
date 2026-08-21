@@ -64,3 +64,14 @@ jobs:
         env:
           PYTHONPATH: .
         run: uv run --locked --no-dev --no-sync python -c "import app.main"
+
+      - name: Run alert triage unit tests
+        working-directory: orchestrator
+        env:
+          PYTHONPATH: ${{ github.workspace }}/orchestrator:${{ github.workspace }}/orchestrator/app
+        run: >-
+          uv run --locked --no-sync --with pytest --with pytest-asyncio
+          pytest -c ../tests/pytest.ini
+          ../tests/unit/alert_triage
+          ../tests/unit/orchestrator/api/test_alert_triage_persistence_unit.py
+          -q

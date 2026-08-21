@@ -1,21 +1,26 @@
 from __future__ import annotations
 
 import os
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query, Request
 
 from app.audit import record_audit
 from app.clients.rag_client import rag_client
 from app.responses import ok
 from app.schemas.knowledge import (
+    ExperienceFeedbackRequest,
+    ExperienceStatusUpdateRequest,
+    ExperienceUpsertRequest,
     IngestConflictResolveRequest,
     KnowledgeBaseCreateRequest,
     KnowledgeBaseUpdateRequest,
     KnowledgeDocumentUpdateRequest,
     KnowledgeCrawlerCreateRequest,
     KnowledgeCrawlerReviewRequest,
+    KnowledgeScopeName,
+    KnowledgeScopeUpdateRequest,
     RagAnswerRequest,
     RagSearchRequest,
 )
@@ -36,6 +41,10 @@ KnowledgeManager = Annotated[
 ]
 
 router = APIRouter(prefix="/api/v1/knowledge", tags=["knowledge"])
+
+
+def _idempotency_headers(value: str | None) -> dict[str, str] | None:
+    return {"Idempotency-Key": value} if value else None
 
 
 def _safe_upload_filename(filename: str) -> str:
@@ -784,3 +793,172 @@ async def stop_knowledge_crawler_job(
     return await _control_knowledge_crawler_job(
         job_id, "stop", actor, knowledge_base_id, stop_schedule=stop_schedule
     )
+
+
+@router.get("/scopes")
+async def list_knowledge_scopes(_user: KnowledgeReader) -> dict[str, Any]:
+    return ok(
+        await rag_client.request(
+            "GET",
+            "/v1/knowledge-scopes",
+            timeout=10.0,
+        )
+    )
+
+
+@router.get("/scopes/{scope}")
+async def get_knowledge_scope(
+    scope: KnowledgeScopeName,
+    _user: KnowledgeReader,
+) -> dict[str, Any]:
+    return ok(
+        await rag_client.request(
+            "GET",
+            f"/v1/knowledge-scopes/{quote(scope, safe='')}",
+            timeout=10.0,
+        )
+    )
+
+
+@router.put("/scopes/{scope}")
+async def replace_knowledge_scope(
+    scope: KnowledgeScopeName,
+    request: KnowledgeScopeUpdateRequest,
+    actor: KnowledgeManager,
+) -> dict[str, Any]:
+    result = await rag_client.request(
+        "PUT",
+        f"/v1/knowledge-scopes/{quote(scope, safe='')}",
+        json_body=request.model_dump(mode="json"),
+        timeout=15.0,
+    )
+    record_audit("KNOWLEDGE_SCOPE_UPDATED", actor.username, scope)
+    return ok(result)
+
+
+@router.delete("/scopes/{scope}")
+async def clear_knowledge_scope(
+    scope: KnowledgeScopeName,
+    actor: KnowledgeManager,
+) -> dict[str, Any]:
+    result = await rag_client.request(
+        "DELETE",
+        f"/v1/knowledge-scopes/{quote(scope, safe='')}",
+        timeout=15.0,
+    )
+    record_audit("KNOWLEDGE_SCOPE_CLEARED", actor.username, scope)
+    return ok(result)
+
+
+@router.get("/experiences")
+async def list_experiences(
+    _user: KnowledgeManager,
+    status: Literal[
+        "candidate", "pending", "proven", "deprecated", "archived"
+    ]
+    | None = Query(default=None),
+    workflow_type: Literal["penetration", "alert-triage"] | None = Query(
+        default=None
+    ),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> dict[str, Any]:
+    params: dict[str, Any] = {"limit": limit, "offset": offset}
+    if status:
+        params["status"] = status
+    if workflow_type:
+        params["workflow_type"] = workflow_type
+    return ok(
+        await rag_client.request(
+            "GET",
+            "/v1/experiences",
+            params=params,
+            timeout=10.0,
+        )
+    )
+
+
+@router.get("/experiences/{experience_id}")
+async def get_experience(
+    experience_id: Annotated[str, Path(min_length=1, max_length=128)],
+    _user: KnowledgeManager,
+) -> dict[str, Any]:
+    return ok(
+        await rag_client.request(
+            "GET",
+            f"/v1/experiences/{quote(experience_id, safe='')}",
+            timeout=10.0,
+        )
+    )
+
+
+@router.put("/experiences/{external_id}")
+async def upsert_experience(
+    external_id: Annotated[str, Path(min_length=1, max_length=128)],
+    request: ExperienceUpsertRequest,
+    actor: KnowledgeManager,
+    idempotency_key: Annotated[
+        str | None,
+        Header(alias="Idempotency-Key", min_length=1, max_length=128),
+    ] = None,
+) -> dict[str, Any]:
+    if request.external_id != external_id:
+        raise HTTPException(status_code=422, detail="路径与请求体 external_id 必须一致")
+    result = await rag_client.request(
+        "PUT",
+        f"/v1/experiences/{quote(external_id, safe='')}",
+        json_body=request.model_dump(mode="json"),
+        extra_headers=_idempotency_headers(idempotency_key),
+        timeout=20.0,
+    )
+    record_audit("EXPERIENCE_UPSERTED", actor.username, external_id)
+    return ok(result)
+
+
+@router.post("/experiences/{experience_id}/feedback")
+async def submit_experience_feedback(
+    experience_id: Annotated[str, Path(min_length=1, max_length=128)],
+    request: ExperienceFeedbackRequest,
+    actor: KnowledgeManager,
+    idempotency_key: Annotated[
+        str | None,
+        Header(alias="Idempotency-Key", min_length=1, max_length=128),
+    ] = None,
+) -> dict[str, Any]:
+    if request.experience_id != experience_id:
+        raise HTTPException(status_code=422, detail="路径与请求体 experience_id 必须一致")
+    result = await rag_client.request(
+        "POST",
+        f"/v1/experiences/{quote(experience_id, safe='')}/feedback",
+        json_body=request.model_dump(mode="json"),
+        extra_headers=_idempotency_headers(idempotency_key),
+        timeout=15.0,
+    )
+    record_audit(
+        "EXPERIENCE_FEEDBACK_RECORDED",
+        actor.username,
+        experience_id,
+        request.event_id,
+    )
+    return ok(result)
+
+
+@router.patch("/experiences/{experience_id}/status")
+async def update_experience_status(
+    experience_id: Annotated[str, Path(min_length=1, max_length=128)],
+    request: ExperienceStatusUpdateRequest,
+    actor: KnowledgeManager,
+) -> dict[str, Any]:
+    result = await rag_client.request(
+        "PATCH",
+        f"/v1/experiences/{quote(experience_id, safe='')}/status",
+        json_body=request.model_dump(mode="json"),
+        timeout=20.0,
+    )
+    record_audit(
+        "EXPERIENCE_STATUS_UPDATED",
+        actor.username,
+        experience_id,
+        request.status,
+    )
+    return ok(result)

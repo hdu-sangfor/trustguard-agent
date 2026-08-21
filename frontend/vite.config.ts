@@ -31,6 +31,10 @@ export default defineConfig(({ mode }) => {
       open: true, // 自动打开
       host: true,  // 允许局域网访问
       proxy: {
+        '/api/xdr-proxy': {
+          target: 'http://localhost:18090',
+          changeOrigin: true,
+        },
         '/api': {
           target: gatewayTarget,
           changeOrigin: true,

@@ -64,3 +64,9 @@ jobs:
         env:
           PYTHONPATH: .
         run: uv run --locked --no-dev --no-sync python -c "import app.main"
+
+      - name: Run gateway unit tests
+        working-directory: gateway
+        run: >-
+          uv run --locked --no-sync --with pytest --with pytest-asyncio
+          pytest -c ../tests/pytest.ini ../tests/unit/gateway -q

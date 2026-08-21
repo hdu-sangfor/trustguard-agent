@@ -1,16 +1,14 @@
 import json
-
 import pytest
-
 from tests.orchestrator_test_env import prepare_orchestrator_app_import
 
 prepare_orchestrator_app_import()
-
 from app.clients import llm_client
 
 
 @pytest.mark.asyncio
-async def test_openai_decision_requests_disable_thinking_on_format_retry(monkeypatch):
+@pytest.mark.parametrize("model_id", ["deepseek-v4-flash", "deepseek-v4-pro"])
+async def test_openai_decision_requests_disable_thinking_on_format_retry(monkeypatch, model_id):
     payloads = []
 
     async def fake_stream(_cfg, _headers, payload):
@@ -30,13 +28,12 @@ async def test_openai_decision_requests_disable_thinking_on_format_retry(monkeyp
 
     monkeypatch.setattr(llm_client, "_stream_chat_completions_collect", fake_stream)
     monkeypatch.setattr(llm_client, "_emit_llm_trace", fake_emit_trace)
-
     cfg = llm_client.LLMProviderConfig(
         provider=llm_client.LLMProvider.OPENAI_COMPAT,
         provider_source="openai_compat",
         base_url="https://api.deepseek.com",
         api_key="test-key",
-        model_id="deepseek-v4-flash",
+        model_id=model_id,
         connect_timeout=1,
         read_timeout=1,
         max_retries=1,
@@ -45,7 +42,6 @@ async def test_openai_decision_requests_disable_thinking_on_format_retry(monkeyp
         format_retries=1,
         json_mode=True,
     )
-
     parsed, usage = await llm_client._run_decision_llm_parse_loop(
         "task-test",
         cfg,
@@ -53,7 +49,6 @@ async def test_openai_decision_requests_disable_thinking_on_format_retry(monkeyp
         "user",
         parse_content,
     )
-
     assert parsed == {"ok": True}
     assert usage is None
     assert [payload["thinking"] for payload in payloads] == [
@@ -63,7 +58,8 @@ async def test_openai_decision_requests_disable_thinking_on_format_retry(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_non_deepseek_decision_request_does_not_send_thinking(monkeypatch):
+@pytest.mark.parametrize("model_id", ["gpt-test", "deepseek-v4-chat"])
+async def test_non_allowlisted_decision_request_does_not_send_thinking(monkeypatch, model_id):
     payloads = []
 
     async def fake_stream(_cfg, _headers, payload):
@@ -75,13 +71,12 @@ async def test_non_deepseek_decision_request_does_not_send_thinking(monkeypatch)
 
     monkeypatch.setattr(llm_client, "_stream_chat_completions_collect", fake_stream)
     monkeypatch.setattr(llm_client, "_emit_llm_trace", fake_emit_trace)
-
     cfg = llm_client.LLMProviderConfig(
         provider=llm_client.LLMProvider.OPENAI_COMPAT,
         provider_source="openai_compat",
         base_url="https://api.openai.com/v1",
         api_key="test-key",
-        model_id="gpt-test",
+        model_id=model_id,
         connect_timeout=1,
         read_timeout=1,
         max_retries=1,
@@ -90,7 +85,6 @@ async def test_non_deepseek_decision_request_does_not_send_thinking(monkeypatch)
         format_retries=0,
         json_mode=True,
     )
-
     parsed, _usage = await llm_client._run_decision_llm_parse_loop(
         "task-test",
         cfg,
@@ -98,6 +92,5 @@ async def test_non_deepseek_decision_request_does_not_send_thinking(monkeypatch)
         "user",
         lambda content: (json.loads(content), ""),
     )
-
     assert parsed == {"ok": True}
     assert "thinking" not in payloads[0]

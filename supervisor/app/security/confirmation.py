@@ -13,7 +13,7 @@ from typing import Any, Protocol
 
 from fastapi import HTTPException
 
-from app.domain.models import PentestDraft
+from app.domain.models import AlertTriageDraft, PentestDraft, WorkflowDraft
 
 
 def _b64(value: bytes) -> str:
@@ -28,7 +28,7 @@ def _secret() -> bytes:
     return (os.getenv("SUPERVISOR_CONFIRMATION_SECRET") or "trustguard-supervisor-dev-secret").encode()
 
 
-def _draft_hash(draft: PentestDraft) -> str:
+def _draft_hash(draft: WorkflowDraft) -> str:
     return hashlib.sha256(draft.model_dump_json().encode()).hexdigest()
 
 
@@ -37,7 +37,7 @@ class DraftRecord:
     draft_id: str
     conversation_id: str
     actor_id: str
-    draft: PentestDraft
+    draft: WorkflowDraft
     confirmation_state: str = "AVAILABLE"
     claim_key: str = ""
     claimed_until: int = 0
@@ -47,7 +47,7 @@ class DraftRecord:
 class DraftStoreProtocol(Protocol):
     backend: str
 
-    def put(self, conversation_id: str, actor_id: str, draft: PentestDraft) -> tuple[DraftRecord, str]: ...
+    def put(self, conversation_id: str, actor_id: str, draft: WorkflowDraft) -> tuple[DraftRecord, str]: ...
     def claim(self, token: str, actor_id: str, idempotency_key: str) -> DraftRecord: ...
     def complete(self, draft_id: str, actor_id: str, idempotency_key: str, task_id: str) -> DraftRecord: ...
 
@@ -98,7 +98,7 @@ class DraftStore(_TokenMixin):
         self._items: dict[str, DraftRecord] = {}
         self._lock = threading.RLock()
 
-    def put(self, conversation_id: str, actor_id: str, draft: PentestDraft) -> tuple[DraftRecord, str]:
+    def put(self, conversation_id: str, actor_id: str, draft: WorkflowDraft) -> tuple[DraftRecord, str]:
         record = DraftRecord("draft-" + uuid.uuid4().hex, conversation_id, actor_id, draft)
         with self._lock:
             self._items[record.draft_id] = record
@@ -159,18 +159,28 @@ class RedisDraftStore(_TokenMixin):
     def _from_hash(draft_id: str, data: dict[str, str]) -> DraftRecord | None:
         if not data:
             return None
+        raw_draft = data.get("draft_json") or "{}"
+        try:
+            draft_data = json.loads(raw_draft)
+        except json.JSONDecodeError:
+            draft_data = {}
+        draft: WorkflowDraft
+        if draft_data.get("workflow_id") == "alert_triage" or "alert_uuid" in draft_data:
+            draft = AlertTriageDraft.model_validate(draft_data)
+        else:
+            draft = PentestDraft.model_validate(draft_data)
         return DraftRecord(
             draft_id=draft_id,
             conversation_id=data.get("conversation_id") or "",
             actor_id=data.get("actor_id") or "",
-            draft=PentestDraft.model_validate_json(data.get("draft_json") or "{}"),
+            draft=draft,
             confirmation_state=data.get("confirmation_state") or "AVAILABLE",
             claim_key=data.get("claim_key") or "",
             claimed_until=int(data.get("claimed_until") or 0),
             task_id=data.get("task_id") or "",
         )
 
-    def put(self, conversation_id: str, actor_id: str, draft: PentestDraft) -> tuple[DraftRecord, str]:
+    def put(self, conversation_id: str, actor_id: str, draft: WorkflowDraft) -> tuple[DraftRecord, str]:
         record = DraftRecord("draft-" + uuid.uuid4().hex, conversation_id, actor_id, draft)
         key = self._key(record.draft_id)
         self._client.hset(key, mapping={
