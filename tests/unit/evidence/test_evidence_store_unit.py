@@ -118,3 +118,48 @@ def test_get_context_empty(client):
     r = client.get("/internal/tasks/task-xyz/context")
     assert r.status_code == 200
     assert r.json() == {}
+
+
+def test_batch_get_contexts_deduplicates_ids_and_returns_decoded_contexts(client):
+    captured: dict[str, object] = {}
+
+    def fake_query(sql: str, params: tuple = ()) -> list[dict]:
+        captured["sql"] = sql
+        captured["params"] = params
+        return [
+            {
+                "task_id": "at-1",
+                "context_json": '{"alert_triage":{"verdict":"suspicious"}}',
+            }
+        ]
+
+    with patch.object(evidence_main, "_query", side_effect=fake_query):
+        r = client.post(
+            "/internal/tasks/contexts:batch",
+            json={"task_ids": ["at-1", " at-1 ", "at-2"]},
+        )
+
+    assert r.status_code == 200
+    assert r.json() == {"at-1": {"alert_triage": {"verdict": "suspicious"}}}
+    assert captured["params"] == ("at-1", "at-2")
+    assert str(captured["sql"]).count("%s") == 2
+
+
+def test_list_tasks_sorts_skinny_rows_before_reading_large_json(client):
+    queries: list[str] = []
+
+    def fake_query(sql: str, params: tuple = ()) -> list[dict]:
+        queries.append(sql)
+        return []
+
+    with patch.object(evidence_main, "_query", side_effect=fake_query):
+        r = client.get("/internal/tasks?limit=200")
+
+    assert r.status_code == 200
+    assert r.json() == []
+    context_sql = next(sql for sql in queries if "tg_task_context AS ctx" in sql)
+    trace_sql = next(sql for sql in queries if "tg_trace_events AS events" in sql)
+    assert "SELECT task_id, updated_at" in context_sql
+    assert "context_json" not in context_sql.split("FROM (", 1)[1].split(") AS recent", 1)[0]
+    assert "SELECT id, created_at" in trace_sql
+    assert "payload" not in trace_sql.split("FROM (", 1)[1].split(") AS recent", 1)[0]

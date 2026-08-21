@@ -49,6 +49,7 @@ START_TIME = datetime.now(timezone.utc)
 PHASE_ORDER = ["RECON", "THREAT_MODEL", "VULN_SCAN", "EXPLOIT", "REPORT", "DONE"]
 STATUS_VALUES = ["PENDING", "RUNNING", "PAUSED", "DONE", "FAILED", "CANCELLED"]
 _EXECUTION_POLICY_SCHEMA_READY = False
+_ALERT_TRIAGE_REVIEW_SCHEMA_READY = False
 
 app = FastAPI(title="TrustGuard Gateway", version="1.0.0")
 app.include_router(knowledge_router)
@@ -120,9 +121,11 @@ def _limit(value: int | None, default: int, max_value: int = 1000) -> int:
 
 
 def _task_row_to_api(row: dict[str, Any]) -> dict[str, Any]:
+    task_id = row.get("task_id") or ""
     return {
         "id": int(row.get("id") or 0),
-        "taskId": row.get("task_id") or "",
+        "taskId": task_id,
+        "workflowId": "alert_triage" if str(task_id).startswith("at-") else "pentest",
         "name": row.get("name") or "",
         "target": row.get("target") or "",
         "description": row.get("description") or "",
@@ -175,6 +178,237 @@ def _sync_task_state(task_id: str, state: dict[str, Any] | None) -> None:
     parts.append("updated_at = NOW()")
     params.append(task_id)
     _execute(f"UPDATE tg_task SET {', '.join(parts)} WHERE task_id = %s", tuple(params))
+
+
+def _triage_severity(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return max(0, min(5, int(value)))
+    if isinstance(value, str):
+        return {"critical": 5, "high": 4, "medium": 3, "low": 2, "info": 1}.get(value.strip().lower())
+    return None
+
+
+def _triage_task_to_api(state: dict[str, Any] | None, row: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Expose one stable camelCase contract to the triage UI.
+
+    Internal graph state and the persisted result intentionally remain snake_case;
+    all conversion is centralized here so list/detail/create endpoints agree.
+    """
+    state = state or {}
+    row = row or {}
+    result = state.get("result") if isinstance(state.get("result"), dict) else {}
+
+    def from_state(name: str, default: Any = None) -> Any:
+        value = state.get(name)
+        return result.get(name, default) if value is None else value
+
+    status = str(state.get("status") or row.get("status") or "PENDING").upper()
+    if status not in STATUS_VALUES:
+        status = "FAILED"
+    confidence_value = from_state("confidence")
+    confidence = float(confidence_value) if isinstance(confidence_value, (int, float)) and not isinstance(confidence_value, bool) else None
+    alert = state.get("alert") if isinstance(state.get("alert"), dict) else {}
+    raw_whitelists = state.get("whitelist_matches")
+    if not isinstance(raw_whitelists, list):
+        raw_whitelists = [{"id": item} for item in (from_state("matched_whitelists", []) or [])]
+    raw_incidents = state.get("related_incidents")
+    if not isinstance(raw_incidents, list):
+        raw_incidents = []
+    if raw_incidents and not isinstance(raw_incidents[0], dict):
+        raw_incidents = [{"uuid": item} for item in raw_incidents]
+    raw_actions = from_state("recommended_actions", []) or []
+    raw_citations = from_state("rag_citations", []) or []
+    finished_at = state.get("finished_at") or result.get("finished_at")
+    if not finished_at and status in ("DONE", "FAILED"):
+        finished_at = row.get("updated_at")
+    rag_degraded = bool(state.get("rag_degraded", False))
+    warnings = list(state.get("warnings") or result.get("warnings") or [])
+
+    return {
+        "taskId": state.get("task_id") or row.get("task_id") or "",
+        "workflowId": "alert_triage",
+        "alertUuid": state.get("alert_uuid") or row.get("target") or "",
+        "status": status,
+        "verdict": from_state("verdict"),
+        "confidence": confidence,
+        "severity": _triage_severity(from_state("severity")),
+        "summary": str(from_state("summary", "") or ""),
+        "reasoning": str(from_state("reasoning", "") or ""),
+        "ragEnabled": bool(state.get("enable_rag", False)),
+        "createdAt": _dt_iso(state.get("created_at") or row.get("created_at")) or "",
+        "finishedAt": _dt_iso(finished_at),
+        "alertSummary": {
+            "name": alert.get("name") or alert.get("title") or "",
+            "uuId": state.get("alert_uuid") or row.get("target") or "",
+            "severity": _triage_severity(alert.get("severity")),
+            "threatDefine": alert.get("threat_define"),
+            "direction": alert.get("direction"),
+            "proofType": alert.get("proof_type") or alert.get("proofType"),
+            "proofSummary": alert.get("proof_summary") or alert.get("proofSummary") or "",
+        } if alert else None,
+        "matchedWhitelists": raw_whitelists,
+        "relatedIncidents": [
+            {
+                "uuId": item.get("uuid") or item.get("uuId") or item.get("id") or "",
+                "name": item.get("name") or item.get("title") or item.get("uuid") or item.get("uuId") or item.get("id") or "",
+                "severity": _triage_severity(item.get("severity")),
+            }
+            for item in raw_incidents if isinstance(item, dict)
+        ],
+        "recommendedActions": [
+            {
+                "action": str(item.get("action") or ""),
+                "label": str(item.get("action") or ""),
+                "category": {
+                    "auto": "safe_auto",
+                    "manual_confirm": "manual_required",
+                    "forbidden": "forbidden",
+                }.get(str(item.get("execution_level") or "manual_confirm"), "manual_required"),
+                "description": str(item.get("rationale") or ""),
+            }
+            for item in raw_actions if isinstance(item, dict)
+        ],
+        "warnings": warnings,
+        "missingEvidence": list(from_state("missing_evidence", []) or []),
+        "enrichmentEvidence": list(from_state("enrichment_evidence", []) or []),
+        "ragCitations": raw_citations if isinstance(raw_citations, list) else [],
+        "ragDegraded": rag_degraded,
+        "ragNote": (
+            next(
+                (
+                    str(item)
+                    for item in warnings
+                    if str(item).startswith(("RAG_", "MCP_"))
+                ),
+                None,
+            )
+            if rag_degraded
+            else None
+        ),
+        "errors": list(state.get("validation_errors") or []),
+    }
+
+
+def _triage_terminal_text(
+    task_id: str,
+    status: str,
+    state: dict[str, Any] | None,
+    *,
+    phase: str = "",
+    detail: str = "",
+) -> str:
+    if status == "FAILED":
+        text = f"告警研判任务 {task_id} 执行失败，停止在 {phase or '当前'} 阶段。"
+        if detail:
+            text += f" 原因：{detail}"
+        return text + " 你可以查看执行轨迹定位失败步骤。"
+    if status == "CANCELLED":
+        return f"告警研判任务 {task_id} 已取消。"
+    if status != "DONE":
+        return f"告警研判任务 {task_id} 已结束，状态：{status}。请查看执行轨迹定位原因。"
+    state = state or {}
+    result = state.get("result") if isinstance(state.get("result"), dict) else {}
+    verdict = str(result.get("verdict") or state.get("verdict") or "insufficient_evidence")
+    verdict_label = {
+        "true_positive": "真实攻击",
+        "false_positive": "误报",
+        "suspicious": "可疑，需人工复核",
+        "insufficient_evidence": "证据不足",
+    }.get(verdict, verdict)
+    confidence = result.get("confidence", state.get("confidence"))
+    confidence_text = f"{float(confidence):.0%}" if isinstance(confidence, (int, float)) else "未提供"
+    summary = str(result.get("summary") or state.get("summary") or "").strip()
+    refs = result.get("xdr_evidence_refs") or result.get("xdrEvidenceRefs") or []
+    ref_ids = [
+        f"{item.get('source')}:{item.get('uuid')}"
+        for item in refs[:8]
+        if isinstance(item, dict) and item.get("source") and item.get("uuid")
+    ]
+    actions = result.get("recommended_actions") or result.get("recommendedActions") or []
+    lines = [
+        f"告警研判任务 {task_id} 已完成。",
+        f"结论：{verdict_label}（{verdict}），置信度：{confidence_text}。",
+    ]
+    if summary:
+        lines.append(f"判断摘要：{summary}")
+    if ref_ids:
+        lines.append("关键证据：" + "、".join(ref_ids))
+    if actions:
+        action_text = "；".join(
+            str(item.get("action") or "") for item in actions[:3] if isinstance(item, dict)
+        )
+        if action_text:
+            lines.append("建议动作（均需人工确认）：" + action_text)
+    lines.append("以上为基于 XDR 证据的研判建议，Agent 未执行隔离、封禁或关闭告警等写操作。")
+    return "\n".join(lines)
+
+
+async def _get_alert_triage_state(task_id: str) -> dict[str, Any] | None:
+    try:
+        state = await _orch("GET", f"{ORCH_ALERT_TRIAGE_PATH}/tasks/{task_id}", timeout=10.0)
+        return state if isinstance(state, dict) else None
+    except Exception:
+        try:
+            context = await _evidence("GET", f"/internal/tasks/{task_id}/context")
+            state = context.get("alert_triage") if isinstance(context, dict) else None
+            return state if isinstance(state, dict) else None
+        except Exception:
+            return None
+
+
+async def _get_alert_triage_states(task_ids: list[str]) -> dict[str, dict[str, Any]]:
+    """Batch-load persisted triage states, with a bounded live fallback."""
+    if not task_ids:
+        return {}
+    states: dict[str, dict[str, Any]] = {}
+    try:
+        contexts = await _evidence(
+            "POST",
+            "/internal/tasks/contexts:batch",
+            json_body={"task_ids": task_ids},
+            timeout=15.0,
+        )
+        if isinstance(contexts, dict):
+            for task_id, context in contexts.items():
+                state = context.get("alert_triage") if isinstance(context, dict) else None
+                if task_id in task_ids and isinstance(state, dict):
+                    states[task_id] = state
+    except Exception as exc:
+        log.warning("batch alert triage context lookup failed: %s", exc)
+
+    missing = [task_id for task_id in task_ids if task_id not in states]
+    semaphore = asyncio.Semaphore(10)
+
+    async def fetch_live(task_id: str) -> tuple[str, dict[str, Any] | None]:
+        async with semaphore:
+            try:
+                state = await _orch(
+                    "GET",
+                    f"{ORCH_ALERT_TRIAGE_PATH}/tasks/{task_id}",
+                    timeout=10.0,
+                )
+                return task_id, state if isinstance(state, dict) else None
+            except Exception:
+                return task_id, None
+
+    if missing:
+        for task_id, state in await asyncio.gather(*(fetch_live(task_id) for task_id in missing)):
+            if state is not None:
+                states[task_id] = state
+    return states
+
+
+async def _run_alert_triage_in_background(task_id: str) -> None:
+    """Run the long-lived workflow after the create response has returned."""
+    try:
+        _execute("UPDATE tg_task SET status = 'RUNNING', updated_at = NOW() WHERE task_id = %s", (task_id,))
+        result = await _orch("POST", f"{ORCH_ALERT_TRIAGE_PATH}/tasks/{task_id}/run", timeout=300.0)
+        _sync_task_state(task_id, result if isinstance(result, dict) else None)
+    except Exception:
+        log.exception("alert triage background run failed task_id=%s", task_id)
+        _execute("UPDATE tg_task SET status = 'FAILED', updated_at = NOW() WHERE task_id = %s", (task_id,))
 
 
 async def _orch(method: str, path: str, *, json_body: Any = None, params: dict[str, Any] | None = None, headers: dict[str, str] | None = None, timeout: float = 30.0) -> Any:
@@ -389,6 +623,61 @@ def _ensure_execution_policy_schema() -> None:
     _EXECUTION_POLICY_SCHEMA_READY = True
 
 
+def _ensure_alert_triage_review_schema() -> None:
+    global _ALERT_TRIAGE_REVIEW_SCHEMA_READY
+    if _ALERT_TRIAGE_REVIEW_SCHEMA_READY:
+        return
+    _execute(
+        """
+        CREATE TABLE IF NOT EXISTS tg_alert_triage_review (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            review_id VARCHAR(64) NOT NULL,
+            task_id VARCHAR(64) NOT NULL,
+            reviewer_user_id VARCHAR(64) NOT NULL,
+            reviewer_username VARCHAR(128) NOT NULL,
+            decision VARCHAR(32) NOT NULL,
+            human_verdict VARCHAR(32) NULL,
+            notes TEXT NULL,
+            selected_actions JSON NULL,
+            created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+            UNIQUE KEY uk_alert_triage_review_id (review_id),
+            INDEX idx_alert_triage_review_task (task_id, created_at),
+            INDEX idx_alert_triage_review_user (reviewer_user_id, created_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """
+    )
+    _ALERT_TRIAGE_REVIEW_SCHEMA_READY = True
+
+
+def _alert_triage_review_to_api(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "reviewId": row.get("review_id") or "",
+        "taskId": row.get("task_id") or "",
+        "reviewerUserId": row.get("reviewer_user_id") or "",
+        "reviewerUsername": row.get("reviewer_username") or "",
+        "decision": row.get("decision") or "",
+        "humanVerdict": row.get("human_verdict"),
+        "notes": row.get("notes") or "",
+        "selectedActions": _json_loads(row.get("selected_actions"), []),
+        "createdAt": _dt_iso(row.get("created_at")) or "",
+    }
+
+
+def _list_alert_triage_reviews(task_id: str) -> list[dict[str, Any]]:
+    _ensure_alert_triage_review_schema()
+    rows = _query(
+        """
+        SELECT review_id, task_id, reviewer_user_id, reviewer_username,
+               decision, human_verdict, notes, selected_actions, created_at
+        FROM tg_alert_triage_review
+        WHERE task_id = %s
+        ORDER BY created_at ASC, id ASC
+        """,
+        (task_id,),
+    )
+    return [_alert_triage_review_to_api(row) for row in rows]
+
+
 async def _create_task_impl(
     req: CreateTaskRequest,
     *,
@@ -455,7 +744,10 @@ async def create_task(req: CreateTaskRequest) -> dict[str, Any]:
 
 
 @app.get("/api/v1/tasks")
-def list_tasks(limit: int = 200) -> dict[str, Any]:
+def list_tasks(
+    limit: int = 200,
+    _user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
     rows = _query(
         "SELECT * FROM tg_task ORDER BY created_at DESC LIMIT %s",
         (_limit(limit, 200),),
@@ -464,7 +756,10 @@ def list_tasks(limit: int = 200) -> dict[str, Any]:
 
 
 @app.get("/api/v1/tasks/{task_id}", response_model=None)
-async def get_task(task_id: str) -> dict[str, Any] | JSONResponse:
+async def get_task(
+    task_id: str,
+    _user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any] | JSONResponse:
     row = _get_task_row(task_id)
     if not row:
         return fail("任务不存在", code="NOT_FOUND", data={"taskId": task_id})
@@ -651,6 +946,14 @@ async def task_agent_confirm(
         actor_id=user.user_id,
     )
     draft = (consumed or {}).get("draft") or {}
+    workflow_id = str(
+        (consumed or {}).get("workflowId")
+        or draft.get("workflowId")
+        or draft.get("workflow_id")
+        or "pentest"
+    ).strip().lower()
+    if workflow_id == "alert_triage":
+        return await _confirm_alert_triage_draft(consumed or {}, req, user, idem)
     target = str(draft.get("target") or "").strip()
     if not target:
         raise HTTPException(status_code=400, detail="Supervisor draft is missing target")
@@ -751,6 +1054,122 @@ async def task_agent_confirm(
     return ok(payload)
 
 
+async def _confirm_alert_triage_draft(
+    consumed: dict[str, Any],
+    req: TaskAgentConfirmRequest,
+    user: CurrentUser,
+    idempotency_key: str,
+) -> dict[str, Any]:
+    draft = consumed.get("draft") if isinstance(consumed.get("draft"), dict) else {}
+    alert_uuid = str(draft.get("alertUuid") or draft.get("alert_uuid") or "").strip()
+    if not alert_uuid:
+        raise HTTPException(status_code=400, detail="Supervisor triage draft is missing alertUuid")
+    draft_id = str(consumed.get("draftId") or "").strip()
+    if not draft_id:
+        raise HTTPException(status_code=400, detail="Supervisor response is missing draftId")
+    task_id = str(consumed.get("taskId") or "").strip()
+    if not task_id:
+        task_id = "at-" + hashlib.sha256(draft_id.encode()).hexdigest()[:32]
+
+    request = CreateAlertTriageRequest(
+        alert_uuid=alert_uuid,
+        scenario_id=draft.get("scenarioId") or draft.get("scenario_id"),
+        enable_rag=bool(draft.get("enableRag") or draft.get("enable_rag")),
+        caller_notes=str(draft.get("callerNotes") or draft.get("caller_notes") or ""),
+    )
+    task: dict[str, Any]
+    if str(consumed.get("confirmationState") or "").upper() == "COMPLETED" and task_id:
+        # A retry after completion must return the durable result, rather than
+        # rebuilding an empty create response from the original draft.
+        existing_state = await _get_alert_triage_state(task_id)
+        existing_row = _get_task_row(task_id)
+        task = _triage_task_to_api(existing_state, existing_row) if existing_state else await _create_alert_triage_task_impl(
+            request,
+            task_id=task_id,
+            auto_start=req.start,
+        )
+    else:
+        task = await _create_alert_triage_task_impl(
+            request,
+            task_id=task_id,
+            auto_start=req.start,
+        )
+    if str(consumed.get("confirmationState") or "") != "COMPLETED":
+        await _supervisor(
+            "POST",
+            "/v1/task-agent/drafts/complete",
+            json_body={
+                "draftId": draft_id,
+                "idempotencyKey": idempotency_key,
+                "taskId": task_id,
+            },
+            actor_id=user.user_id,
+        )
+
+    activity = [
+        {
+            "id": "confirm-1",
+            "kind": "tool",
+            "title": "创建告警研判任务",
+            "detail": f"Gateway 已创建 {task_id}",
+            "status": "done",
+            "timestamp": _now_iso(),
+        }
+    ]
+    if req.start:
+        activity.append(
+            {
+                "id": "confirm-2",
+                "kind": "progress",
+                "title": "启动 Alert Triage Workflow",
+                "detail": "Orchestrator 已接管任务，将查询 XDR 证据并生成可追溯研判结论。",
+                "status": "running",
+                "timestamp": _now_iso(),
+            }
+        )
+    conversation_id = str(consumed.get("conversationId") or "")
+    assistant_text = (
+        f"告警研判任务 {task_id} 已创建并启动。"
+        if req.start
+        else f"告警研判任务 {task_id} 已创建，当前尚未启动。"
+    )
+    persisted_message: dict[str, Any] = {
+        "id": f"confirm-{draft_id}",
+        "role": "assistant",
+        "text": assistant_text,
+        "activities": activity,
+        "taskId": task_id,
+        "taskStatus": str(task.get("status") or "PENDING"),
+        "createdAt": _now_iso(),
+    }
+    if conversation_id:
+        try:
+            persisted_message = await _supervisor(
+                "POST",
+                f"/v1/conversations/{conversation_id}/messages",
+                json_body=persisted_message,
+                actor_id=user.user_id,
+                timeout=5.0,
+            )
+        except Exception:
+            log.exception(
+                "failed to persist alert-triage confirmation conversation_id=%s",
+                conversation_id,
+            )
+    _record_audit("TASK_AGENT_TRIAGE_CONFIRMED", user.user_id, task_id, f"start={req.start}")
+    return ok(
+        {
+            "conversationId": conversation_id,
+            "draftId": draft_id,
+            "workflowId": "alert_triage",
+            "task": task,
+            "started": req.start,
+            "activities": activity,
+            "message": persisted_message,
+        }
+    )
+
+
 @app.get("/api/v1/tasks/{task_id}/run-status")
 async def run_status(task_id: str) -> dict[str, Any]:
     try:
@@ -761,7 +1180,11 @@ async def run_status(task_id: str) -> dict[str, Any]:
 
 
 @app.get("/api/v1/tasks/{task_id}/events")
-async def task_events(task_id: str, limit: int = 500) -> dict[str, Any]:
+async def task_events(
+    task_id: str,
+    limit: int = 500,
+    _user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
     try:
         raw = await _evidence("GET", f"/internal/tasks/{task_id}/events", params={"limit": _limit(limit, 500)})
         data = [
@@ -808,7 +1231,11 @@ async def task_events(task_id: str, limit: int = 500) -> dict[str, Any]:
 
 
 @app.get("/api/v1/tasks/{task_id}/reasoning-steps")
-async def task_reasoning_steps(task_id: str, limit: int = 500) -> dict[str, Any]:
+async def task_reasoning_steps(
+    task_id: str,
+    limit: int = 500,
+    _user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
     """结构化 CoT 推理步骤列表（Issue #136）；与 /events 运维轨迹并行。"""
     try:
         raw = await _evidence(
@@ -1033,7 +1460,17 @@ async def task_events_stream(
                         detail = str(payload.get("message") or payload.get("reason") or payload.get("detail") or "").strip()[:500]
                         if detail:
                             break
-                if status == "DONE":
+                is_alert_triage = task_id.startswith("at-")
+                if is_alert_triage:
+                    triage_state = await _get_alert_triage_state(task_id) if status == "DONE" else None
+                    text = _triage_terminal_text(
+                        task_id,
+                        status,
+                        triage_state,
+                        phase=phase,
+                        detail=detail,
+                    )
+                elif status == "DONE":
                     text = f"渗透测试任务 {task_id} 已完成。Pentest Workflow 已执行完毕，可以打开报告中心查看测试结果。"
                 elif status == "FAILED":
                     text = f"渗透测试任务 {task_id} 执行失败，停止在 {phase or '当前'} 阶段。"
@@ -1180,7 +1617,11 @@ async def task_knowledge_chunks(
 
 
 @app.get("/api/v1/tasks/{task_id}/observation")
-async def task_observation(task_id: str, artifactsSummaryLimit: int = 500) -> dict[str, Any]:
+async def task_observation(
+    task_id: str,
+    artifactsSummaryLimit: int = 500,
+    _user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
     row = _get_task_row(task_id)
     context: dict[str, Any] = {}
     artifacts: list[dict[str, Any]] = []
@@ -1222,7 +1663,10 @@ async def task_observation(task_id: str, artifactsSummaryLimit: int = 500) -> di
     return ok(data)
 
 @app.get("/api/v1/tasks/{task_id}/todos")
-async def task_todos(task_id: str) -> dict[str, Any]:
+async def task_todos(
+    task_id: str,
+    _user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
     try:
         items = await _orch("GET", f"/v1/orchestrator/tasks/{task_id}/todos", timeout=8.0)
         if not isinstance(items, list):
@@ -1233,7 +1677,11 @@ async def task_todos(task_id: str) -> dict[str, Any]:
 
 
 @app.get("/api/v1/tasks/{task_id}/full", response_model=None)
-async def task_full(task_id: str, events_limit: int = 100) -> dict[str, Any] | JSONResponse:
+async def task_full(
+    task_id: str,
+    events_limit: int = 100,
+    _user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any] | JSONResponse:
     row = _get_task_row(task_id)
     if not row:
         return fail("任务不存在", code="NOT_FOUND", data={"taskId": task_id})
@@ -1469,7 +1917,10 @@ async def _executions(task_id: str, limit: int = 100, offset: int = 0) -> dict[s
 
 
 @app.get("/api/v1/tasks/{task_id}/report", response_model=None)
-async def task_report(task_id: str) -> dict[str, Any] | JSONResponse:
+async def task_report(
+    task_id: str,
+    _user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any] | JSONResponse:
     row = _get_task_row(task_id)
     if not row:
         return fail("任务不存在", code="NOT_FOUND", data={"taskId": task_id})
@@ -1593,7 +2044,13 @@ def _build_summary(row: dict[str, Any], findings: list[dict[str, Any]], executio
 
 
 @app.get("/api/v1/tasks/{task_id}/trace")
-async def trace(task_id: str, request: Request, executions_limit: int = 50, executions_offset: int = 0) -> dict[str, Any]:
+async def trace(
+    task_id: str,
+    request: Request,
+    executions_limit: int = 50,
+    executions_offset: int = 0,
+    _user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
     headers = _trace_headers(request)
     try:
         data = await _orch("GET", f"/v1/orchestrator/tasks/{task_id}/trace", params={"executions_limit": executions_limit, "executions_offset": executions_offset}, headers=headers, timeout=15.0)
@@ -1603,7 +2060,11 @@ async def trace(task_id: str, request: Request, executions_limit: int = 50, exec
 
 
 @app.get("/api/v1/tasks/{task_id}/trace/plan")
-async def trace_plan(task_id: str, request: Request) -> dict[str, Any]:
+async def trace_plan(
+    task_id: str,
+    request: Request,
+    _user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
     try:
         data = await _orch("GET", f"/v1/orchestrator/tasks/{task_id}/trace/plan", headers=_trace_headers(request), timeout=15.0)
     except Exception:
@@ -1612,7 +2073,11 @@ async def trace_plan(task_id: str, request: Request) -> dict[str, Any]:
 
 
 @app.get("/api/v1/tasks/{task_id}/trace/compile")
-async def trace_compile(task_id: str, request: Request) -> dict[str, Any]:
+async def trace_compile(
+    task_id: str,
+    request: Request,
+    _user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
     try:
         data = await _orch("GET", f"/v1/orchestrator/tasks/{task_id}/trace/compile", headers=_trace_headers(request), timeout=15.0)
     except Exception:
@@ -1621,7 +2086,12 @@ async def trace_compile(task_id: str, request: Request) -> dict[str, Any]:
 
 
 @app.get("/api/v1/tasks/{task_id}/executions")
-async def task_executions(task_id: str, limit: int = 50, offset: int = 0) -> dict[str, Any]:
+async def task_executions(
+    task_id: str,
+    limit: int = 50,
+    offset: int = 0,
+    _user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
     return ok(await _executions(task_id, limit, offset))
 
 
@@ -2184,6 +2654,249 @@ def clear_config_override() -> dict[str, Any]:
 def delete_config_override(key: str) -> dict[str, Any]:
     _CONFIG_OVERRIDES.pop(key, None)
     return ok({"deleted": True, "key": key})
+
+
+
+
+# ── Alert Triage API ─────────────────────────────────────────────────
+
+ORCH_ALERT_TRIAGE_PATH = "/v1/orchestrator/alert-triage"
+
+
+class CreateAlertTriageRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    alert_uuid: str = Field(min_length=1, validation_alias=AliasChoices("alert_uuid", "alertUuid"))
+    scenario_id: str | None = Field(default=None, validation_alias=AliasChoices("scenario_id", "scenarioId"))
+    enable_rag: bool = Field(default=True, validation_alias=AliasChoices("enable_rag", "enableRag"))
+    strategy_params: dict[str, Any] | None = Field(default=None, validation_alias=AliasChoices("strategy_params", "strategyParams"))
+    caller_notes: str | None = Field(default=None, validation_alias=AliasChoices("caller_notes", "callerNotes"))
+
+
+class AlertTriageReviewRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    decision: Literal["CONFIRMED", "OVERRIDDEN", "NEEDS_MORE_EVIDENCE"]
+    human_verdict: Literal[
+        "true_positive",
+        "false_positive",
+        "suspicious",
+        "insufficient_evidence",
+    ] | None = Field(default=None, validation_alias=AliasChoices("human_verdict", "humanVerdict"))
+    notes: str = Field(default="", max_length=4000)
+    selected_actions: list[str] = Field(
+        default_factory=list,
+        max_length=50,
+        validation_alias=AliasChoices("selected_actions", "selectedActions"),
+    )
+
+
+@app.post("/api/v1/alert-triage/tasks")
+async def create_alert_triage_task(
+    req: CreateAlertTriageRequest,
+    _user: CurrentUser = Depends(require_roles("ADMIN", "OPERATOR")),
+) -> dict[str, Any]:
+    return ok(await _create_alert_triage_task_impl(req))
+
+
+async def _create_alert_triage_task_impl(
+    req: CreateAlertTriageRequest,
+    *,
+    task_id: str | None = None,
+    auto_start: bool = True,
+) -> dict[str, Any]:
+    task_id = task_id or "at-" + uuid.uuid4().hex
+    row = _get_task_row(task_id)
+    if row is None:
+        _execute(
+            """
+            INSERT INTO tg_task
+              (task_id, name, target, status, current_phase, created_at, updated_at)
+            VALUES (%s, %s, %s, 'PENDING', 'RECON', NOW(), NOW())
+            """,
+            (task_id, f"研判-{req.alert_uuid[:8]}", req.alert_uuid),
+        )
+        row = _get_task_row(task_id)
+    payload = {
+        "task_id": task_id,
+        "alert_uuid": req.alert_uuid,
+        "scenario_id": req.scenario_id,
+        "enable_rag": req.enable_rag,
+        "strategy_params": req.strategy_params,
+        "caller_notes": req.caller_notes,
+    }
+    try:
+        await _orch("POST", f"{ORCH_ALERT_TRIAGE_PATH}/tasks", json_body=payload, timeout=30.0)
+    except Exception as exc:
+        log.warning("alert triage create failed task_id=%s: %s", task_id, exc)
+        _execute("UPDATE tg_task SET status = 'FAILED', updated_at = NOW() WHERE task_id = %s", (task_id,))
+        raise HTTPException(status_code=502, detail="创建研判任务失败") from exc
+
+    current_status = str((row or {}).get("status") or "PENDING").upper()
+    if auto_start and current_status not in {"RUNNING", "DONE"}:
+        # The graph may include XDR retries and an LLM request. Do not keep the
+        # caller request open while it runs; the task is visible and pollable now.
+        asyncio.create_task(_run_alert_triage_in_background(task_id))
+    return _triage_task_to_api({
+        "task_id": task_id,
+        "alert_uuid": req.alert_uuid,
+        "status": current_status,
+        "enable_rag": req.enable_rag,
+    }, row)
+
+@app.get("/api/v1/alert-triage/tasks")
+async def list_alert_triage_tasks(
+    limit: int = 50,
+    _user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    rows = _query(
+        "SELECT task_id, name, target, status, created_at, updated_at FROM tg_task WHERE task_id LIKE 'at-%%' ORDER BY created_at DESC LIMIT %s",
+        (_limit(limit, 20, 200),),
+    )
+    tasks = [_triage_task_to_api(None, row) for row in rows]
+
+    # Enrich every completed task from Evidence in one batch.  Older results
+    # must remain useful; an arbitrary first-page cap silently erased verdicts.
+    done_ids = [t["taskId"] for t in tasks if t["status"] in ("DONE", "FAILED")]
+    if done_ids:
+        state_map = await _get_alert_triage_states(done_ids)
+        for index, task in enumerate(tasks):
+            s = state_map.get(task["taskId"])
+            if s:
+                tasks[index] = _triage_task_to_api(s, rows[index])
+
+    return ok(tasks)
+
+
+@app.get("/api/v1/alert-triage/tasks/{task_id}")
+async def get_alert_triage_task(
+    task_id: str,
+    _user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    row = _get_task_row(task_id)
+    if not row:
+        return fail("任务不存在", code="NOT_FOUND", data={"taskId": task_id})
+    state = await _get_alert_triage_state(task_id)
+    task = _triage_task_to_api(state, row)
+    task["humanReviews"] = _list_alert_triage_reviews(task_id)
+    return ok(task)
+
+
+@app.post("/api/v1/alert-triage/tasks/{task_id}/run")
+async def run_alert_triage_task(
+    task_id: str,
+    _user: CurrentUser = Depends(require_roles("ADMIN", "OPERATOR")),
+) -> dict[str, Any]:
+    row = _get_task_row(task_id)
+    if not row:
+        return fail("任务不存在", code="NOT_FOUND", data={"taskId": task_id})
+    try:
+        result = await _orch("POST", f"{ORCH_ALERT_TRIAGE_PATH}/tasks/{task_id}/run", timeout=120.0)
+        _sync_task_state(task_id, result)
+        return ok(_triage_task_to_api(result if isinstance(result, dict) else None, _get_task_row(task_id) or row))
+    except Exception as exc:
+        log.warning("alert triage run failed task_id=%s: %s", task_id, exc)
+        return fail(f"研判执行失败: {exc}", code="ORCHESTRATOR_ERROR")
+
+
+@app.get("/api/v1/alert-triage/tasks/{task_id}/events")
+async def get_alert_triage_events(
+    task_id: str,
+    limit: int = 500,
+    _user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    return await task_events(task_id, limit)
+
+
+@app.get("/api/v1/alert-triage/tasks/{task_id}/report")
+async def get_alert_triage_report(
+    task_id: str,
+    _user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    row = _get_task_row(task_id)
+    if not row:
+        return fail("任务不存在", code="NOT_FOUND", data={"taskId": task_id})
+    try:
+        result = await _orch("GET", f"{ORCH_ALERT_TRIAGE_PATH}/tasks/{task_id}", timeout=10.0)
+    except Exception as exc:
+        return fail(f"获取研判报告失败: {exc}", code="ORCHESTRATOR_ERROR")
+    if isinstance(result, dict):
+        result = dict(result)
+        result["humanReviews"] = _list_alert_triage_reviews(task_id)
+    return ok(result)
+
+
+@app.get("/api/v1/alert-triage/tasks/{task_id}/reviews")
+def list_alert_triage_reviews(
+    task_id: str,
+    _user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    row = _get_task_row(task_id)
+    if not row or not str(task_id).startswith("at-"):
+        return fail("任务不存在", code="NOT_FOUND", data={"taskId": task_id})
+    return ok(_list_alert_triage_reviews(task_id))
+
+
+@app.post("/api/v1/alert-triage/tasks/{task_id}/reviews")
+def create_alert_triage_review(
+    task_id: str,
+    req: AlertTriageReviewRequest,
+    user: CurrentUser = Depends(require_roles("ADMIN", "OPERATOR")),
+) -> dict[str, Any]:
+    row = _get_task_row(task_id)
+    if not row or not str(task_id).startswith("at-"):
+        raise HTTPException(status_code=404, detail="任务不存在")
+    if str(row.get("status") or "").upper() != "DONE":
+        raise HTTPException(status_code=409, detail="仅已完成的研判任务可提交人工复核")
+    if req.decision == "OVERRIDDEN" and req.human_verdict is None:
+        raise HTTPException(status_code=422, detail="覆盖 Agent 结论时必须提供人工结论")
+    if req.decision == "NEEDS_MORE_EVIDENCE" and req.human_verdict is not None:
+        raise HTTPException(status_code=422, detail="补充证据决定不能同时给出人工结论")
+
+    _ensure_alert_triage_review_schema()
+    review_id = "atr-" + uuid.uuid4().hex
+    _execute(
+        """
+        INSERT INTO tg_alert_triage_review
+          (review_id, task_id, reviewer_user_id, reviewer_username, decision,
+           human_verdict, notes, selected_actions, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW(6))
+        """,
+        (
+            review_id,
+            task_id,
+            user.user_id,
+            user.username,
+            req.decision,
+            req.human_verdict,
+            req.notes.strip(),
+            _json_dumps(req.selected_actions),
+        ),
+    )
+    _record_audit(
+        "ALERT_TRIAGE_REVIEWED",
+        user.user_id,
+        task_id,
+        f"review_id={review_id} decision={req.decision} verdict={req.human_verdict or ''}",
+    )
+    rows = _query(
+        """
+        SELECT review_id, task_id, reviewer_user_id, reviewer_username,
+               decision, human_verdict, notes, selected_actions, created_at
+        FROM tg_alert_triage_review WHERE review_id = %s
+        """,
+        (review_id,),
+    )
+    review = rows[0] if rows else {
+        "review_id": review_id,
+        "task_id": task_id,
+        "reviewer_user_id": user.user_id,
+        "reviewer_username": user.username,
+        "decision": req.decision,
+        "human_verdict": req.human_verdict,
+        "notes": req.notes.strip(),
+        "selected_actions": req.selected_actions,
+        "created_at": _now_iso(),
+    }
+    return ok(_alert_triage_review_to_api(review))
 
 
 @app.get("/api/v1/system/info")

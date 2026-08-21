@@ -60,3 +60,21 @@ def test_rag_client_does_not_invent_service_identity(monkeypatch):
     client = module.RagClient(base_url="http://rag.test")
 
     assert client._service_headers() is None
+
+
+def test_rag_client_preserves_service_identity_when_forwarding_idempotency_key():
+    module = _load_rag_client_module()
+    client = module.RagClient(
+        base_url="http://rag.test",
+        service_token="gateway-service-secret",
+    )
+
+    assert client._service_headers(
+        {
+            "Idempotency-Key": "event-1",
+            "Authorization": "Bearer browser-token-must-not-pass-through",
+        }
+    ) == {
+        "Idempotency-Key": "event-1",
+        "Authorization": "Bearer gateway-service-secret",
+    }

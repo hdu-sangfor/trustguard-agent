@@ -122,6 +122,72 @@ async def test_task_agent_confirm_reuses_existing_task_lifecycle(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_task_agent_confirm_routes_alert_triage_draft_idempotently(monkeypatch):
+    gw = _load_gateway_main()
+    calls = {"consume": 0, "complete": 0, "create": 0}
+    completed = False
+
+    async def fake_supervisor(_method, path, **kwargs):
+        nonlocal completed
+        if path.endswith("/complete"):
+            calls["complete"] += 1
+            completed = True
+            assert kwargs["json_body"]["taskId"].startswith("at-")
+            return {"confirmationState": "COMPLETED", "taskId": kwargs["json_body"]["taskId"]}
+        if path.endswith("/messages"):
+            return kwargs["json_body"]
+        calls["consume"] += 1
+        return {
+            "workflowId": "alert_triage",
+            "conversationId": "conv-triage",
+            "draftId": "draft-triage",
+            "confirmationState": "COMPLETED" if completed else "CLAIMED",
+            "taskId": "at-existing" if completed else None,
+            "draft": {
+                "workflowId": "alert_triage",
+                "alertUuid": "alert-tp-webshell-001",
+                "scenarioId": "webshell-true-positive",
+                "enableRag": True,
+            },
+        }
+
+    async def fake_create(req, *, task_id=None, auto_start=True):
+        calls["create"] += 1
+        assert req.alert_uuid == "alert-tp-webshell-001"
+        assert req.scenario_id == "webshell-true-positive"
+        assert req.enable_rag is True
+        assert auto_start is True
+        return {"taskId": task_id, "status": "PENDING"}
+
+    async def fake_existing_state(_task_id):
+        return {
+            "task_id": "at-existing",
+            "alert_uuid": "alert-tp-webshell-001",
+            "status": "DONE",
+            "result": {"verdict": "true_positive", "confidence": 0.95},
+        }
+
+    monkeypatch.setattr(gw, "_supervisor", fake_supervisor)
+    monkeypatch.setattr(gw, "_create_alert_triage_task_impl", fake_create)
+    monkeypatch.setattr(gw, "_get_alert_triage_state", fake_existing_state)
+    monkeypatch.setattr(gw, "_get_task_row", lambda _task_id: {"task_id": "at-existing", "status": "DONE"})
+    monkeypatch.setattr(gw, "_record_audit", lambda *_args, **_kwargs: None)
+    request = gw.TaskAgentConfirmRequest(
+        confirmationToken="signed-token",
+        idempotencyKey="idem-triage",
+    )
+
+    first = await gw.task_agent_confirm(request, _user(gw))
+    second = await gw.task_agent_confirm(request, _user(gw))
+
+    assert first["data"]["workflowId"] == "alert_triage"
+    assert first["data"]["task"]["taskId"].startswith("at-")
+    assert second["data"]["task"]["taskId"] == "at-existing"
+    assert second["data"]["task"]["verdict"] == "true_positive"
+    assert calls == {"consume": 2, "complete": 1, "create": 1}
+
+
+@pytest.mark.asyncio
 async def test_task_agent_conversation_forwards_actor(monkeypatch):
     gw = _load_gateway_main()
     captured = {}
@@ -262,6 +328,58 @@ async def test_task_event_stream_emits_event_status_and_done(monkeypatch):
     assert len(persisted) == 1
     assert persisted[0][1] == "/v1/conversations/conv-1/messages"
     assert persisted[0][2]["actor_id"] == "user-1"
+
+
+@pytest.mark.asyncio
+async def test_task_event_stream_returns_alert_triage_conclusion_in_conversation(monkeypatch):
+    gw = _load_gateway_main()
+
+    monkeypatch.setattr(gw, "_get_task_row", lambda _task_id: {
+        "task_id": "at-stream-1",
+        "status": "DONE",
+        "current_phase": "DONE",
+    })
+
+    async def fake_events(_task_id, _limit):
+        return {"data": [{
+            "eventId": "evt-triage-done",
+            "taskId": "at-stream-1",
+            "timestamp": "2026-08-07T00:00:00Z",
+            "eventType": "AT_WORKFLOW_COMPLETE",
+            "sourceModule": "alert_triage",
+            "payload": {"status": "DONE", "verdict": "true_positive"},
+        }]}
+
+    async def fake_triage_state(_task_id):
+        return {"result": {
+            "verdict": "true_positive",
+            "confidence": 0.95,
+            "summary": "WebShell 命令执行证据成立。",
+            "xdr_evidence_refs": [{"source": "alert", "uuid": "alert-1"}],
+            "recommended_actions": [{"action": "人工隔离主机"}],
+        }}
+
+    async def fake_supervisor(_method, _path, **kwargs):
+        return kwargs["json_body"]
+
+    monkeypatch.setattr(gw, "task_events", fake_events)
+    monkeypatch.setattr(gw, "task_reasoning_steps", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(gw, "_orch", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(gw, "_sync_task_state", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(gw, "_get_alert_triage_state", fake_triage_state)
+    monkeypatch.setattr(gw, "_supervisor", fake_supervisor)
+    monkeypatch.setattr(gw, "_record_audit", lambda *_args, **_kwargs: None)
+
+    response = await gw.task_events_stream("at-stream-1", _user(gw), "conv-triage")
+    body = b"".join([
+        chunk.encode() if isinstance(chunk, str) else chunk
+        async for chunk in response.body_iterator
+    ])
+
+    assert "真实攻击".encode() in body
+    assert "alert:alert-1".encode() in body
+    assert "人工隔离主机".encode() in body
+    assert b"Pentest Workflow" not in body
 
 
 @pytest.mark.asyncio

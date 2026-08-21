@@ -39,9 +39,6 @@ services:
       MYSQL_DATABASE: ${MYSQL_DATABASE:-trustguard_agent}
       MYSQL_USER: ${MYSQL_USER:-trustguard}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-trustguard}
-    ports:
-      # 宿主机若已有 mysqld 占用 3306，可设 MYSQL_HOST_PORT=3307
-      - "${MYSQL_HOST_PORT:-3306}:3306"
     volumes:
       - mysql_data:/var/lib/mysql
       - ./docker/mysql-init.d:/docker-entrypoint-initdb.d:ro
@@ -55,8 +52,6 @@ services:
   redis:
     image: ${REDIS_IMAGE:-${DOCKERHUB_REGISTRY:-docker.io}/library/redis:7-alpine}
     restart: unless-stopped
-    ports:
-      - "6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -66,9 +61,6 @@ services:
   rabbitmq:
     image: ${RABBITMQ_IMAGE:-${DOCKERHUB_REGISTRY:-docker.io}/library/rabbitmq:3-management-alpine}
     restart: unless-stopped
-    ports:
-      - "5672:5672"
-      - "15672:15672"
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "ping"]
       interval: 10s
@@ -78,9 +70,6 @@ services:
 
   qdrant:
     image: ${QDRANT_IMAGE:-${DOCKERHUB_REGISTRY:-docker.io}/qdrant/qdrant:latest}
-    ports:
-      - "18104:6333"
-      - "18105:6334"
     volumes:
       - qdrant_data:/qdrant/storage
     restart: unless-stopped
@@ -94,8 +83,6 @@ services:
       network: *build-network
     image: ${TRUSTGUARD_IMAGE_PREFIX:-trustguard-}evidence
     restart: unless-stopped
-    ports:
-      - "18103:18103"
     environment:
       MYSQL_HOST: mysql
       MYSQL_PORT: 3306
@@ -123,8 +110,6 @@ services:
       network: *build-network
     image: ${TRUSTGUARD_IMAGE_PREFIX:-trustguard-}supervisor
     restart: unless-stopped
-    ports:
-      - "18082:18082"
     environment:
       REDIS_URL: redis://redis:6379/0
       SUPERVISOR_STORE_BACKEND: redis
@@ -156,8 +141,6 @@ services:
       network: *build-network
     image: ${TRUSTGUARD_IMAGE_PREFIX:-trustguard-}orchestrator
     restart: unless-stopped
-    ports:
-      - "18081:18081"
     environment:
       <<: *python-env
       EVIDENCE_BASE_URL: http://evidence:18103
@@ -188,7 +171,8 @@ services:
       KNOWLEDGE_MCP_MATERIALIZE_LIMIT: ${KNOWLEDGE_MCP_MATERIALIZE_LIMIT:-3}
       KNOWLEDGE_MCP_URL: ${KNOWLEDGE_MCP_URL:-http://host.docker.internal:18201/mcp}
       KNOWLEDGE_MCP_ACCESS_TOKEN: ${KNOWLEDGE_MCP_ACCESS_TOKEN:-}
-      KNOWLEDGE_MCP_SCOPE: ${KNOWLEDGE_MCP_SCOPE:-penetration}
+      KNOWLEDGE_MCP_PENETRATION_SCOPE: ${KNOWLEDGE_MCP_PENETRATION_SCOPE:-penetration}
+      KNOWLEDGE_MCP_ALERT_TRIAGE_SCOPE: ${KNOWLEDGE_MCP_ALERT_TRIAGE_SCOPE:-alert-triage}
       KNOWLEDGE_MCP_MODE: ${KNOWLEDGE_MCP_MODE:-comprehensive}
       KNOWLEDGE_MCP_LIMIT: ${KNOWLEDGE_MCP_LIMIT:-5}
       KNOWLEDGE_MCP_REWRITE: ${KNOWLEDGE_MCP_REWRITE:-false}
@@ -196,6 +180,13 @@ services:
       KNOWLEDGE_MCP_MAX_RETRIES: ${KNOWLEDGE_MCP_MAX_RETRIES:-1}
       KNOWLEDGE_MCP_WORKSPACE_ID: ${KNOWLEDGE_MCP_WORKSPACE_ID:-default}
       KNOWLEDGE_MCP_WORKFLOW_TYPE: ${KNOWLEDGE_MCP_WORKFLOW_TYPE:-penetration}
+      XDR_BASE_URL: http://host.docker.internal:8443
+      XDR_AK: test_ak_0001
+      XDR_SK: test_sk_0001_secret
+      LLM_PROVIDER: ${LLM_PROVIDER:-openai_compat}
+      LLM_BASE_URL: ${LLM_BASE_URL:-http://localhost:11434/v1}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL_ID: ${LLM_MODEL_ID:-gpt-4o-mini}
     env_file: *optional-env-files
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -227,8 +218,6 @@ services:
     restart: unless-stopped
     working_dir: /srv/executor
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "18102"]
-    ports:
-      - "18102:18102"
     environment:
       <<: *python-env
       TRUSTGUARD_TOOLS_ROOT: /app/TRUSTGUARD_TOOLS_ROOT
@@ -303,7 +292,7 @@ services:
     image: ${TRUSTGUARD_IMAGE_PREFIX:-trustguard-}gateway
     restart: unless-stopped
     ports:
-      - "18080:18080"
+      - "${TRUSTGUARD_BIND_HOST:-127.0.0.1}:18080:18080"
     environment:
       MYSQL_HOST: mysql
       MYSQL_PORT: 3306
@@ -347,7 +336,7 @@ services:
       network: *build-network
     image: ${TRUSTGUARD_IMAGE_PREFIX:-trustguard-}frontend
     ports:
-      - "127.0.0.1:17999:80"
+      - "${TRUSTGUARD_BIND_HOST:-127.0.0.1}:17999:80"
     depends_on:
       gateway: { condition: service_healthy }
     restart: unless-stopped

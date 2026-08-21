@@ -10,8 +10,9 @@ import os
 import asyncio
 import random
 import time
+from uuid import uuid4
 from contextlib import asynccontextmanager, suppress
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Annotated, Any
 from urllib.parse import quote, urlparse
 
@@ -37,6 +38,7 @@ from app.clients.checkpoint_client import (
     load_checkpoint as load_checkpoint_remote,
 )
 from app.trustguard_agent.graph import run_agent as run_langgraph_agent
+from app.alert_triage.graph_core import run_alert_triage
 from app.trustguard_agent.models import AgentRunRequest, AgentRunResponse
 from app.core.state_machine import (
     tick as state_machine_tick,
@@ -248,6 +250,8 @@ async def _orchestrator_lifespan(app: FastAPI):
                     logger.exception("kb_federation_sync reconcile failed")
 
         fed_sync_task = asyncio.create_task(_kb_federation_sync_loop())
+
+    await _recover_alert_triage_tasks()
 
     yield
 
@@ -2178,3 +2182,220 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run("app.main:app", host="127.0.0.1", port=18081, reload=True)
+
+
+# Alert Triage in-memory store
+_alert_triage_results: dict[str, dict[str, Any]] = {}
+_alert_triage_run_locks: dict[str, asyncio.Lock] = {}
+_ALERT_TRIAGE_CONTEXT_KEY = "alert_triage"
+_ALERT_TRIAGE_LOCK_TTL_SECONDS = max(
+    60, int(os.getenv("ALERT_TRIAGE_LOCK_TTL_SECONDS", "900") or "900")
+)
+_ALERT_TRIAGE_RECOVERY_GRACE_SECONDS = max(
+    0, int(os.getenv("ALERT_TRIAGE_RECOVERY_GRACE_SECONDS", "60") or "60")
+)
+_alert_triage_recovery_tasks: set[asyncio.Task] = set()
+
+
+def _parse_alert_triage_timestamp(value: Any) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+async def _recover_alert_triage_tasks() -> None:
+    """接管 Evidence 中服务重启前遗留的告警研判任务。"""
+    from app.clients.evidence_client import list_internal_tasks
+
+    try:
+        summaries = await list_internal_tasks()
+    except Exception:
+        logger.exception("alert triage recovery scan failed")
+        return
+
+    now = datetime.now(timezone.utc)
+    for summary in summaries:
+        task_id = str(summary.get("task_id") or "").strip()
+        if not task_id.startswith("at-"):
+            continue
+        if str(summary.get("status") or "").upper() != "RUNNING":
+            continue
+        updated_at = _parse_alert_triage_timestamp(summary.get("updated_at"))
+        if updated_at is not None:
+            age = (now - updated_at).total_seconds()
+            if age < _ALERT_TRIAGE_RECOVERY_GRACE_SECONDS:
+                continue
+        persisted = await _load_persisted_alert_triage_task(task_id)
+        if not persisted or str(persisted.get("status") or "").upper() != "RUNNING":
+            continue
+        recovery = asyncio.create_task(alert_triage_run_task(task_id))
+        _alert_triage_recovery_tasks.add(recovery)
+        recovery.add_done_callback(_alert_triage_recovery_tasks.discard)
+        logger.info("alert triage recovery scheduled task_id=%s", task_id)
+
+
+async def _persist_alert_triage_task(task_data: dict[str, Any]) -> None:
+    """Persist alert-triage state so completed reports survive an orchestrator restart."""
+    task_id = str(task_data.get("task_id") or "")
+    if not task_id:
+        return
+    from app.clients.evidence_client import put_context
+
+    await put_context(task_id, {_ALERT_TRIAGE_CONTEXT_KEY: task_data})
+
+
+async def _load_persisted_alert_triage_task(task_id: str) -> dict[str, Any] | None:
+    """Restore one alert-triage task from the shared Evidence context store."""
+    from app.clients.evidence_client import get_context
+
+    context = await get_context(task_id)
+    task_data = context.get(_ALERT_TRIAGE_CONTEXT_KEY)
+    if not isinstance(task_data, dict) or task_data.get("task_id") != task_id:
+        return None
+    return task_data
+
+
+# ── Alert Triage Routes ──────────────────────────────────────────────
+
+class _AlertTriageCreatePayload(BaseModel):
+    task_id: str
+    alert_uuid: str
+    scenario_id: str | None = None
+    enable_rag: bool = True
+    strategy_params: dict[str, Any] | None = None
+    caller_notes: str | None = None
+
+
+@app.post("/v1/orchestrator/alert-triage/tasks")
+async def alert_triage_create_task(payload: _AlertTriageCreatePayload) -> dict[str, Any]:
+    task_id = payload.task_id
+    existing = _alert_triage_results.get(task_id)
+    if existing is None:
+        existing = await _load_persisted_alert_triage_task(task_id)
+        if existing is not None:
+            _alert_triage_results[task_id] = existing
+    if existing is not None:
+        if str(existing.get("alert_uuid")) != payload.alert_uuid:
+            raise HTTPException(status_code=409, detail="task_id already belongs to another alert")
+        return {
+            "task_id": task_id,
+            "alert_uuid": payload.alert_uuid,
+            "status": existing.get("status", "PENDING"),
+            "idempotent": True,
+        }
+    _alert_triage_results[task_id] = {
+        "task_id": task_id,
+        "alert_uuid": payload.alert_uuid,
+        "scenario_id": payload.scenario_id,
+        "enable_rag": payload.enable_rag,
+        "strategy_params": payload.strategy_params,
+        "caller_notes": payload.caller_notes,
+        "status": "PENDING",
+        "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
+    await _persist_alert_triage_task(_alert_triage_results[task_id])
+    logger.info("alert triage task created task_id=%s alert_uuid=%s", task_id, payload.alert_uuid)
+    return {"task_id": task_id, "alert_uuid": payload.alert_uuid, "status": "PENDING"}
+
+
+@app.get("/v1/orchestrator/alert-triage/tasks/{task_id}")
+async def alert_triage_get_task(task_id: str) -> dict[str, Any]:
+    data = _alert_triage_results.get(task_id)
+    if data is None:
+        data = await _load_persisted_alert_triage_task(task_id)
+        if data is not None:
+            _alert_triage_results[task_id] = data
+    if data is None:
+        raise HTTPException(status_code=404, detail=f"alert triage task not found: {task_id}")
+    return data
+
+
+@app.post("/v1/orchestrator/alert-triage/tasks/{task_id}/run")
+async def alert_triage_run_task(task_id: str) -> dict[str, Any]:
+    if task_id not in _alert_triage_results:
+        persisted = await _load_persisted_alert_triage_task(task_id)
+        if persisted is not None:
+            _alert_triage_results[task_id] = persisted
+    if task_id not in _alert_triage_results:
+        raise HTTPException(status_code=404, detail=f"alert triage task not found: {task_id}")
+
+    lock = _alert_triage_run_locks.setdefault(task_id, asyncio.Lock())
+    if lock.locked():
+        # A background run or another caller already owns this task. Returning
+        # the current state makes repeated POSTs harmless and pollable.
+        return {**_alert_triage_results[task_id], "already_running": True}
+
+    async with lock:
+        task_data = _alert_triage_results[task_id]
+        if task_data.get("status") == "DONE":
+            return {**task_data, "idempotent": True}
+
+        # TaskStore provides the cross-process guard when Redis is enabled.
+        # The in-process asyncio lock above still keeps duplicate requests cheap
+        # and avoids waiting for the distributed lock in the common case.
+        owner_id = f"alert-triage:{os.getpid()}:{uuid4().hex}"
+        lock_acquired = await _TASK_STORE.acquire_task_lock(
+            task_id,
+            owner_id,
+            ttl_seconds=_ALERT_TRIAGE_LOCK_TTL_SECONDS,
+        )
+        if not lock_acquired:
+            latest = await _load_persisted_alert_triage_task(task_id)
+            if latest is not None:
+                _alert_triage_results[task_id] = latest
+                task_data = latest
+            return {**task_data, "already_running": True}
+
+        refresh_stop = asyncio.Event()
+        refresh_task: asyncio.Task | None = None
+
+        async def _refresh_lock() -> None:
+            interval = max(10, _ALERT_TRIAGE_LOCK_TTL_SECONDS // 3)
+            while not refresh_stop.is_set():
+                try:
+                    await asyncio.wait_for(refresh_stop.wait(), timeout=interval)
+                except asyncio.TimeoutError:
+                    if not await _TASK_STORE.refresh_task_lock(
+                        task_id,
+                        owner_id,
+                        ttl_seconds=_ALERT_TRIAGE_LOCK_TTL_SECONDS,
+                    ):
+                        logger.warning("alert triage lock refresh failed task_id=%s", task_id)
+                        return
+
+        refresh_task = asyncio.create_task(_refresh_lock())
+
+        try:
+            task_data["status"] = "RUNNING"
+            await _persist_alert_triage_task(task_data)
+            result = await run_alert_triage(task_data)
+            _alert_triage_results[task_id] = {
+                **task_data,
+                **result,
+                "status": result.get("status", "FAILED"),
+            }
+            await _persist_alert_triage_task(_alert_triage_results[task_id])
+            return _alert_triage_results[task_id]
+        except Exception as exc:
+            logger.exception("alert triage run failed task_id=%s", task_id)
+            _alert_triage_results[task_id] = {
+                **task_data,
+                "status": "FAILED",
+                "error": str(exc),
+            }
+            await _persist_alert_triage_task(_alert_triage_results[task_id])
+            return _alert_triage_results[task_id]
+        finally:
+            refresh_stop.set()
+            if refresh_task is not None:
+                refresh_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await refresh_task
+            await _TASK_STORE.release_task_lock(task_id, owner_id)

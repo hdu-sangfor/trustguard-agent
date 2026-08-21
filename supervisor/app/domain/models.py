@@ -25,6 +25,7 @@ class ActivityStep(ApiModel):
 
 
 class PentestDraft(ApiModel):
+    workflow_id: Literal["pentest"] = "pentest"
     name: str
     target: str
     description: str = ""
@@ -34,6 +35,19 @@ class PentestDraft(ApiModel):
     allow_exploit: bool = False
     allow_destructive_actions: bool = False
     max_duration_seconds: int = Field(default=900, ge=60, le=86400)
+
+
+class AlertTriageDraft(ApiModel):
+    workflow_id: Literal["alert_triage"] = "alert_triage"
+    # An empty value is kept in clarification responses. The workflow policy
+    # prevents issuing a confirmation token until the UUID is valid.
+    alert_uuid: str = Field(default="", max_length=160)
+    scenario_id: str | None = Field(default=None, max_length=160)
+    enable_rag: bool = False
+    caller_notes: str = Field(default="", max_length=4000)
+
+
+WorkflowDraft = PentestDraft | AlertTriageDraft
 
 
 class DraftRequest(ApiModel):
@@ -47,7 +61,7 @@ class DraftResponse(ApiModel):
     conversation_id: str
     draft_id: str | None = None
     confirmation_token: str | None = None
-    draft: PentestDraft | None = None
+    draft: WorkflowDraft | None = None
     missing_fields: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     assistant_message: str
@@ -60,7 +74,7 @@ class ConversationMessage(ApiModel):
     role: Literal["user", "assistant"]
     text: str = Field(max_length=20000)
     activities: list[ActivityStep] = Field(default_factory=list)
-    draft: PentestDraft | None = None
+    draft: WorkflowDraft | None = None
     confirmation_token: str | None = None
     task_id: str | None = Field(default=None, max_length=128)
     task_status: str | None = Field(default=None, max_length=32)
@@ -72,7 +86,7 @@ class ConversationMessageRequest(ApiModel):
     role: Literal["user", "assistant"] = "assistant"
     text: str = Field(max_length=20000)
     activities: list[ActivityStep] = Field(default_factory=list)
-    draft: PentestDraft | None = None
+    draft: WorkflowDraft | None = None
     confirmation_token: str | None = None
     task_id: str | None = Field(default=None, max_length=128)
     task_status: str | None = Field(default=None, max_length=32)
@@ -116,7 +130,8 @@ class ConsumeDraftRequest(ApiModel):
 class ConsumeDraftResponse(ApiModel):
     draft_id: str
     conversation_id: str
-    draft: PentestDraft
+    draft: WorkflowDraft
+    workflow_id: Literal["pentest", "alert_triage"] = "pentest"
     confirmation_state: Literal["CLAIMED", "COMPLETED"] = "CLAIMED"
     task_id: str | None = None
 

@@ -68,6 +68,8 @@ const AuditPage = lazy(reloadOnChunkError(() => import("@/features/audit/AuditPa
 const KnowledgePage = lazy(reloadOnChunkError(() => import("@/features/knowledge/KnowledgePage")));
 const KnowledgeCollectionPage = lazy(reloadOnChunkError(() => import("@/features/knowledge-collection/KnowledgeCollectionPage")));
 const KnowledgeReviewPage = lazy(reloadOnChunkError(() => import("@/features/knowledge-review/KnowledgeReviewPage")));
+const TriagePage = lazy(reloadOnChunkError(() => import("@/features/triage/TriagePage")));
+const TriageDetailPage = lazy(reloadOnChunkError(() => import("@/features/triage/TriageDetailPage")));
 const TaskAgentPage = lazy(reloadOnChunkError(() => import("@/features/agent/TaskAgentPage")));
 import { AppSessionProvider } from "@/shared/context/AppSessionContext";
 import { SENTINEL_ORBIT_TASKS_KEY, ORBIT_TASKS_UPDATED_EVENT, type StoredOrbitTask } from "@/shared/constants/orbitTasksStorage";
@@ -201,6 +203,8 @@ const App = () => {
                 <Route path="/stats" element={<StatsPage />} />
                 <Route path="/vulns" element={<VulnsPage />} />
                 <Route path="/batch" element={<BatchPage />} />
+                <Route path="/triage" element={<TriagePage />} />
+                <Route path="/triage/:taskId" element={<TriageDetailPage />} />
                 <Route path="/dashboard" element={<DashboardPage />} />
                 <Route path="/audit" element={<AuditPage />} />
                 <Route path="/knowledge" element={<KnowledgePage />} />

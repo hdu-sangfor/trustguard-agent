@@ -64,3 +64,9 @@ jobs:
         env:
           PYTHONPATH: .
         run: uv run --locked --no-dev --no-sync python -c "import app.main"
+
+      - name: Run evidence unit tests
+        working-directory: evidence
+        run: >-
+          uv run --locked --no-sync --with pytest --with httpx
+          pytest -c ../tests/pytest.ini ../tests/unit/evidence -q
