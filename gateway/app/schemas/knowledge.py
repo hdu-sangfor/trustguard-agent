@@ -190,6 +190,12 @@ class KnowledgeCrawlerCreateRequest(BaseModel):
     force: bool = False
     review_mode: Literal["human", "agent"] = "human"
     review_criteria: str = Field(default="", max_length=8_000)
+    schedule_enabled: bool = False
+    schedule_interval_minutes: int | None = Field(
+        default=None,
+        ge=5,
+        le=525_600,
+    )
 
     @model_validator(mode="after")
     def validate_collection_source(self) -> "KnowledgeCrawlerCreateRequest":
@@ -220,6 +226,8 @@ class KnowledgeCrawlerCreateRequest(BaseModel):
                 raise ValueError("采集来源不能包含空白项")
         if self.review_mode == "agent" and not self.review_criteria.strip() and not self.preset_ids:
             raise ValueError("Agent 审核必须填写审核标准")
+        if self.schedule_enabled and self.schedule_interval_minutes is None:
+            raise ValueError("周期采集必须设置采集周期")
         return self
 
 

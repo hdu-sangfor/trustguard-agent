@@ -1519,6 +1519,17 @@ export interface ApiKnowledgeCrawlerDefaults {
   agent_review_model?: string | null;
 }
 
+export interface ApiKnowledgeCrawlerSource {
+  id: string;
+  knowledge_base_id: string;
+  preset_ids: string[];
+  schedule_enabled: boolean;
+  schedule_interval_minutes?: number | null;
+  next_run_at?: string | null;
+  last_run_at?: string | null;
+  last_success_at?: string | null;
+}
+
 export interface ApiKnowledgeCrawlerJob {
   id: string;
   knowledge_base_id: string;
@@ -1593,6 +1604,10 @@ export async function getKnowledgeCrawlerDefaults(): Promise<ApiKnowledgeCrawler
   return apiFetch<ApiKnowledgeCrawlerDefaults>('/api/v1/knowledge/crawler/defaults');
 }
 
+export async function listKnowledgeCrawlerSources(): Promise<{ items: ApiKnowledgeCrawlerSource[]; total: number }> {
+  return apiFetch<{ items: ApiKnowledgeCrawlerSource[]; total: number }>('/api/v1/knowledge/crawler/registry');
+}
+
 export async function listKnowledgeCrawlerJobs(params?: {
   knowledgeBaseId?: string;
   offset?: number;
@@ -1634,6 +1649,8 @@ export async function createKnowledgeCrawlerJob(params: {
   force: boolean;
   reviewMode: 'human' | 'agent';
   reviewCriteria: string;
+  scheduleEnabled: boolean;
+  scheduleIntervalMinutes?: number | null;
 }): Promise<ApiKnowledgeCrawlerJob> {
   return apiFetch<ApiKnowledgeCrawlerJob>('/api/v1/knowledge/crawler/jobs', {
     method: 'POST',
@@ -1654,6 +1671,8 @@ export async function createKnowledgeCrawlerJob(params: {
       force: params.force,
       review_mode: params.reviewMode,
       review_criteria: params.reviewCriteria,
+      schedule_enabled: params.scheduleEnabled,
+      schedule_interval_minutes: params.scheduleEnabled ? params.scheduleIntervalMinutes : null,
     }),
   });
 }
@@ -1662,9 +1681,11 @@ export async function controlKnowledgeCrawlerJob(
   jobId: string,
   action: 'pause' | 'resume' | 'stop',
   knowledgeBaseId?: string,
+  stopSchedule = false,
 ): Promise<ApiKnowledgeCrawlerJob> {
   const search = new URLSearchParams();
   if (knowledgeBaseId) search.set('knowledge_base_id', knowledgeBaseId);
+  if (action === 'stop' && stopSchedule) search.set('stop_schedule', 'true');
   const suffix = search.size ? `?${search.toString()}` : '';
   return apiFetch<ApiKnowledgeCrawlerJob>(
     `/api/v1/knowledge/crawler/jobs/${encodeURIComponent(jobId)}/${action}${suffix}`,

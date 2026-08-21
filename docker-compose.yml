@@ -39,6 +39,9 @@ services:
       MYSQL_DATABASE: ${MYSQL_DATABASE:-trustguard_agent}
       MYSQL_USER: ${MYSQL_USER:-trustguard}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-trustguard}
+    ports:
+      # Agent 使用独立宿主机端口，避免与本机 MySQL 或其他项目冲突。
+      - "${TRUSTGUARD_BIND_HOST:-127.0.0.1}:${AGENT_MYSQL_HOST_PORT:-8110}:3306"
     volumes:
       - mysql_data:/var/lib/mysql
       - ./docker/mysql-init.d:/docker-entrypoint-initdb.d:ro
@@ -52,6 +55,8 @@ services:
   redis:
     image: ${REDIS_IMAGE:-${DOCKERHUB_REGISTRY:-docker.io}/library/redis:7-alpine}
     restart: unless-stopped
+    ports:
+      - "${TRUSTGUARD_BIND_HOST:-127.0.0.1}:${AGENT_REDIS_HOST_PORT:-8111}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -61,6 +66,9 @@ services:
   rabbitmq:
     image: ${RABBITMQ_IMAGE:-${DOCKERHUB_REGISTRY:-docker.io}/library/rabbitmq:3-management-alpine}
     restart: unless-stopped
+    ports:
+      - "${TRUSTGUARD_BIND_HOST:-127.0.0.1}:${AGENT_RABBITMQ_HOST_PORT:-8112}:5672"
+      - "${TRUSTGUARD_BIND_HOST:-127.0.0.1}:${AGENT_RABBITMQ_MANAGEMENT_HOST_PORT:-8113}:15672"
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "ping"]
       interval: 10s
@@ -70,6 +78,9 @@ services:
 
   qdrant:
     image: ${QDRANT_IMAGE:-${DOCKERHUB_REGISTRY:-docker.io}/qdrant/qdrant:latest}
+    ports:
+      - "${TRUSTGUARD_BIND_HOST:-127.0.0.1}:${AGENT_QDRANT_HTTP_HOST_PORT:-8114}:6333"
+      - "${TRUSTGUARD_BIND_HOST:-127.0.0.1}:${AGENT_QDRANT_GRPC_HOST_PORT:-8115}:6334"
     volumes:
       - qdrant_data:/qdrant/storage
     restart: unless-stopped
@@ -83,6 +94,8 @@ services:
       network: *build-network
     image: ${TRUSTGUARD_IMAGE_PREFIX:-trustguard-}evidence
     restart: unless-stopped
+    ports:
+      - "${TRUSTGUARD_BIND_HOST:-127.0.0.1}:${AGENT_EVIDENCE_HOST_PORT:-8103}:18103"
     environment:
       MYSQL_HOST: mysql
       MYSQL_PORT: 3306
@@ -141,6 +154,8 @@ services:
       network: *build-network
     image: ${TRUSTGUARD_IMAGE_PREFIX:-trustguard-}orchestrator
     restart: unless-stopped
+    ports:
+      - "${TRUSTGUARD_BIND_HOST:-127.0.0.1}:${AGENT_ORCHESTRATOR_HOST_PORT:-8101}:18081"
     environment:
       <<: *python-env
       EVIDENCE_BASE_URL: http://evidence:18103
@@ -218,6 +233,8 @@ services:
     restart: unless-stopped
     working_dir: /srv/executor
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "18102"]
+    ports:
+      - "${TRUSTGUARD_BIND_HOST:-127.0.0.1}:${AGENT_EXECUTOR_HOST_PORT:-8102}:18102"
     environment:
       <<: *python-env
       TRUSTGUARD_TOOLS_ROOT: /app/TRUSTGUARD_TOOLS_ROOT
@@ -292,7 +309,7 @@ services:
     image: ${TRUSTGUARD_IMAGE_PREFIX:-trustguard-}gateway
     restart: unless-stopped
     ports:
-      - "${TRUSTGUARD_BIND_HOST:-127.0.0.1}:18080:18080"
+      - "${TRUSTGUARD_BIND_HOST:-127.0.0.1}:${AGENT_GATEWAY_HOST_PORT:-8100}:18080"
     environment:
       MYSQL_HOST: mysql
       MYSQL_PORT: 3306
@@ -336,7 +353,7 @@ services:
       network: *build-network
     image: ${TRUSTGUARD_IMAGE_PREFIX:-trustguard-}frontend
     ports:
-      - "${TRUSTGUARD_BIND_HOST:-127.0.0.1}:17999:80"
+      - "${TRUSTGUARD_BIND_HOST:-127.0.0.1}:${AGENT_FRONTEND_HOST_PORT:-8199}:80"
     depends_on:
       gateway: { condition: service_healthy }
     restart: unless-stopped
