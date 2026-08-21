@@ -18,7 +18,7 @@ from typing import Any, Literal, TypedDict
 
 # from ..clients import xdr_client, rag_client
 # from ..clients.trace_client import emit_trace
-# 
+#
 # from ..models import TraceEvent
 
 from .models import (
@@ -925,9 +925,9 @@ RAG 知识: {rag_summary}
     token_usage = TokenUsage()
     try:
         import os, httpx, asyncio
-        
+
         from clients.llm_client import _load_provider_config, _build_llm_headers
-        
+
         cfg = _load_provider_config()
         headers = _build_llm_headers(cfg)
         payload = {

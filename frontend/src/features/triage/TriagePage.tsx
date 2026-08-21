@@ -192,7 +192,7 @@ const TriagePage = () => {
           </label>
         </div>
 
-        
+
         {/* Quick presets — 快速预设告警 */}
         <div style={{ marginBottom: 32 }}>
           <div style={{ fontSize: 10, color: "var(--tg-text-muted)", marginBottom: 5, letterSpacing: "0.04em", fontFamily: "monospace" }}>快速预设告警</div>

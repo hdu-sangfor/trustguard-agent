@@ -18,7 +18,7 @@ Agent 发起的采集默认启用人工审核闸门：清洗结果先进入 RAG 
 配置 `.env` 后通过根目录 `docker compose` 启动 Agent。知识中心相关配置：
 
 ```dotenv
-RAG_SERVICE_BASE_URL=http://host.docker.internal:8200
+RAG_SERVICE_BASE_URL=http://host.docker.internal:18200
 RAG_GATEWAY_SERVICE_TOKEN=replace-with-a-different-long-random-service-token
 AUTH_TOKEN_SECRET=replace-with-a-random-long-secret
 AUTH_TOKEN_TTL_SECONDS=86400
