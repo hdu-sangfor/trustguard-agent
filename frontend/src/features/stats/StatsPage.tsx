@@ -9,7 +9,10 @@ import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import Header from "@/shared/components/Header";
+import PageTitle from "@/shared/components/PageTitle";
 import { useAppSession } from "@/shared/context/AppSessionContext";
+import { DEMO_FALLBACK_ENABLED } from "@/shared/constants/demoFallback";
+import "@/shared/styles/console-pages.css";
 import {
   getAnalyticsOverview, getTaskStats,
   type ApiAnalyticsOverview, type ApiTaskStats,
@@ -134,7 +137,7 @@ function SummaryCard({ label, value, sub, color }: {
   label: string; value: string | number; sub?: string; color: string;
 }) {
   return (
-    <div style={{
+    <div className="stats-summary-card" style={{
       background: `${color}08`, border: `1px solid ${color}25`,
       borderRadius: 12, padding: "20px 22px",
       display: "flex", flexDirection: "column", gap: 4,
@@ -285,17 +288,20 @@ export default function StatsPage() {
       setOverview(data);
       setDemoMode(false);
     } catch {
-      // Backend unavailable — build demo from localStorage
-      try {
-        const ts = await getTaskStats();
-        const demo = buildDemoSnapshot();
-        demo.task_stats = ts;
-        demo.completion_rate = ts.total > 0 ? ts.done / ts.total : demo.completion_rate;
-        setOverview(demo);
-      } catch {
-        setOverview(buildDemoSnapshot());
+      if (DEMO_FALLBACK_ENABLED) {
+        try {
+          const ts = await getTaskStats();
+          const demo = buildDemoSnapshot();
+          demo.task_stats = ts;
+          demo.completion_rate = ts.total > 0 ? ts.done / ts.total : demo.completion_rate;
+          setOverview(demo);
+        } catch {
+          setOverview(buildDemoSnapshot());
+        }
+      } else {
+        setOverview(null);
       }
-      setDemoMode(true);
+      setDemoMode(DEMO_FALLBACK_ENABLED);
     } finally {
       setLoading(false);
       setLastRefresh(new Date());
@@ -309,7 +315,10 @@ export default function StatsPage() {
   }, [load]);
 
   const stats = overview?.task_stats;
-  const vulnSeverity = computeVulnSeverity();
+  const hasDemoVulnData = demoMode && DEMO_FALLBACK_ENABLED;
+  const vulnSeverity = hasDemoVulnData
+    ? computeVulnSeverity()
+    : VULN_SEVERITY_META.map((meta) => ({ ...meta, count: 0 }));
   const totalVulns = vulnSeverity.reduce((s, v) => s + v.count, 0);
 
   // Top skills sorted by count
@@ -333,29 +342,30 @@ export default function StatsPage() {
   const totalEvents = Object.values(overview?.event_type_breakdown ?? {}).reduce((s, v) => s + v, 0);
 
   return (
-    <div style={{
+    <div className="tg-console-page tg-console-page--stats" style={{
       minHeight: "100vh",
       background: "linear-gradient(180deg, #0a0f1e 0%, #0f172a 50%, #0a0f1e 100%)",
       paddingTop: 60,
     }}>
       <Header />
 
-      <div style={{ maxWidth: 1280, margin: "0 auto", padding: "28px 20px" }}>
+      <div className="tg-console-shell" style={{ maxWidth: 1280, margin: "0 auto", padding: "28px 20px" }}>
 
-        {/* Breadcrumb + refresh */}
-        <div style={{ marginBottom: 20, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-          <button type="button" onClick={() => navigate(-1)}
-            style={{ background: "none", border: "none", color: "rgba(148,163,184,0.5)", cursor: "pointer", fontSize: 12, fontFamily: "monospace", padding: 0 }}>
-            ← 返回
-          </button>
-          <span style={{ color: "rgba(71,85,105,0.4)", fontSize: 12 }}>/</span>
-          <span style={{ color: "rgba(148,163,184,0.55)", fontSize: 12, fontFamily: "monospace" }}>统计分析</span>
-          {demoMode && (
-            <span style={{ fontSize: 10, padding: "1px 8px", borderRadius: 4, background: "rgba(251,191,36,0.1)", border: "1px solid rgba(251,191,36,0.3)", color: "#fbbf24", fontFamily: "monospace" }}>
-              演示模式
-            </span>
-          )}
-          <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+        <PageTitle
+          eyebrow="TRUSTGUARD ANALYTICS OVERVIEW"
+          title="统计分析"
+          description={
+            <>
+              平台累计渗透测试统计、漏洞分布、技能使用情况与活动趋势。
+              {demoMode && <span style={{ marginLeft: 10, color: "#fbbf24" }}>○ 演示模式</span>}
+            </>
+          }
+          actions={
+            <>
+            <button type="button" onClick={() => navigate(-1)}
+              style={{ background: "none", border: "none", color: "rgba(148,163,184,0.5)", cursor: "pointer", fontSize: 12, fontFamily: "monospace", padding: 0 }}>
+              ← 返回
+            </button>
             {lastRefresh && (
               <span style={{ fontSize: 10, color: "rgba(148,163,184,0.3)", fontFamily: "monospace" }}>
                 {lastRefresh.toLocaleTimeString("zh-CN", { hour12: false })}
@@ -369,8 +379,9 @@ export default function StatsPage() {
               }}>
               ⟳ 刷新
             </button>
-          </span>
-        </div>
+            </>
+          }
+        />
 
         {loading ? (
           <div style={{ textAlign: "center", padding: "80px 0", color: "rgba(148,163,184,0.3)", fontFamily: "monospace", fontSize: 13 }}>
@@ -379,7 +390,7 @@ export default function StatsPage() {
         ) : !overview ? null : (
           <>
             {/* ── Summary cards row ── */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 20 }}>
+            <div className="stats-summary-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 20 }}>
               <SummaryCard
                 label="累计任务"
                 value={overview.task_stats.total}
@@ -388,8 +399,8 @@ export default function StatsPage() {
               />
               <SummaryCard
                 label="已发现漏洞"
-                value={totalVulns}
-                sub={`严重/高危 ${vulnSeverity[0].count + vulnSeverity[1].count} 个`}
+                value={hasDemoVulnData ? totalVulns : "—"}
+                sub={hasDemoVulnData ? `严重/高危 ${vulnSeverity[0].count + vulnSeverity[1].count} 个` : "暂无聚合数据"}
                 color="#f87171"
               />
               <SummaryCard
@@ -407,11 +418,11 @@ export default function StatsPage() {
             </div>
 
             {/* ── Second row: Task ring + Severity bars ── */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+            <div className="stats-grid-row" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
 
               {/* Task status distribution */}
               {stats && (
-                <div style={{
+                <div className="stats-panel" style={{
                   background: "rgba(15,23,42,0.7)", border: "1px solid rgba(71,85,105,0.28)",
                   borderRadius: 12, padding: "18px 20px",
                 }}>
@@ -433,7 +444,7 @@ export default function StatsPage() {
               )}
 
               {/* Vulnerability severity distribution */}
-              <div style={{
+              <div className="stats-panel" style={{
                 background: "rgba(15,23,42,0.7)", border: "1px solid rgba(71,85,105,0.28)",
                 borderRadius: 12, padding: "18px 20px",
               }}>
@@ -464,11 +475,11 @@ export default function StatsPage() {
             </div>
 
             {/* ── Third row: Top Skills + Top CVEs ── */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+            <div className="stats-grid-row" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
 
               {/* Top skills usage */}
               {topSkills.length > 0 && (
-                <div style={{
+                <div className="stats-panel" style={{
                   background: "rgba(15,23,42,0.7)", border: "1px solid rgba(71,85,105,0.28)",
                   borderRadius: 12, padding: "18px 20px",
                 }}>
@@ -490,7 +501,7 @@ export default function StatsPage() {
               )}
 
               {/* Top CVEs / vulnerabilities */}
-              <div style={{
+              <div className="stats-panel" style={{
                 background: "rgba(15,23,42,0.7)", border: "1px solid rgba(71,85,105,0.28)",
                 borderRadius: 12, padding: "18px 20px",
               }}>
@@ -498,7 +509,11 @@ export default function StatsPage() {
                   高危漏洞概览
                 </div>
                 <div style={{ display: "flex", flexDirection: "column" }}>
-                  {DEMO_TOP_VULNS.map((v, i) => {
+                  {!hasDemoVulnData ? (
+                    <div style={{ padding: "28px 0", textAlign: "center", color: "rgba(148,163,184,0.45)", fontSize: 12 }}>
+                      暂无后端漏洞聚合数据
+                    </div>
+                  ) : DEMO_TOP_VULNS.map((v, i) => {
                     const cvssColor = v.cvss >= 9.0 ? "#ef4444" : v.cvss >= 7.0 ? "#f97316" : "#eab308";
                     return (
                       <div key={i} style={{
@@ -529,7 +544,7 @@ export default function StatsPage() {
 
             {/* ── Event activity breakdown ── */}
             {totalEvents > 0 && (
-              <div style={{
+              <div className="stats-panel" style={{
                 background: "rgba(15,23,42,0.7)", border: "1px solid rgba(71,85,105,0.28)",
                 borderRadius: 12, padding: "18px 20px", marginBottom: 16,
               }}>
@@ -565,7 +580,7 @@ export default function StatsPage() {
             )}
 
             {/* ── Quick nav ── */}
-            <div style={{
+            <div className="stats-nav-strip" style={{
               marginTop: 4, padding: "12px 16px",
               background: "rgba(15,23,42,0.45)", border: "1px solid rgba(71,85,105,0.18)",
               borderRadius: 10, display: "flex", gap: 16, flexWrap: "wrap",

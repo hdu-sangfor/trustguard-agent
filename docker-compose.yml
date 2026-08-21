@@ -123,6 +123,8 @@ services:
       network: *build-network
     image: ${TRUSTGUARD_IMAGE_PREFIX:-trustguard-}supervisor
     restart: unless-stopped
+    ports:
+      - "${TRUSTGUARD_BIND_HOST:-127.0.0.1}:${AGENT_SUPERVISOR_HOST_PORT:-8104}:18082"
     environment:
       REDIS_URL: redis://redis:6379/0
       SUPERVISOR_STORE_BACKEND: redis

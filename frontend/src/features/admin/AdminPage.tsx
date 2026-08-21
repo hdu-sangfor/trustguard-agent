@@ -3,7 +3,10 @@ import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { PieChart, Pie, Cell, Tooltip } from 'recharts';
 import Header from "@/shared/components/Header";
+import PageTitle from "@/shared/components/PageTitle";
 import { useAppSession } from "@/shared/context/AppSessionContext";
+import { DEMO_FALLBACK_ENABLED } from "@/shared/constants/demoFallback";
+import "@/shared/styles/console-pages.css";
 import {
   getSliSnapshot, getMqStatus, getV1Overview, getSystemHealth, getTaskStats,
   listTasks, createTask, runTask, stopTask, resumeTask, deleteTask,
@@ -18,7 +21,7 @@ function MetricCard({
   title, color, border, children,
 }: { title: string; color: string; border: string; children: React.ReactNode }) {
   return (
-    <div style={{
+    <div className="admin-metric-card" style={{
       background: "rgba(2,6,23,0.75)",
       border: `1px solid ${border}`,
       borderRadius: 12,
@@ -305,8 +308,9 @@ const AdminPage = () => {
       const data = await getSkillRegistry(phase || undefined);
       setSkillRegistry(data);
     } catch {
-      // Backend offline — use static demo registry (client-side phase filter)
-      if (phase) {
+      if (!DEMO_FALLBACK_ENABLED) {
+        setSkillRegistry(null);
+      } else if (phase) {
         const filtered = DEMO_SKILL_REGISTRY.skills.filter((s) =>
           (s.category || "").toUpperCase().includes(phase.toUpperCase())
         );
@@ -347,8 +351,7 @@ const AdminPage = () => {
       const list = await listUsers();
       setUsers(list);
     } catch {
-      // Backend offline — fall back to demo user list so panel isn't empty
-      setUsers(DEMO_USERS);
+      setUsers(DEMO_FALLBACK_ENABLED ? DEMO_USERS : []);
     } finally {
       setUsersLoading(false);
     }
@@ -451,29 +454,16 @@ const AdminPage = () => {
   const schedActiveTasks = v1?.v1_scheduling?.active_tasks;
 
   return (
-    <div style={{ minHeight: "100vh", background: "#020a12", paddingBottom: 60 }}>
+    <div className="tg-console-page tg-console-page--admin" style={{ minHeight: "100vh", background: "#020a12", paddingBottom: 60 }}>
       <Header />
-      <div style={{ paddingTop: 80, maxWidth: 1100, margin: "0 auto", padding: "80px 24px 60px" }}>
+      <div className="tg-console-shell" style={{ paddingTop: 80, maxWidth: 1100, margin: "0 auto", padding: "80px 24px 60px" }}>
 
-        {/* Title row */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 28 }}>
-          <div>
-            <h1 style={{
-              fontFamily: "'Courier New', monospace",
-              fontSize: "clamp(1.3rem, 3vw, 2rem)",
-              fontWeight: 800,
-              color: "#22d3ee",
-              letterSpacing: "0.12em",
-              textShadow: "0 0 20px rgba(34,211,238,0.4)",
-              margin: 0,
-            }}>
-              平台管理中心
-            </h1>
-            <div style={{ color: "#475569", fontFamily: "monospace", fontSize: 11, marginTop: 4, letterSpacing: "0.05em" }}>
-              TRUSTGUARD AGENT — ADMIN DASHBOARD
-            </div>
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <PageTitle
+          eyebrow="TRUSTGUARD ADMIN DASHBOARD"
+          title="平台管理中心"
+          description="平台健康、任务、技能、配置、用户和审计的统一管理入口。"
+          actions={
+            <>
             {lastRefresh && (
               <span style={{ color: "#475569", fontFamily: "monospace", fontSize: 11 }}>
                 刷新于 {lastRefresh.toLocaleTimeString("zh-CN")}
@@ -494,11 +484,12 @@ const AdminPage = () => {
             >
               {loading ? "刷新中…" : "↻ 刷新"}
             </button>
-          </div>
-        </div>
+            </>
+          }
+        />
 
         {/* System health banner */}
-        <div style={{
+        <div className="admin-status-strip" style={{
           marginBottom: 24, padding: "12px 18px", borderRadius: 8,
           background: backendOk ? "rgba(52,211,153,0.07)" : "rgba(248,113,113,0.07)",
           border: `1px solid ${backendOk ? "rgba(52,211,153,0.25)" : "rgba(248,113,113,0.25)"}`,
@@ -539,7 +530,7 @@ const AdminPage = () => {
             { id: 'audit',   label: '审计日志', color: '#f472b6' },
           ];
           return (
-            <div style={{ display: "flex", gap: 4, marginBottom: 20, borderBottom: "1px solid rgba(51,65,85,0.5)", paddingBottom: 0 }}>
+            <div className="admin-tabs" style={{ display: "flex", gap: 4, marginBottom: 20, borderBottom: "1px solid rgba(51,65,85,0.5)", paddingBottom: 0 }}>
               {tabs.map((tab) => {
                 const isActive = activeTab === tab.id;
                 return (
@@ -571,7 +562,7 @@ const AdminPage = () => {
         {activeTab === 'monitor' && (<>
 
         {/* Metrics grid */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16, marginBottom: 20 }}>
+        <div className="admin-metric-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16, marginBottom: 20 }}>
 
           {/* SLI Card */}
           <MetricCard title="SLI 快照" color="#22d3ee" border="rgba(34,211,238,0.25)">

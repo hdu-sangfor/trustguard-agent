@@ -2,6 +2,7 @@ import { useState, type CSSProperties } from "react";
 import { Bot, MessageSquareText, Quote, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
 
+import { DEMO_FALLBACK_ENABLED } from "@/shared/constants/demoFallback";
 import {
   answerKnowledge,
   type ApiKnowledgeAnswerResponse,
@@ -32,6 +33,60 @@ interface KnowledgeAnswerPanelProps {
   bases: ApiKnowledgeBase[];
   selectedBaseId: string;
   onSelectedBaseIdChange: (knowledgeBaseId: string) => void;
+}
+
+function buildDemoAnswer(question: string, knowledgeBaseId: string, retrievalMode: RetrievalMode): ApiKnowledgeAnswerResponse {
+  return {
+    query: question,
+    knowledge_base_id: knowledgeBaseId,
+    status: "answered",
+    answer: [
+      "基于当前知识库，Agent 应先做指纹与前置条件确认，再执行最小化验证，最后把发现进入误报审核与报告生成流程。",
+      "",
+      "以 Shiro RememberMe 为例，不能只因为出现 rememberMe Cookie 就直接判定可利用漏洞；需要结合响应特征、受控 payload 结果和执行证据判断。如果证据不足，应标记为 SUSPICIOUS 或 UNVERIFIED，并在报告中保留待复核原因。",
+      "",
+      "修复侧建议给出可执行动作：升级受影响组件、限制异常入口或上传入口、在网关侧增加异常请求检测，并安排复测任务验证修复结果。",
+    ].join("\n"),
+    citations: [
+      {
+        citation_id: 1,
+        chunk_id: "chunk-shiro-1",
+        document_id: "doc-shiro-rememberme",
+        source_uri: "knowledge://trustguard/shiro-rememberme.md",
+        original_filename: "shiro-rememberme-validation.md",
+        chunk_index: 0,
+        page_no: 1,
+        excerpt: "识别 Shiro RememberMe 后，不应仅凭 Cookie 字段直接判定高危。Agent 需要先提取响应特征、确认 rememberMe 序列化行为，再使用安全 payload 做最小化验证。",
+      },
+      {
+        citation_id: 2,
+        chunk_id: "chunk-report-1",
+        document_id: "doc-agent-report-template",
+        source_uri: "knowledge://trustguard/report-template.docx",
+        original_filename: "agent-evidence-report-template.docx",
+        chunk_index: 0,
+        page_no: null,
+        excerpt: "报告模板按任务概览、发现摘要、证据链、误报审核、修复建议和复测结论组织。每条发现必须关联到任务阶段、工具输出、Agent 决策和人工确认状态。",
+      },
+    ],
+    search_status: "ok",
+    effective_mode: retrievalMode,
+    degraded_components: [],
+    abstained: false,
+    abstention_reason: null,
+    query_entities: ["Shiro", "Agent", "误报审核"],
+    retrieved_count: 4,
+    context_chunk_count: 2,
+    context_token_count: 318,
+    retrieval_time_ms: 38.4,
+    generation_time_ms: 126.9,
+    total_time_ms: 165.3,
+    model: "demo-grounded-answer",
+    usage: { prompt_tokens: 880, completion_tokens: 240, total_tokens: 1120 },
+    query_plan: { demo: true, mode: retrievalMode },
+    coverage_status: "sufficient",
+    coverage_warning: null,
+  };
 }
 
 export default function KnowledgeAnswerPanel({
@@ -78,7 +133,12 @@ export default function KnowledgeAnswerPanel({
         enableRerank,
       }));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "知识问答失败");
+      if (DEMO_FALLBACK_ENABLED) {
+        setResult(buildDemoAnswer(normalizedQuestion, selectedBaseId, mode));
+        toast.warning(error instanceof Error ? `知识问答接口不可用，已返回演示回答：${error.message}` : "知识问答接口不可用，已返回演示回答");
+      } else {
+        toast.error(error instanceof Error ? error.message : "知识问答失败");
+      }
     } finally {
       setAnswering(false);
     }

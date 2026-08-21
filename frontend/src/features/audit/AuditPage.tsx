@@ -9,8 +9,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import Header from "@/shared/components/Header";
+import PageTitle from "@/shared/components/PageTitle";
+import { DEMO_FALLBACK_ENABLED } from "@/shared/constants/demoFallback";
 import { useAppSession } from "@/shared/context/AppSessionContext";
 import { getAuditEvents, type ApiAuditEvent } from "@/shared/lib/api";
+import "@/shared/styles/console-pages.css";
 
 // ── Event type metadata ───────────────────────────────────────────────────────
 
@@ -83,7 +86,7 @@ const DEMO_EVENTS: ApiAuditEvent[] = [
 
 function KpiCard({ label, value, color, sub }: { label: string; value: number; color: string; sub?: string }) {
   return (
-    <div style={{
+    <div className="audit-kpi-card" style={{
       background: `${color}08`, border: `1px solid ${color}22`,
       borderRadius: 10, padding: "14px 16px",
       display: "flex", flexDirection: "column", gap: 3,
@@ -139,6 +142,7 @@ export default function AuditPage() {
   const [events, setEvents]         = useState<ApiAuditEvent[]>([]);
   const [loading, setLoading]       = useState(true);
   const [isDemo, setIsDemo]         = useState(false);
+  const [backendOnline, setBackendOnline] = useState(false);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [category, setCategory]     = useState<Category>("all");
   const [search, setSearch]         = useState("");
@@ -156,9 +160,11 @@ export default function AuditPage() {
       const data = await getAuditEvents(200);
       setEvents(data);
       setIsDemo(false);
+      setBackendOnline(true);
     } catch {
-      setEvents(DEMO_EVENTS);
-      setIsDemo(true);
+      setEvents(DEMO_FALLBACK_ENABLED ? DEMO_EVENTS : []);
+      setIsDemo(DEMO_FALLBACK_ENABLED);
+      setBackendOnline(false);
     } finally {
       setLoading(false);
       setLastRefresh(new Date());
@@ -203,28 +209,28 @@ export default function AuditPage() {
   if (!loggedIn) return null;
 
   return (
-    <div style={{ minHeight: "100vh", background: "#020a12", paddingTop: 80, paddingBottom: 60 }}>
+    <div className="tg-console-page tg-console-page--audit" style={{ minHeight: "100vh", background: "#020a12", paddingTop: 80, paddingBottom: 60 }}>
       <Header />
 
-      <div style={{ maxWidth: 1200, margin: "0 auto", padding: "0 24px" }}>
+      <div className="tg-console-shell" style={{ maxWidth: 1200, margin: "0 auto", padding: "0 24px" }}>
 
-        {/* ── Title row ── */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 22, flexWrap: "wrap", gap: 10 }}>
-          <div>
-            <h1 style={{ margin: "0 0 4px", fontSize: 20, fontWeight: 800, color: "#e2e8f0", fontFamily: "monospace", letterSpacing: "0.06em" }}>
-              审计日志
-              <span style={{ marginLeft: 12, fontSize: 11, color: "rgba(148,163,184,0.35)", fontWeight: 400 }}>Audit Log</span>
-            </h1>
-            <div style={{ fontSize: 11, fontFamily: "monospace", color: isDemo ? "rgba(251,191,36,0.7)" : "rgba(52,211,153,0.7)" }}>
-              {isDemo ? "○ 演示模式" : "● 实时审计"}
+        <PageTitle
+          eyebrow="TRUSTGUARD AUDIT LOG"
+          title="审计日志"
+          description={
+            <>
+              <span style={{ color: isDemo ? "rgba(251,191,36,0.7)" : "rgba(52,211,153,0.7)" }}>
+                {isDemo ? "○ 演示模式" : backendOnline ? "● 实时审计" : "○ 后端离线"}
+              </span>
               {lastRefresh && (
                 <span style={{ color: "rgba(100,116,139,0.5)", marginLeft: 10 }}>
                   {lastRefresh.toLocaleTimeString("zh-CN", { hour12: false })} · 30s自动刷新
                 </span>
               )}
-            </div>
-          </div>
-          <div style={{ display: "flex", gap: 8 }}>
+            </>
+          }
+          actions={
+            <>
             <button type="button" onClick={() => { setLoading(true); void fetchEvents(); }}
               style={{ padding: "6px 14px", borderRadius: 6, background: "rgba(34,211,238,0.08)", border: "1px solid rgba(34,211,238,0.3)", color: "#22d3ee", fontSize: 11, cursor: "pointer", fontFamily: "monospace" }}>
               {loading ? "刷新中…" : "↻ 刷新"}
@@ -237,12 +243,13 @@ export default function AuditPage() {
               style={{ padding: "6px 14px", borderRadius: 6, background: "transparent", border: "1px solid rgba(129,140,248,0.3)", color: "#818cf8", fontSize: 11, cursor: "pointer", fontFamily: "monospace" }}>
               平台管理 →
             </button>
-          </div>
-        </div>
+            </>
+          }
+        />
 
         {/* ── Demo banner ── */}
         {isDemo && (
-          <div style={{
+          <div className="audit-demo-banner" style={{
             marginBottom: 16, padding: "10px 16px",
             background: "rgba(251,191,36,0.06)", border: "1px solid rgba(251,191,36,0.25)", borderRadius: 8,
             fontSize: 11, fontFamily: "monospace", color: "rgba(251,191,36,0.75)",
@@ -252,7 +259,7 @@ export default function AuditPage() {
         )}
 
         {/* ── KPI cards ── */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, marginBottom: 18 }}>
+        <div className="audit-kpi-grid" style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, marginBottom: 18 }}>
           <KpiCard label="总事件"    value={kpi.total} color="#38bdf8" sub={`最近 200 条`} />
           <KpiCard label="登录认证"  value={kpi.auth}  color="#34d399" sub={`含 ${kpi.fail} 次失败`} />
           <KpiCard label="用户管理"  value={kpi.user}  color="#818cf8" />
@@ -261,7 +268,7 @@ export default function AuditPage() {
         </div>
 
         {/* ── Filter bar ── */}
-        <div style={{
+        <div className="audit-filter-bar" style={{
           marginBottom: 14, padding: "10px 14px",
           background: "rgba(15,23,42,0.6)", border: "1px solid rgba(51,65,85,0.4)",
           borderRadius: 8, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
@@ -304,7 +311,7 @@ export default function AuditPage() {
         </div>
 
         {/* ── Events table ── */}
-        <div style={{
+        <div className="audit-table-shell" style={{
           background: "rgba(15,23,42,0.6)", border: "1px solid rgba(51,65,85,0.5)",
           borderRadius: 10, overflow: "hidden",
         }}>
@@ -335,7 +342,7 @@ export default function AuditPage() {
         </div>
 
         {/* ── Navigation strip ── */}
-        <div style={{
+        <div className="audit-nav-strip" style={{
           marginTop: 20, padding: "10px 16px",
           background: "rgba(15,23,42,0.4)", border: "1px solid rgba(51,65,85,0.3)",
           borderRadius: 8, display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center",
