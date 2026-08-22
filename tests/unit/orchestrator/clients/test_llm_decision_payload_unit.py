@@ -1,11 +1,8 @@
 import json
-
 import pytest
-
 from tests.orchestrator_test_env import prepare_orchestrator_app_import
 
 prepare_orchestrator_app_import()
-
 from app.clients import llm_client
 
 
@@ -31,7 +28,6 @@ async def test_openai_decision_requests_disable_thinking_on_format_retry(monkeyp
 
     monkeypatch.setattr(llm_client, "_stream_chat_completions_collect", fake_stream)
     monkeypatch.setattr(llm_client, "_emit_llm_trace", fake_emit_trace)
-
     cfg = llm_client.LLMProviderConfig(
         provider=llm_client.LLMProvider.OPENAI_COMPAT,
         provider_source="openai_compat",
@@ -46,7 +42,6 @@ async def test_openai_decision_requests_disable_thinking_on_format_retry(monkeyp
         format_retries=1,
         json_mode=True,
     )
-
     parsed, usage = await llm_client._run_decision_llm_parse_loop(
         "task-test",
         cfg,
@@ -54,7 +49,6 @@ async def test_openai_decision_requests_disable_thinking_on_format_retry(monkeyp
         "user",
         parse_content,
     )
-
     assert parsed == {"ok": True}
     assert usage is None
     assert [payload["thinking"] for payload in payloads] == [
@@ -77,7 +71,6 @@ async def test_non_allowlisted_decision_request_does_not_send_thinking(monkeypat
 
     monkeypatch.setattr(llm_client, "_stream_chat_completions_collect", fake_stream)
     monkeypatch.setattr(llm_client, "_emit_llm_trace", fake_emit_trace)
-
     cfg = llm_client.LLMProviderConfig(
         provider=llm_client.LLMProvider.OPENAI_COMPAT,
         provider_source="openai_compat",
@@ -92,7 +85,6 @@ async def test_non_allowlisted_decision_request_does_not_send_thinking(monkeypat
         format_retries=0,
         json_mode=True,
     )
-
     parsed, _usage = await llm_client._run_decision_llm_parse_loop(
         "task-test",
         cfg,
@@ -100,6 +92,5 @@ async def test_non_allowlisted_decision_request_does_not_send_thinking(monkeypat
         "user",
         lambda content: (json.loads(content), ""),
     )
-
     assert parsed == {"ok": True}
     assert "thinking" not in payloads[0]
