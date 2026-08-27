@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import Header from "@/shared/components/Header";
 import { useAppSession } from "@/shared/context/AppSessionContext";
 import { ORBIT_TASKS_UPDATED_EVENT, SENTINEL_ORBIT_TASKS_KEY, readStoredOrbitTasks, type StoredOrbitTask } from "@/shared/constants/orbitTasksStorage";
-import { createTask as apiCreateTask, runTask as apiRunTask, stopTask as apiStopTask, resumeTask as apiResumeTask, tickTask as apiTickTask, listTasks as apiListTasks, deleteTask as apiDeleteTask, getTask, getTaskReport, getTaskObservation, getTaskTrace, getTaskTodos, getTaskExecutions, getExecutionRecord, getSliSnapshot, getMqStatus, getV1Overview, getTracePlan, getTraceCompile, toFrontendStatus, TRUSTGUARD_PHASES, type ApiTrace, type ApiSliSnapshot, type ApiMqStatus, type ApiExecutionRecord, type ApiTodo, type ApiV1Overview, type ApiObservation, type ApiTask } from "@/shared/lib/api";
+import { createTask as apiCreateTask, runTask as apiRunTask, stopTask as apiStopTask, resumeTask as apiResumeTask, tickTask as apiTickTask, listTasks as apiListTasks, deleteTask as apiDeleteTask, getTask, getTaskObservation, getTaskTrace, getTaskTodos, getTaskExecutions, getExecutionRecord, getSliSnapshot, getMqStatus, getV1Overview, getTracePlan, getTraceCompile, toFrontendStatus, TRUSTGUARD_PHASES, type ApiTrace, type ApiSliSnapshot, type ApiMqStatus, type ApiExecutionRecord, type ApiTodo, type ApiV1Overview, type ApiObservation, type ApiTask } from "@/shared/lib/api";
 import { elapsedForStatus, formatElapsed } from "@/shared/lib/time";
 import { readTaskViewMode, writeTaskViewMode } from "@/shared/lib/preferences";
 import { toast } from "sonner";
@@ -294,140 +294,6 @@ function formatTrace(data: ApiTrace): string {
   return parts.join('\n') || JSON.stringify(data, null, 2).slice(0, 600);
 }
 
-function renderMarkdownSimple(text: string): React.ReactNode {
-  const lines = text.split('\n');
-  // Pre-compute which line indices are table headers (row before a separator row)
-  const headerLineSet = new Set<number>();
-  const separatorLineSet = new Set<number>();
-  lines.forEach((line, i) => {
-    const t = line.trim();
-    if (t.startsWith('|') && t.endsWith('|')) {
-      const cells = t.slice(1, -1).split('|').map((c) => c.trim());
-      if (cells.every((c) => /^[-:]+$/.test(c))) {
-        separatorLineSet.add(i);
-        if (i > 0) headerLineSet.add(i - 1);
-      }
-    }
-  });
-
-  return lines.map((line, idx) => {
-    const key = idx;
-
-    // H1
-    if (line.startsWith('# ')) {
-      return (
-        <div key={key} style={{ color: "#67e8f9", fontWeight: 800, fontSize: 13, marginTop: 6, marginBottom: 2 }}>
-          {line.slice(2)}
-        </div>
-      );
-    }
-    // H2
-    if (line.startsWith('## ')) {
-      return (
-        <div key={key} style={{ color: "#a5f3fc", fontWeight: 700, fontSize: 12, marginTop: 5, marginBottom: 1 }}>
-          {line.slice(3)}
-        </div>
-      );
-    }
-    // H3
-    if (line.startsWith('### ')) {
-      return (
-        <div key={key} style={{ color: "#94a3b8", fontWeight: 700, fontSize: 11, marginTop: 4, marginBottom: 1 }}>
-          {line.slice(4)}
-        </div>
-      );
-    }
-    // HR
-    if (/^-{3,}$/.test(line.trim())) {
-      return <hr key={key} style={{ border: "none", borderTop: "1px solid rgba(51,65,85,0.4)", margin: "6px 0" }} />;
-    }
-    // Table row
-    if (line.trim().startsWith('|') && line.trim().endsWith('|')) {
-      // Skip separator rows
-      if (separatorLineSet.has(idx)) return null;
-      const cells = line.trim().slice(1, -1).split('|').map((c) => c.trim());
-      const isHeader = headerLineSet.has(idx);
-      return (
-        <div key={key} style={{ display: "flex", gap: 2, marginBottom: 1 }}>
-          {cells.map((cell, ci) => (
-            <span key={ci} style={{
-              flex: 1, padding: "2px 5px", borderRadius: 3, minWidth: 0,
-              background: isHeader ? "var(--tg-accent-soft)" : ci % 2 === 0 ? "var(--tg-panel-muted)" : "var(--tg-input-bg)",
-              color: isHeader ? "var(--tg-accent)" : "var(--tg-text-muted)",
-              fontWeight: isHeader ? 700 : 400,
-              fontSize: 10,
-              whiteSpace: "nowrap" as const,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-            }}>{cell}</span>
-          ))}
-        </div>
-      );
-    }
-    // Bold-only line
-    if (/^\*\*[^*]+\*\*$/.test(line.trim())) {
-      return (
-        <div key={key} style={{ color: "#e2e8f0", fontWeight: 700, fontSize: 10, marginTop: 2 }}>
-          {line.trim().slice(2, -2)}
-        </div>
-      );
-    }
-    // Blockquote
-    if (line.startsWith('> ')) {
-      const inner = line.slice(2);
-      return (
-        <div key={key} style={{
-          borderLeft: "3px solid rgba(251,191,36,0.5)", paddingLeft: 8, marginBottom: 2,
-          background: "rgba(251,191,36,0.05)", borderRadius: "0 3px 3px 0",
-          fontSize: 10, color: "#fde68a", fontStyle: "italic",
-        }}>
-          {inner.replace(/\*\*/g, '')}
-        </div>
-      );
-    }
-    // Code fence line (``` or ~~~)
-    if (/^(`{3,}|~{3,})/.test(line.trim())) {
-      return <div key={key} style={{ height: 2, borderBottom: "1px dashed rgba(51,65,85,0.4)", margin: "3px 0" }} />;
-    }
-    // Inline code-heavy line (backtick content)
-    if (line.includes('`')) {
-      const codeParts = line.split(/(`[^`]+`)/);
-      return (
-                <div key={key} style={{ color: "var(--tg-text-muted)", fontSize: 10, lineHeight: 1.6 }}>
-          {codeParts.map((p, pi) =>
-            p.startsWith('`') && p.endsWith('`') && p.length > 2
-              ? <code key={pi} style={{ background: "var(--tg-code-bg)", color: "var(--tg-accent)", padding: "0 3px", borderRadius: 3, fontFamily: "monospace", fontSize: 9 }}>{p.slice(1, -1)}</code>
-              : <span key={pi}>{p}</span>
-          )}
-        </div>
-      );
-    }
-    // Empty line
-    if (line.trim() === '') {
-      return <div key={key} style={{ height: 6 }} />;
-    }
-    // Regular line — handle inline **bold**
-    const parts = line.split(/(\*\*[^*]+\*\*)/);
-    if (parts.length > 1) {
-      return (
-        <div key={key} style={{ color: "var(--tg-text-muted)", fontSize: 10, lineHeight: 1.6 }}>
-          {parts.map((part, pi) => {
-            if (/^\*\*[^*]+\*\*$/.test(part)) {
-              return <strong key={pi} style={{ color: "var(--tg-text)", fontWeight: 700 }}>{part.slice(2, -2)}</strong>;
-            }
-            return <span key={pi}>{part}</span>;
-          })}
-        </div>
-      );
-    }
-    return (
-      <span key={key} style={{ color: "var(--tg-text-muted)", fontSize: 10, lineHeight: 1.6, display: "block" }}>
-        {line}
-      </span>
-    );
-  });
-}
-
 const TasksPage = () => {
   const { loggedIn } = useAppSession();
   const navigate = useNavigate();
@@ -484,6 +350,8 @@ const TasksPage = () => {
   const [maxRunDurationSeconds, setMaxRunDurationSeconds] = useState(900);
   const [observationData, setObservationData] = useState<ApiObservation | null>(null);
   const [observationLoading, setObservationLoading] = useState(false);
+  const [todosData, setTodosData] = useState<ApiTodo[] | null>(null);
+  const [todosLoading, setTodosLoading] = useState(false);
   const [traceText, setTraceText] = useState<string | null>(null);
   const [traceLoading, setTraceLoading] = useState(false);
   const [tracePlanData, setTracePlanData] = useState<Record<string, unknown> | null>(null);
@@ -493,14 +361,9 @@ const TasksPage = () => {
   const [executionsData, setExecutionsData] = useState<ApiExecutionRecord[] | null>(null);
   const [executionsLoading, setExecutionsLoading] = useState(false);
   const [executionsOffset, setExecutionsOffset] = useState(0);
-  const [todosData, setTodosData] = useState<ApiTodo[] | null>(null);
-  const [todosLoading, setTodosLoading] = useState(false);
   const [expandedExecId, setExpandedExecId] = useState<string | null>(null);
   const [execDetailCache, setExecDetailCache] = useState<Record<string, ApiExecutionRecord>>({});
   const [execDetailLoading, setExecDetailLoading] = useState<string | null>(null);
-  const [reportPreviewText, setReportPreviewText] = useState<string | null>(null);
-  const [reportPreviewLoading, setReportPreviewLoading] = useState(false);
-  const [reportExpanded, setReportExpanded] = useState(false);
   const [sliData, setSliData] = useState<ApiSliSnapshot | null>(null);
   const [mqData, setMqData] = useState<ApiMqStatus | null>(null);
   const [v1Data, setV1Data] = useState<ApiV1Overview | null>(null);
@@ -586,7 +449,7 @@ const TasksPage = () => {
     setTraceCompileData(null);
     setExpandedExecId(null);
     setConfirmDeleteId(null);
-    setReportPreviewText(null);
+
     setOpen(true);
     // Clear the param so refresh/close doesn't re-trigger
     setSearchParams((prev) => { prev.delete("taskId"); return prev; }, { replace: true });
@@ -773,7 +636,7 @@ const TasksPage = () => {
   useEffect(() => {
     setExecDetailCache({});
     setExecDetailLoading(null);
-    setReportPreviewText(null);
+
     setObservationData(null);
     setTraceText(null);
     setTracePlanData(null);
@@ -851,7 +714,7 @@ const TasksPage = () => {
         setExecutionsOffset(0);
         setTodosData(null);
         setExpandedExecId(null);
-        setReportPreviewText(null);
+
         setConfirmDeleteId(null);
       }
     };
@@ -954,42 +817,6 @@ const TasksPage = () => {
       .catch((e: Error) => toast.error(`创建并执行失败: ${e.message}`));
   };
 
-  // Skill → 修复建议 mapping
-  const SKILL_REMEDIATION: Record<string, { vuln: string; fix: string }> = {
-    sqlmap:           { vuln: "SQL 注入",           fix: "使用参数化查询/预编译语句；过滤并转义所有用户输入；部署 WAF；最小化数据库账号权限。" },
-    fenjing:          { vuln: "SSTI 模板注入",       fix: "禁止将用户输入直接传入模板引擎；使用沙箱隔离模板渲染；升级至最新框架版本。" },
-    "exploit-struts2":{ vuln: "Apache Struts2 RCE", fix: "立即升级至 Struts2 最新版本；禁止不必要的 OGNL 表达式处理；启用防火墙规则限制外部访问。" },
-    metasploit:       { vuln: "已知 CVE 漏洞利用",   fix: "及时应用官方补丁；关闭非必要端口和服务；实施纵深防御体系；定期安全扫描与加固。" },
-    "metasploit-session": { vuln: "会话劫持/持久化", fix: "加固身份验证机制；定期审查活跃会话；部署入侵检测系统 (IDS/IPS)。" },
-    "webshell-php":   { vuln: "文件上传/Webshell",   fix: "严格限制上传文件类型和后缀；上传目录禁止执行权限；对上传文件进行内容检测。" },
-    dirsearch:        { vuln: "敏感目录暴露",         fix: "移除或保护敏感路径；配置 Web 服务器返回适当的 403/404；定期审计可访问端点。" },
-    "ffuf-dir-enum":  { vuln: "隐藏端点暴露",         fix: "关闭调试接口；删除遗留测试页面；实施访问控制列表 (ACL)。" },
-    nikto:            { vuln: "Web 服务配置错误",     fix: "关闭服务器版本信息泄露；移除默认测试页面；加固 HTTP 响应头（HSTS、CSP 等）。" },
-    linpeas:          { vuln: "本地提权路径",          fix: "及时修补内核与系统组件漏洞；遵循最小权限原则；禁用 SUID/SGID 危险二进制。" },
-    nuclei:           { vuln: "模板漏洞（多类型）",    fix: "根据 Nuclei 模板类型针对性修复；优先处理高危 CVE；纳入持续漏洞管理流程。" },
-    fscan:            { vuln: "内网资产暴露",          fix: "实施网络分段隔离；关闭不必要的内网服务端口；部署内网防火墙策略。" },
-    nmap:             { vuln: "开放端口/服务暴露",     fix: "关闭非必要端口；仅暴露业务所需服务；定期进行端口扫描审计。" },
-    httpx:            { vuln: "HTTP 服务暴露",          fix: "关闭不必要的 HTTP 服务；配置 TLS 加密；隐藏服务版本信息；限制非业务端口访问。" },
-    katana:           { vuln: "攻击面/信息泄露",        fix: "清理遗留测试页面；限制蜘蛛可达路径；关闭目录列表功能；审计敏感端点暴露。" },
-    gobuster:         { vuln: "隐藏目录/文件枚举",      fix: "删除测试文件和遗留路径；配置 Web 服务器 403 响应；实施访问控制列表。" },
-    feroxbuster:      { vuln: "路径/参数暴力枚举",      fix: "删除无用路径；配置速率限制；实施 Web 应用防火墙；启用账号锁定策略。" },
-    whatweb:          { vuln: "组件/版本指纹信息泄露",  fix: "隐藏 Server/X-Powered-By 头部；关闭技术栈版本信息；及时更新依赖版本。" },
-    amass:            { vuln: "子域名枚举/攻击面",      fix: "定期审计子域名；删除废弃子域名 DNS 记录；启用 DNS 安全扩展（DNSSEC）。" },
-    subfinder:        { vuln: "子域名信息收集",          fix: "清理废弃子域名；限制 DNS Zone Transfer；监控新增子域名注册。" },
-    hydra:            { vuln: "凭证暴力破解",            fix: "实施账号锁定策略；使用 MFA 多因素认证；限制登录速率；部署 CAPTCHA。" },
-    xsstrike:         { vuln: "跨站脚本 (XSS)",          fix: "对所有输出进行 HTML 转义；配置严格 CSP 策略；使用 HTTPOnly + SameSite Cookie 标记。" },
-    commix:           { vuln: "OS 命令注入",             fix: "禁止将用户输入拼接进系统命令；使用白名单验证；以最小权限运行 Web 进程。" },
-    masscan:          { vuln: "大规模端口/服务暴露",     fix: "收紧防火墙规则；关闭所有非必要端口；部署入侵检测系统 (IDS)。" },
-    wfuzz:            { vuln: "参数/路径模糊测试发现",   fix: "验证并过滤所有参数输入；删除测试接口；配置 WAF 检测异常请求。" },
-    "exploit-thinkphp": { vuln: "ThinkPHP RCE（CVE-2018-20062）", fix: "升级 ThinkPHP 至 ≥ 6.0 官方安全版本；关闭调试模式（APP_DEBUG=false）；在入口处添加路由白名单；移除 .env 文件。" },
-    shiro_exploit:    { vuln: "Apache Shiro 反序列化 RCE（CVE-2016-4437）", fix: "更换所有 Shiro 默认 rememberMe 密钥；升级至 Shiro ≥ 1.7.0；限制 Cookie 最大长度；启用 JEP 290 反序列化过滤。" },
-    "fastjson-exploit": { vuln: "Fastjson JNDI 反序列化 RCE（CVE-2019-14540）", fix: "升级 Fastjson 至 ≥ 2.0.x；关闭 autoType（ParserConfig.getGlobalInstance().setAutoTypeSupport(false)）；部署 JNDI 外联防护；配置类白名单。" },
-    ysoserial:        { vuln: "Java 反序列化漏洞链",    fix: "升级存在漏洞的 Commons Collections 等库；实施 JEP 290 序列化过滤；禁止反序列化不可信来源数据。" },
-    jndi_exploit:     { vuln: "JNDI 注入远程代码执行",  fix: "升级至 JDK ≥ 8u191（禁用远程类加载）；关闭 LDAP/RMI 外联；部署应用层 JNDI 输入过滤。" },
-    "exploit-weblogic": { vuln: "Oracle WebLogic T3/IIOP 反序列化 RCE（CVE-2023-21839）", fix: "立即应用 Oracle CPU 2023年1月补丁；在防火墙层封锁 T3/IIOP 协议的外网访问（7001/7002）；启用 JEP 290 反序列化过滤器；禁用不必要的协议适配器。" },
-    "exploit-tomcat":   { vuln: "Apache Tomcat PUT 任意文件上传 RCE（CVE-2017-12615）", fix: "升级 Tomcat 至 ≥ 8.5.20；在 web.xml 中将 DefaultServlet 的 readonly 属性设为 true；禁止 PUT/DELETE 方法；验证上传目录权限。" },
-  };
-
   // 演示模式：为数字 ID 的种子任务模拟渗透测试阶段进度
   const simulateDemoTask = (id: string) => {
     // Cancel any existing simulation for this task
@@ -1017,304 +844,6 @@ const TasksPage = () => {
     }, (delays[phases.length - 1] ?? 22000) + 3000);
     timers.push(finishTimer);
     demoSimTimersRef.current.set(id, timers);
-  };
-
-  // 共享报告 Markdown 生成逻辑（preview + download 共用，保证内容一致）
-  const buildReportMarkdown = async (task: OrbitTask): Promise<string> => {
-    const now = new Date().toLocaleString("zh-CN");
-
-    let reportText = "";
-    try {
-      const r = await getTaskReport(task.id);
-      const phaseRows = (r.phases ?? [])
-        .map((p) => `| ${p.phase} | ${p.status} | ${p.notes ?? ""} |`)
-        .join("\n");
-
-      // Best-effort: execution trace + findings + remediation
-      const missingReportSections: string[] = [];
-      let traceSection = "";
-      let findingsSection = "";
-      let remediationSection = "";
-      try {
-        const trace = await getTaskTrace(task.id, 200);
-        const execs = Array.isArray(trace.executions) ? trace.executions : [];
-        if (execs.length > 0) {
-          const execRows = execs
-            .map((e, i) => {
-              const dur = typeof e.duration_ms === 'number' ? `${(e.duration_ms / 1000).toFixed(1)}s` : '-';
-              return `| ${i + 1} | ${String(e.phase ?? '-')} | ${String(e.skill_id ?? '-')} | ${String(e.status ?? '-')} | ${dur} |`;
-            })
-            .join("\n");
-          traceSection = `\n## 执行轨迹 (${execs.length} 条)\n\n| # | 阶段 | 技能 | 状态 | 耗时 |\n|---|---|---|---|---|\n${execRows}`;
-
-          // Derive findings from executed exploit skills
-          const exploitSkills = execs
-            .filter((e) => e.phase === 'EXPLOIT' || e.phase === 'VULN_SCAN')
-            .map((e) => String(e.skill_id ?? ''))
-            .filter(Boolean);
-          const uniqueSkills = [...new Set(exploitSkills)];
-          const remediations: { vuln: string; fix: string; skill: string }[] = [];
-          uniqueSkills.forEach((sid) => {
-            // Match by prefix
-            const key = Object.keys(SKILL_REMEDIATION).find((k) => sid.includes(k) || k.includes(sid));
-            if (key) remediations.push({ ...SKILL_REMEDIATION[key]!, skill: sid });
-          });
-
-          if (remediations.length > 0) {
-            const findingRows = remediations
-              .map((rem, i) => `| ${i + 1} | ${rem.vuln} | ${rem.skill} | 待修复 |`)
-              .join("\n");
-            findingsSection = `\n## 漏洞发现清单\n\n| # | 漏洞类型 | 检测工具 | 状态 |\n|---|---|---|---|\n${findingRows}`;
-
-            const remLines = remediations.map((rem, i) =>
-              `### ${i + 1}. ${rem.vuln}\n\n**检测工具**：\`${rem.skill}\`\n\n**修复建议**：${rem.fix}`
-            ).join("\n\n");
-            remediationSection = `\n## 修复建议\n\n${remLines}`;
-          }
-        }
-      } catch {
-        missingReportSections.push("执行轨迹");
-      }
-
-      // Best-effort: todo list
-      let todoSection = "";
-      try {
-        const todos = await getTaskTodos(task.id);
-        if (todos.length > 0) {
-          const todoRows = todos
-            .map((td) => `| ${td.phase} | ${td.name} | ${td.status} | ${td.description ?? '-'} |`)
-            .join("\n");
-          todoSection = `\n## 测试计划 Todo (${todos.length} 项)\n\n| 阶段 | 名称 | 状态 | 描述 |\n|---|---|---|---|\n${todoRows}`;
-        }
-      } catch {
-        missingReportSections.push("测试计划");
-      }
-
-      // Best-effort: strategic plan from LLM
-      let planSection = "";
-      try {
-        const plan = await getTracePlan(task.id);
-        const items = Array.isArray((plan as { items?: unknown[] }).items) ? (plan as { items: unknown[] }).items : [];
-        if (items.length > 0) {
-          const planRows = items
-            .map((item, i) => {
-              const it = item as Record<string, unknown>;
-              return `| ${i + 1} | ${String(it.phase ?? it.stage ?? '-')} | ${String(it.skill_id ?? it.name ?? it.action ?? '-')} | ${String(it.status ?? '-')} |`;
-            })
-            .join("\n");
-          planSection = `\n## AI 策略计划 (${items.length} 项)\n\n| # | 阶段 | 技能/动作 | 状态 |\n|---|---|---|---|\n${planRows}`;
-        }
-      } catch {
-        missingReportSections.push("策略计划");
-      }
-
-      const degradedBanner = missingReportSections.length > 0
-        ? `\n> ⚠️ **部分数据离线**：${missingReportSections.join("、")} 无法从后端获取，对应章节已省略。\n`
-        : "";
-
-      reportText = [
-        "# 渗透测试报告",
-        degradedBanner,
-        `**任务 ID**：\`${r.taskId ?? task.id}\``,
-        `**目标**：${r.target ?? task.url}`,
-        `**最终状态**：${r.status ?? getTaskStatusText(task.status)}`,
-        `**报告生成时间**：${now}`,
-        "",
-        r.summary ? `## 摘要\n\n${r.summary}` : "",
-        phaseRows ? `## 阶段详情\n\n| 阶段 | 状态 | 备注 |\n|---|---|---|\n${phaseRows}` : "",
-        findingsSection,
-        remediationSection,
-        planSection,
-        todoSection,
-        traceSection,
-      ].filter(Boolean).join("\n");
-    } catch {
-      // 后端不可用或任务尚未完成，使用本地数据
-      const isDemo = /^\d+$/.test(task.id);
-      if (isDemo) {
-        // 演示模式：为数字 ID 的种子任务生成完整展示报告
-        const nameLower = (task.name ?? "").toLowerCase();
-        const isStruts  = nameLower.includes("struts") || nameLower.includes("s2-045") || nameLower.includes("s2-057");
-        const isThink   = nameLower.includes("thinkphp");
-        const isShiro   = nameLower.includes("shiro");
-        const isFlask   = nameLower.includes("flask") || nameLower.includes("ssti");
-        const isFast    = nameLower.includes("fastjson");
-        const isWebLogic= nameLower.includes("weblogic");
-        const isTomcat  = nameLower.includes("tomcat") || nameLower.includes("put 上传") || nameLower.includes("12615");
-        const isSql     = nameLower.includes("sql") || nameLower.includes("dvwa");
-
-        const cveName =
-          isStruts   ? "Apache Struts2 S2-045/S2-057 RCE（CVE-2017-5638 / CVE-2018-11776）" :
-          isThink    ? "ThinkPHP 5.x 远程代码执行（CVE-2018-20062）" :
-          isShiro    ? "Apache Shiro 反序列化 RCE（CVE-2016-4437）" :
-          isFlask    ? "Flask Jinja2 SSTI 模板注入任意代码执行" :
-          isFast     ? "FastJSON 1.2.24–1.2.47 反序列化 JNDI 注入 RCE（CVE-2019-14540）" :
-          isWebLogic ? "Oracle WebLogic CVE-2023-21839 T3/IIOP 反序列化 RCE" :
-          isTomcat   ? "Apache Tomcat CVE-2017-12615 PUT 文件上传 RCE" :
-          isSql      ? "SQL 注入（盲注/报错注入）信息泄露与权限提升" :
-          "Web 应用综合漏洞（信息泄露 + 远程代码执行）";
-
-        const summary = `自动化渗透测试任务已完成全部 6 个阶段（RECON → SCAN → VULN_SCAN → EXPLOIT → POST_EXPLOIT → REPORT）。` +
-          `目标 ${task.url} 检测到高危漏洞：${cveName}。` +
-          `平台共调用 ${isStruts || isShiro || isWebLogic ? 12 : isTomcat ? 11 : 10} 项专项技能，成功获取目标服务器 Shell 并完成后渗透信息收集，生成完整修复建议报告。`;
-
-        const demoSkills: { phase: string; skill: string; dur: number }[] =
-          isStruts ? [
-            { phase: "RECON",        skill: "nmap",            dur: 14200 },
-            { phase: "RECON",        skill: "httpx",           dur: 3100  },
-            { phase: "SCAN",         skill: "ehole",           dur: 5800  },
-            { phase: "SCAN",         skill: "dirsearch",       dur: 9400  },
-            { phase: "VULN_SCAN",    skill: "nuclei",          dur: 18700 },
-            { phase: "EXPLOIT",      skill: "exploit-struts2", dur: 2300  },
-            { phase: "EXPLOIT",      skill: "metasploit",      dur: 7600  },
-            { phase: "POST_EXPLOIT", skill: "linpeas",         dur: 11200 },
-            { phase: "POST_EXPLOIT", skill: "read_workspace_artifact", dur: 1800 },
-            { phase: "REPORT",       skill: "read_workspace_artifact", dur: 900  },
-          ] : isFlask ? [
-            { phase: "RECON",        skill: "nmap",            dur: 11500 },
-            { phase: "RECON",        skill: "httpx",           dur: 2900  },
-            { phase: "SCAN",         skill: "katana",          dur: 7300  },
-            { phase: "VULN_SCAN",    skill: "nuclei",          dur: 16400 },
-            { phase: "EXPLOIT",      skill: "fenjing",         dur: 4200  },
-            { phase: "POST_EXPLOIT", skill: "read_workspace_artifact", dur: 1600 },
-            { phase: "REPORT",       skill: "read_workspace_artifact", dur: 850  },
-          ] : isThink ? [
-            { phase: "RECON",        skill: "nmap",            dur: 10800 },
-            { phase: "RECON",        skill: "whatweb",         dur: 4200  },
-            { phase: "SCAN",         skill: "httpx",           dur: 3100  },
-            { phase: "VULN_SCAN",    skill: "nuclei",          dur: 14600 },
-            { phase: "EXPLOIT",      skill: "exploit-thinkphp",dur: 1900  },
-            { phase: "POST_EXPLOIT", skill: "linpeas",         dur: 9800  },
-            { phase: "REPORT",       skill: "read_workspace_artifact", dur: 780  },
-          ] : isShiro ? [
-            { phase: "RECON",        skill: "nmap",            dur: 12300 },
-            { phase: "RECON",        skill: "httpx",           dur: 2800  },
-            { phase: "SCAN",         skill: "whatweb",         dur: 3700  },
-            { phase: "VULN_SCAN",    skill: "nuclei",          dur: 17200 },
-            { phase: "EXPLOIT",      skill: "shiro_exploit",   dur: 3400  },
-            { phase: "EXPLOIT",      skill: "ysoserial",       dur: 5600  },
-            { phase: "POST_EXPLOIT", skill: "linpeas",         dur: 10400 },
-            { phase: "REPORT",       skill: "read_workspace_artifact", dur: 860  },
-          ] : isFast ? [
-            { phase: "RECON",        skill: "nmap",            dur: 11200 },
-            { phase: "RECON",        skill: "httpx",           dur: 2600  },
-            { phase: "SCAN",         skill: "katana",          dur: 6800  },
-            { phase: "VULN_SCAN",    skill: "nuclei",          dur: 13900 },
-            { phase: "EXPLOIT",      skill: "fastjson-exploit",dur: 2700  },
-            { phase: "EXPLOIT",      skill: "jndi_exploit",    dur: 4800  },
-            { phase: "POST_EXPLOIT", skill: "linpeas",         dur: 9200  },
-            { phase: "REPORT",       skill: "read_workspace_artifact", dur: 740  },
-          ] : isWebLogic ? [
-            { phase: "RECON",        skill: "nmap",            dur: 13500 },
-            { phase: "RECON",        skill: "httpx",           dur: 3200  },
-            { phase: "SCAN",         skill: "ehole",           dur: 6100  },
-            { phase: "VULN_SCAN",    skill: "nuclei",          dur: 19800 },
-            { phase: "EXPLOIT",      skill: "exploit-weblogic",dur: 3800  },
-            { phase: "EXPLOIT",      skill: "ysoserial",       dur: 6200  },
-            { phase: "POST_EXPLOIT", skill: "linpeas",         dur: 12400 },
-            { phase: "POST_EXPLOIT", skill: "read_workspace_artifact", dur: 2100 },
-            { phase: "REPORT",       skill: "read_workspace_artifact", dur: 920  },
-          ] : isTomcat ? [
-            { phase: "RECON",        skill: "nmap",            dur: 10900 },
-            { phase: "RECON",        skill: "httpx",           dur: 2500  },
-            { phase: "SCAN",         skill: "whatweb",         dur: 4300  },
-            { phase: "VULN_SCAN",    skill: "nuclei",          dur: 14700 },
-            { phase: "EXPLOIT",      skill: "exploit-tomcat",  dur: 2100  },
-            { phase: "EXPLOIT",      skill: "webshell-php",    dur: 1800  },
-            { phase: "POST_EXPLOIT", skill: "linpeas",         dur: 9600  },
-            { phase: "REPORT",       skill: "read_workspace_artifact", dur: 800  },
-          ] : [
-            { phase: "RECON",        skill: "nmap",            dur: 12800 },
-            { phase: "RECON",        skill: "httpx",           dur: 2700  },
-            { phase: "SCAN",         skill: "dirsearch",       dur: 8600  },
-            { phase: "VULN_SCAN",    skill: "nuclei",          dur: 15900 },
-            { phase: "EXPLOIT",      skill: "sqlmap",          dur: 9100  },
-            { phase: "POST_EXPLOIT", skill: "read_workspace_artifact", dur: 1500 },
-            { phase: "REPORT",       skill: "read_workspace_artifact", dur: 820  },
-          ];
-
-        const phaseRows = TRUSTGUARD_PHASES.map((ph) => `| ${ph} | DONE | ${ph} 阶段已全部完成 |`).join("\n");
-        const traceRows = demoSkills.map((s, i) =>
-          `| ${i + 1} | ${s.phase} | ${s.skill} | DONE | ${(s.dur / 1000).toFixed(1)}s |`
-        ).join("\n");
-
-        // Build findings + remediation from demoSkills
-        const exploitPhaseSkills = demoSkills
-          .filter((s) => s.phase === "EXPLOIT" || s.phase === "VULN_SCAN")
-          .map((s) => s.skill);
-        const uniqueExploitSkills = [...new Set(exploitPhaseSkills)];
-        const remediations: { vuln: string; fix: string; skill: string }[] = [];
-        uniqueExploitSkills.forEach((sid) => {
-          const key = Object.keys(SKILL_REMEDIATION).find((k) => sid.includes(k) || k.includes(sid));
-          if (key) remediations.push({ ...SKILL_REMEDIATION[key]!, skill: sid });
-        });
-        // Always include at least one remediation entry matching the CVE
-        if (remediations.length === 0) {
-          remediations.push({ vuln: cveName, fix: "立即应用官方安全补丁；实施最小权限原则；部署 WAF 并启用入侵检测系统。", skill: demoSkills.find((s) => s.phase === "EXPLOIT")?.skill ?? "nuclei" });
-        }
-        const findingRows = remediations.map((r, i) => `| ${i + 1} | ${r.vuln} | ${r.skill} | 待修复 |`).join("\n");
-        const remLines = remediations.map((r, i) =>
-          `### ${i + 1}. ${r.vuln}\n\n**检测工具**：\`${r.skill}\`\n\n**修复建议**：${r.fix}`
-        ).join("\n\n");
-
-        reportText = [
-          "# 渗透测试报告",
-          `\n> ℹ️ **演示模式报告**：当前后端离线，以下为平台演示数据，展示完整测试流程与报告格式。\n`,
-          `**任务 ID**：\`${task.id}\``,
-          `**任务名称**：${task.name}`,
-          `**目标**：${task.url}`,
-          `**最终状态**：DONE`,
-          `**报告生成时间**：${now}`,
-          "",
-          `## 摘要\n\n${summary}`,
-          `## 阶段详情\n\n| 阶段 | 状态 | 备注 |\n|---|---|---|\n${phaseRows}`,
-          `## 漏洞发现清单\n\n| # | 漏洞类型 | 检测工具 | 状态 |\n|---|---|---|---|\n${findingRows}`,
-          `## 修复建议\n\n${remLines}`,
-          `## 执行轨迹 (${demoSkills.length} 条)\n\n| # | 阶段 | 技能 | 状态 | 耗时 |\n|---|---|---|---|---|\n${traceRows}`,
-        ].filter(Boolean).join("\n");
-      } else {
-        reportText = [
-          "# 渗透测试报告（本地生成）",
-          "\n> ⚠️ **离线报告**：后端 API 不可用，报告基于本地缓存数据生成，内容可能不完整。\n",
-          `**任务名称**：${task.name}`,
-          `**任务 ID**：\`${task.id}\``,
-          `**目标 URL**：${task.url}`,
-          task.desc ? `**描述**：${task.desc}` : "",
-          `**状态**：${getTaskStatusText(task.status)}`,
-          task.currentPhase ? `**当前阶段**：${task.currentPhase}` : "",
-          `**创建时间**：${new Date(task.createdAt).toLocaleString("zh-CN")}`,
-          `**报告生成时间**：${now}`,
-          "",
-          task.log ? `## 执行日志\n\n\`\`\`\n${task.log}\n\`\`\`` : "",
-        ].filter(Boolean).join("\n");
-      }
-    }
-
-    return reportText || "暂无报告数据";
-  };
-
-  const handleDownloadReport = async () => {
-    const task = orbitTasks.find((t) => t.id === editingId);
-    if (!task) return;
-    const reportText = await buildReportMarkdown(task);
-    const blob = new Blob([reportText], { type: "text/markdown;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `trustguard_report_${task.name.replace(/[\s/\\]/g, "_")}.md`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const handlePreviewReport = async () => {
-    if (reportPreviewText !== null) { setReportPreviewText(null); return; }
-    const task = orbitTasks.find((t) => t.id === editingId);
-    if (!task) return;
-    setReportPreviewLoading(true);
-    setObservationData(null); setTraceText(null); setExecutionsData(null); setTodosData(null); setTracePlanData(null); setTraceCompileData(null);
-    const text = await buildReportMarkdown(task);
-    setReportPreviewText(text);
-    setReportPreviewLoading(false);
   };
 
   const handleRefreshCurrentTask = async () => {
@@ -1393,7 +922,7 @@ const TasksPage = () => {
                 setObservationData(null); setTraceText(null);
                 setExecutionsData(null); setExecutionsOffset(0);
                 setTodosData(null); setTracePlanData(null); setTraceCompileData(null); setExpandedExecId(null);
-                setConfirmDeleteId(null); setReportPreviewText(null);
+                setConfirmDeleteId(null);
                 setOpen(true);
               }}
               style={{
@@ -1559,7 +1088,7 @@ const TasksPage = () => {
                       setObservationData(null); setTraceText(null);
                       setExecutionsData(null); setExecutionsOffset(0);
                       setTodosData(null); setTracePlanData(null); setTraceCompileData(null); setExpandedExecId(null);
-                      setConfirmDeleteId(null); setReportPreviewText(null);
+                      setConfirmDeleteId(null);
                       setOpen(true);
                     }}
                     style={{
@@ -1668,7 +1197,7 @@ const TasksPage = () => {
                         <td style={{ padding: "8px 10px", maxWidth: 180 }}>
                           <button
                             type="button"
-                            onClick={() => { setEditingId(task.id); setTaskName(task.name); setTaskDesc(task.desc); setTaskUrl(task.url); setFormErrors({}); setObservationData(null); setTraceText(null); setExecutionsData(null); setExecutionsOffset(0); setTodosData(null); setTracePlanData(null); setTraceCompileData(null); setExpandedExecId(null); setConfirmDeleteId(null); setReportPreviewText(null); setOpen(true); }}
+                            onClick={() => { setEditingId(task.id); setTaskName(task.name); setTaskDesc(task.desc); setTaskUrl(task.url); setFormErrors({}); setObservationData(null); setTraceText(null); setExecutionsData(null); setExecutionsOffset(0); setTodosData(null); setTracePlanData(null); setTraceCompileData(null); setExpandedExecId(null); setConfirmDeleteId(null);  setOpen(true); }}
                             style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "#a5f3fc", fontWeight: 700, fontSize: 12, textAlign: "left", maxWidth: 175, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "block" }}
                             title={task.name}
                           >{task.name}</button>
@@ -1878,7 +1407,7 @@ const TasksPage = () => {
                       setTraceCompileData(null);
                       setExpandedExecId(null);
                       setConfirmDeleteId(null);
-                      setReportPreviewText(null);
+
                       setOpen(true);
                     }}
                 />
@@ -2063,7 +1592,7 @@ const TasksPage = () => {
                         setObservationData(null); setTraceText(null);
                         setExecutionsData(null); setExecutionsOffset(0);
                         setTodosData(null); setTracePlanData(null); setTraceCompileData(null); setExpandedExecId(null);
-                        setConfirmDeleteId(null); setReportPreviewText(null);
+                        setConfirmDeleteId(null);
                         setOpen(true);
                       }}
                       style={{
@@ -2153,7 +1682,7 @@ const TasksPage = () => {
                       setTraceCompileData(null);
                       setExpandedExecId(null);
                       setConfirmDeleteId(null);
-                      setReportPreviewText(null);
+
                       setOpen(true);
                     }}
                 />
@@ -2174,7 +1703,7 @@ const TasksPage = () => {
                   justifyContent: "center",
                   padding: 16,
                 }}
-                onClick={() => { setOpen(false); setFormErrors({}); setObservationData(null); setTraceText(null); setExecutionsData(null); setExecutionsOffset(0); setTodosData(null); setTracePlanData(null); setTraceCompileData(null); setExpandedExecId(null); setReportPreviewText(null); setConfirmDeleteId(null); }}
+                onClick={() => { setOpen(false); setFormErrors({}); setObservationData(null); setTraceText(null); setExecutionsData(null); setExecutionsOffset(0); setTodosData(null); setTracePlanData(null); setTraceCompileData(null); setExpandedExecId(null);  setConfirmDeleteId(null); }}
             >
               <div
                   style={{
@@ -2197,7 +1726,7 @@ const TasksPage = () => {
                   </h3>
                   <button
                     type="button"
-                    onClick={() => { setOpen(false); setFormErrors({}); setObservationData(null); setTraceText(null); setExecutionsData(null); setExecutionsOffset(0); setTodosData(null); setTracePlanData(null); setTraceCompileData(null); setExpandedExecId(null); setReportPreviewText(null); setConfirmDeleteId(null); }}
+                    onClick={() => { setOpen(false); setFormErrors({}); setObservationData(null); setTraceText(null); setExecutionsData(null); setExecutionsOffset(0); setTodosData(null); setTracePlanData(null); setTraceCompileData(null); setExpandedExecId(null);  setConfirmDeleteId(null); }}
                     style={{ flexShrink: 0, background: "none", border: "none", color: "#475569", cursor: "pointer", fontSize: 20, lineHeight: 1, padding: "0 2px", marginTop: 2 }}
                     title="关闭 (Esc)"
                   >×</button>
@@ -2738,40 +2267,6 @@ const TasksPage = () => {
                   </div>
                 )}
 
-                {/* Report preview panel */}
-                {reportPreviewText && (
-                  <div style={{
-                    marginBottom: 12, borderRadius: 8,
-                    background: "var(--tg-panel-muted)", border: "1px solid rgba(248,113,113,0.25)",
-                    fontSize: 11, fontFamily: "monospace",
-                    transition: "max-height 0.3s ease",
-                  }}>
-                    <div style={{
-                      padding: "6px 10px", borderBottom: "1px solid rgba(248,113,113,0.15)",
-                      display: "flex", justifyContent: "space-between", alignItems: "center",
-                    }}>
-                      <span style={{ color: "#fca5a5", fontWeight: 700, fontSize: 10, letterSpacing: "0.04em" }}>▸ 报告预览</span>
-                      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                        <button
-                          type="button"
-                          onClick={() => setReportExpanded((v) => !v)}
-                          title={reportExpanded ? "收起" : "展开"}
-                          style={{ background: "none", border: "none", color: "#64748b", cursor: "pointer", fontSize: 12, padding: 0, lineHeight: 1 }}
-                        >{reportExpanded ? "⊟" : "⊞"}</button>
-                        <button type="button" onClick={() => { setReportPreviewText(null); setReportExpanded(false); }}
-                          style={{ background: "none", border: "none", color: "#475569", cursor: "pointer", fontSize: 11, padding: 0 }}>✕</button>
-                      </div>
-                    </div>
-                    <div style={{
-                      maxHeight: reportExpanded ? "65vh" : 320,
-                      overflowY: "auto", padding: "10px 14px", lineHeight: 1.6, fontFamily: "monospace",
-                      transition: "max-height 0.3s ease",
-                    }}>
-                      {renderMarkdownSimple(reportPreviewText)}
-                    </div>
-                  </div>
-                )}
-
                 <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                   {editingId && (
                       <>
@@ -3057,84 +2552,44 @@ const TasksPage = () => {
                           <div style={{ flex: 1, height: 1, background: "rgba(51,65,85,0.25)" }} />
                         </div>
 
-                        {/* 单步 Tick 按钮 */}
-                        {(() => {
-                          const st = orbitTasks.find((t) => t.id === editingId)?.status ?? "not_started";
-                          return st !== "running" ? (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const id = editingId!;
-                                apiTickTask(id)
-                                  .then(() => toast.success("单步执行完成"))
-                                  .catch((e: Error) => toast.error(`单步失败: ${e.message}`));
-                              }}
-                              style={{
-                                padding: "8px 14px", borderRadius: 8,
-                                border: "1px solid rgba(148,163,184,0.3)",
-                                background: "var(--tg-input-bg)", color: "var(--tg-text-muted)",
-                                cursor: "pointer", fontWeight: 700, fontSize: 12,
-                              }}
-                            >
-                              单步
-                            </button>
-                          ) : null;
-                        })()}
-
-                        {/* 预览报告按钮 */}
-                        <button
-                            type="button"
-                            disabled={reportPreviewLoading}
-                            onClick={handlePreviewReport}
-                            style={{
-                              padding: "8px 14px", borderRadius: 8,
-                              border: `1px solid ${reportPreviewText !== null ? "rgba(248,113,113,0.85)" : "rgba(248,113,113,0.45)"}`,
-                              background: reportPreviewText !== null ? "rgba(248,113,113,0.12)" : "var(--tg-input-bg)",
-                              color: "#fca5a5",
-                              cursor: reportPreviewLoading ? "wait" : "pointer", fontWeight: 700, fontSize: 12,
-                            }}
-                        >
-                          {reportPreviewLoading ? "生成中…" : reportPreviewText !== null ? "关闭预览" : "预览报告"}
-                        </button>
-
-                        {/* 下载报告按钮 */}
-                        <button
-                            type="button"
-                            onClick={handleDownloadReport}
-                            style={{
-                              padding: "8px 14px", borderRadius: 8,
-                              border: "1px solid rgba(250,204,21,0.7)",
-                              background: "var(--tg-input-bg)", color: "#fde047",
-                              cursor: "pointer", fontWeight: 800,
-                            }}
-                        >
-                          报告↓
-                        </button>
-
-                        {/* 报告中心快捷 — 只在已完成任务显示 */}
-                        {orbitTasks.find((t) => t.id === editingId)?.status === "finished" && (
-                          <button
-                            type="button"
-                            onClick={() => { setOpen(false); navigate("/reports"); }}
-                            style={{
-                              padding: "8px 14px", borderRadius: 8,
-                              border: "1px solid rgba(52,211,153,0.5)",
-                              background: "rgba(52,211,153,0.08)", color: "#34d399",
-                              cursor: "pointer", fontWeight: 700, fontSize: 12,
-                            }}
-                          >报告中心 →</button>
-                        )}
-
-                        {/* 执行 / 暂停 / 续跑 */}
-                        {(() => {
-                          const task = orbitTasks.find((t) => t.id === editingId);
-                          const st = task?.status ?? "not_started";
-                          const isRunning = st === "running";
-                          const isPaused = st === "paused";
-                          const btnLabel = isRunning ? "暂停" : isPaused ? "续跑" : "执行";
-                          return (
-                              <button
+                        {/* ── Action buttons row ── */}
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, width: "100%" }}>
+                          {(() => {
+                            const btnBase: React.CSSProperties = {
+                              flex: 1, minWidth: 0, padding: "8px 6px", borderRadius: 8,
+                              border: "1px solid rgba(148,163,184,0.3)",
+                              background: "var(--tg-input-bg)", color: "var(--tg-text-muted)",
+                              cursor: "pointer", fontWeight: 700, fontSize: 11, textAlign: "center" as const,
+                              whiteSpace: "nowrap" as const,
+                            };
+                            const st = orbitTasks.find((t) => t.id === editingId)?.status ?? "not_started";
+                            const isRunning = st === "running";
+                            const isPaused = st === "paused";
+                            return (
+                              <>
+                                {/* 单步 */}
+                                {st !== "running" && (
+                                  <button
+                                    type="button"
+                                    style={btnBase}
+                                    onClick={() => {
+                                      const id = editingId!;
+                                      apiTickTask(id)
+                                        .then(() => toast.success("单步执行完成"))
+                                        .catch((e: Error) => toast.error(`单步失败: ${e.message}`));
+                                    }}
+                                  >单步</button>
+                                )}
+                                {/* 报告中心 */}
+                                <button
                                   type="button"
+                                  style={{ ...btnBase, border: "1px solid rgba(52,211,153,0.5)", background: "rgba(52,211,153,0.08)", color: "#34d399" }}
+                                  onClick={() => { setOpen(false); navigate("/reports"); }}
+                                >报告中心 →</button>
+                                {/* 执行/暂停/续跑 */}
+                                <button
+                                  type="button"
+                                  style={{ ...btnBase, border: "1px solid rgba(34,211,238,0.4)", color: isPaused ? "#fde047" : "#a5f3fc" }}
                                   onClick={() => {
                                     const id = editingId!;
                                     if (isRunning) {
@@ -3149,117 +2604,62 @@ const TasksPage = () => {
                                       else apiRunTask(id, maxTicks, maxRunDurationSeconds).catch((e: Error) => toast.error(`执行失败: ${e.message}`));
                                     }
                                   }}
-                                  style={{
-                                    padding: "8px 14px", borderRadius: 8,
-                                    border: "1px solid rgba(34,211,238,0.4)",
-                                    background: "var(--tg-input-bg)",
-                                    color: isPaused ? "#fde047" : "#a5f3fc",
-                                    cursor: "pointer", fontWeight: 800,
+                                >{isRunning ? "暂停" : isPaused ? "续跑" : "执行"}</button>
+                                {/* 删除 */}
+                                {confirmDeleteId === editingId ? (
+                                  <span style={{ display: "inline-flex", gap: 4, flex: 1 }}>
+                                    <button
+                                      type="button"
+                                      style={{ ...btnBase, border: "1px solid rgba(248,113,113,0.8)", background: "rgba(248,113,113,0.18)", color: "#fca5a5" }}
+                                      onClick={() => {
+                                        const id = editingId!;
+                                        setConfirmDeleteId(null);
+                                        setOrbitTasks((prev) => prev.filter((t) => t.id !== id));
+                                        setDeletedIds((prev) => { const next = new Set(prev); next.add(id); saveDeletedIds(next); return next; });
+                                        apiDeleteTask(id).catch(() => {});
+                                        setOpen(false); setEditingId(null);
+                                        setTaskName(""); setTaskDesc(""); setTaskUrl("");
+                                        setFormErrors({});
+                                        toast.success("任务已删除");
+                                      }}
+                                    >确认删除</button>
+                                    <button
+                                      type="button"
+                                      style={{ ...btnBase, border: "1px solid #475569", background: "transparent", color: "#94a3b8" }}
+                                      onClick={() => setConfirmDeleteId(null)}
+                                    >取消</button>
+                                  </span>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    style={{ ...btnBase, border: "1px solid rgba(248,113,113,0.55)", color: "rgba(248,113,113,0.95)", fontWeight: 900 }}
+                                    onClick={() => setConfirmDeleteId(editingId)}
+                                  >删除</button>
+                                )}
+                                {/* 取消（关闭弹窗） */}
+                                <button
+                                  type="button"
+                                  style={{ ...btnBase, border: "1px solid var(--tg-panel-border)", color: "var(--tg-text-muted)" }}
+                                  onClick={() => {
+                                    setOpen(false); setEditingId(null);
+                                    setObservationData(null); setTraceText(null);
+                                    setExecutionsData(null); setExecutionsOffset(0);
+                                    setTodosData(null); setTracePlanData(null); setTraceCompileData(null);
+                                    setExpandedExecId(null); setConfirmDeleteId(null);
                                   }}
-                              >
-                                {btnLabel}
-                              </button>
-                          );
-                        })()}
-                        {confirmDeleteId === editingId ? (
-                          <span style={{ display: "inline-flex", gap: 6 }}>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const id = editingId!;
-                                setConfirmDeleteId(null);
-                                setOrbitTasks((prev) => prev.filter((t) => t.id !== id));
-                                setDeletedIds((prev) => { const next = new Set(prev); next.add(id); saveDeletedIds(next); return next; });
-                                apiDeleteTask(id).catch(() => {});
-                                setOpen(false); setEditingId(null);
-                                setTaskName(""); setTaskDesc(""); setTaskUrl("");
-                                setFormErrors({});
-                                setReportPreviewText(null);
-                                toast.success("任务已删除");
-                              }}
-                              style={{
-                                padding: "8px 14px", borderRadius: 8,
-                                border: "1px solid rgba(248,113,113,0.8)",
-                                background: "rgba(248,113,113,0.18)",
-                                color: "#fca5a5", cursor: "pointer", fontWeight: 900,
-                              }}
-                            >确认删除</button>
-                            <button
-                              type="button"
-                              onClick={() => setConfirmDeleteId(null)}
-                              style={{
-                                padding: "8px 14px", borderRadius: 8,
-                                border: "1px solid #475569", background: "transparent",
-                                color: "#94a3b8", cursor: "pointer",
-                              }}
-                            >取消</button>
-                          </span>
-                        ) : (
-                          <button
-                              type="button"
-                              onClick={() => setConfirmDeleteId(editingId)}
-                              style={{
-                                padding: "8px 14px",
-                                borderRadius: 8,
-                                border: "1px solid rgba(248, 113, 113, 0.55)",
-                                background: "var(--tg-input-bg)",
-                                color: "rgba(248, 113, 113, 0.95)",
-                                cursor: "pointer",
-                                fontWeight: 900,
-                              }}
-                          >
-                            删除
-                          </button>
-                        )}
+                                >取消</button>
+                                {/* 保存修改 / 确认创建 */}
+                                <button
+                                  type="button"
+                                  onClick={editingId ? commitTask : commitAndRunTask}
+                                  style={{ ...btnBase, border: editingId ? "1px solid rgba(34,211,238,0.4)" : "1px solid rgba(34,197,94,0.6)", background: editingId ? "var(--tg-input-bg)" : "rgba(34,197,94,0.1)", color: editingId ? "#a5f3fc" : "#86efac", fontWeight: 800 }}
+                                >{editingId ? "保存修改" : "创建并执行"}</button>
+                              </>
+                            );
+                          })()}
+                        </div>
                       </>
                   )}
-                  <button
-                      type="button"
-                      onClick={() => {
-                        setOpen(false);
-                        setEditingId(null);
-                        setObservationData(null);
-                        setTraceText(null);
-                        setExecutionsData(null);
-                        setExecutionsOffset(0);
-                        setTodosData(null);
-                        setExpandedExecId(null);
-                        setReportPreviewText(null);
-                        setConfirmDeleteId(null);
-                      }}
-                      style={{ padding: "8px 14px", borderRadius: 8, border: "1px solid var(--tg-panel-border)", background: "transparent", color: "var(--tg-text-muted)", cursor: "pointer" }}
-                  >
-                    取消
-                  </button>
-                  {!editingId && (
-                    <button
-                      type="button"
-                      onClick={commitAndRunTask}
-                      style={{
-                        padding: "8px 14px", borderRadius: 8,
-                        border: "1px solid rgba(34,197,94,0.6)",
-                        background: "rgba(34,197,94,0.1)",
-                        color: "#86efac", cursor: "pointer", fontWeight: 800,
-                      }}
-                    >
-                      创建并执行
-                    </button>
-                  )}
-                  <button
-                      type="button"
-                      onClick={commitTask}
-                      style={{
-                        padding: "8px 14px",
-                        borderRadius: 8,
-                        border: "1px solid rgba(34, 211, 238, 0.4)",
-                        background: "var(--tg-input-bg)",
-                        color: "#a5f3fc",
-                        cursor: "pointer",
-                        fontWeight: 800,
-                      }}
-                  >
-                    {editingId ? "保存修改" : "确认创建"}
-                  </button>
                 </div>
               </div>
             </div>

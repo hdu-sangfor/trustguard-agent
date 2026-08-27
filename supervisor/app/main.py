@@ -22,6 +22,7 @@ from app.domain.models import (
     ConversationMessageRequest,
     ConversationResponse,
     ConversationSummary,
+    ConversationUpdateRequest,
     DraftRequest,
     DraftResponse,
     HealthResponse,
@@ -30,7 +31,7 @@ from app.domain.models import (
     WorkflowCapability,
 )
 from app.clients.llm_client import generate_progress_summary, stream_assistant_response
-from app.runtime.graph import run_graph
+from app.runtime.graph import run_graph, run_graph_with_progress
 from app.security.confirmation import create_draft_store_from_env
 from app.stores.conversation_store import create_conversation_store_from_env
 from app.workflows.registry import workflow_registry
@@ -63,7 +64,7 @@ def list_workflows() -> list[WorkflowCapability]:
     return workflow_registry.capabilities()
 
 
-def _build_draft_response(req: DraftRequest, actor: str) -> DraftResponse:
+def _build_draft_response(req: DraftRequest, actor: str, on_activity=None) -> DraftResponse:
     conversation_id = req.conversation_id or "conv-" + uuid.uuid4().hex
     conversation = _conversations.append_message(
         conversation_id,
@@ -72,7 +73,11 @@ def _build_draft_response(req: DraftRequest, actor: str) -> DraftResponse:
     )
     combined = "\n".join(message.text for message in conversation.messages if message.role == "user")
     registered = workflow_registry.resolve(req.workflow_id, combined)
-    state = run_graph(combined, registered.adapter.workflow_id)
+    state = (
+        run_graph_with_progress(combined, registered.adapter.workflow_id, on_activity)
+        if on_activity
+        else run_graph(combined, registered.adapter.workflow_id)
+    )
     draft_model = registered.adapter.build_model(state.get("draft") or {})
     missing = list(state.get("missing_fields") or [])
     warnings = list(state.get("warnings") or [])
@@ -134,31 +139,30 @@ async def create_draft_stream(
     actor = _actor_id(x_actor_id)
 
     async def events() -> AsyncIterator[str]:
-        yield _sse_event(
-            "activity",
-            ActivityStep(
-                id="step-1",
-                kind="analysis",
-                title="理解任务意图",
-                detail="正在提取目标范围、运行时长和风险偏好。",
-                status="running",
-            ),
-        )
-        task = asyncio.create_task(asyncio.to_thread(_build_draft_response, req, actor))
+        activity_queue: asyncio.Queue[ActivityStep] = asyncio.Queue()
+        loop = asyncio.get_running_loop()
+
+        def on_activity(activity: Any) -> None:
+            step = ActivityStep.model_validate(activity)
+            loop.call_soon_threadsafe(activity_queue.put_nowait, step)
+
+        task = asyncio.create_task(asyncio.to_thread(_build_draft_response, req, actor, on_activity))
         try:
-            while not task.done():
-                done, _pending = await asyncio.wait({task}, timeout=10.0)
-                if not done:
+            while not task.done() or not activity_queue.empty():
+                try:
+                    activity = await asyncio.wait_for(activity_queue.get(), timeout=10.0)
+                except TimeoutError:
+                    if task.done():
+                        break
                     yield ": keep-alive\n\n"
+                    continue
+                yield _sse_event("activity", activity)
             response = await task
         except Exception:
             log.exception("streaming draft generation failed actor_id=%s", actor)
             yield _sse_event("error", {"message": "任务草稿生成失败，请稍后重试。"})
             yield _sse_event("done", {})
             return
-
-        for activity in response.activities:
-            yield _sse_event("activity", activity)
         fallback = response.assistant_message
         streamed: list[str] = []
         result_context = response.model_dump(mode="json", by_alias=True)
@@ -238,6 +242,33 @@ def append_conversation_message(
     message = ConversationMessage.model_validate(req.model_dump())
     conversation = _conversations.append_message(conversation_id, _actor_id(x_actor_id), message)
     return next(item for item in conversation.messages if item.id == message.id)
+
+
+@app.patch("/v1/conversations/{conversation_id}", response_model=ConversationSummary)
+def update_conversation(
+    conversation_id: str,
+    req: ConversationUpdateRequest,
+    x_actor_id: str | None = Header(default=None),
+) -> ConversationSummary:
+    actor_id = _actor_id(x_actor_id)
+    updated = _conversations.update_conversation(
+        conversation_id,
+        actor_id,
+        title=req.title,
+        pinned=req.pinned,
+    )
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return updated
+
+
+@app.delete("/v1/conversations/{conversation_id}", status_code=204)
+def delete_conversation(
+    conversation_id: str,
+    x_actor_id: str | None = Header(default=None),
+) -> None:
+    if not _conversations.delete_conversation(conversation_id, _actor_id(x_actor_id)):
+        raise HTTPException(status_code=404, detail="Conversation not found")
 
 
 @app.post("/v1/task-agent/progress-summary", response_model=ProgressSummaryResponse)

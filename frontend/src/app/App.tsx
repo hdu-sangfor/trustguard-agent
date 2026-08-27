@@ -72,21 +72,56 @@ const TriagePage = lazy(reloadOnChunkError(() => import("@/features/triage/Triag
 const TriageDetailPage = lazy(reloadOnChunkError(() => import("@/features/triage/TriageDetailPage")));
 const TaskAgentPage = lazy(reloadOnChunkError(() => import("@/features/agent/TaskAgentPage")));
 import { AppSessionProvider } from "@/shared/context/AppSessionContext";
-import { SENTINEL_ORBIT_TASKS_KEY, ORBIT_TASKS_UPDATED_EVENT, type StoredOrbitTask } from "@/shared/constants/orbitTasksStorage";
+import { SENTINEL_ORBIT_TASKS_KEY, ORBIT_TASKS_UPDATED_EVENT, type StoredOrbitTask, readStoredOrbitTasks } from "@/shared/constants/orbitTasksStorage";
+import { listTasks, toFrontendStatus, type ApiTask } from "@/shared/lib/api";
 
 const queryClient = new QueryClient();
 
+function toStoredOrbitTask(apiTask: ApiTask, existing?: StoredOrbitTask): StoredOrbitTask {
+  return {
+    id: apiTask.taskId,
+    name: apiTask.name ?? existing?.name ?? '未命名任务',
+    desc: apiTask.description ?? existing?.desc ?? '',
+    url: apiTask.target ?? existing?.url ?? '',
+    log: existing?.log ?? '',
+    createdAt: existing?.createdAt ?? (new Date(apiTask.createdAt).getTime() || Date.now()),
+    updatedAt: apiTask.updatedAt ? new Date(apiTask.updatedAt).getTime() || undefined : existing?.updatedAt,
+    status: toFrontendStatus(apiTask.status),
+    currentPhase: apiTask.currentPhase,
+  };
+}
+
+function mergeBackendTasks(existing: StoredOrbitTask[], apiTasks: ApiTask[]): StoredOrbitTask[] {
+  const byId = new Map(existing.filter((task) => !/^\d+$/.test(task.id)).map((task) => [task.id, task]));
+  for (const apiTask of apiTasks) {
+    byId.set(apiTask.taskId, toStoredOrbitTask(apiTask, byId.get(apiTask.taskId)));
+  }
+  return [...byId.values()];
+}
+
+function hasTaskSyncSession(): boolean {
+  try {
+    return (
+      localStorage.getItem("sentinel_logged_in_v1") === "1"
+      || localStorage.getItem("sentinel_auth_token_v1") != null
+      || localStorage.getItem("sentinel_session_v1") != null
+    );
+  } catch {
+    return false;
+  }
+}
+
 
 /**
- * Polls localStorage for task status changes.
+ * Polls localStorage and backend for task status changes.
  * When a task transitions to "finished" (DONE) or "failed", fires a toast.
- * Runs only when the user is on the platform (logged in).
+ * Works on all pages, not just the task management page.
  */
 const TaskCompletionWatcher = () => {
   const seenRef = useRef<Map<string, string>>(new Map());
 
   useEffect(() => {
-    const poll = () => {
+    const checkStoredTasks = () => {
       try {
         const raw = localStorage.getItem(SENTINEL_ORBIT_TASKS_KEY);
         if (!raw) return;
@@ -112,6 +147,27 @@ const TaskCompletionWatcher = () => {
       } catch { /* ignore */ }
     };
 
+    const syncBackendTasks = () => {
+      if (!hasTaskSyncSession()) return Promise.resolve();
+      return listTasks()
+      .then((apiTasks) => {
+        if (apiTasks.length === 0) return;
+        try {
+          const existing = readStoredOrbitTasks();
+          const merged = mergeBackendTasks(existing, apiTasks);
+          const serialized = JSON.stringify(merged);
+          if (localStorage.getItem(SENTINEL_ORBIT_TASKS_KEY) === serialized) return;
+          localStorage.setItem(SENTINEL_ORBIT_TASKS_KEY, serialized);
+          window.dispatchEvent(new Event(ORBIT_TASKS_UPDATED_EVENT));
+        } catch { /* quota */ }
+      })
+      .catch(() => { /* backend unavailable, fall through to localStorage check */ });
+    };
+
+    const poll = () => {
+      void syncBackendTasks().finally(checkStoredTasks);
+    };
+
     // Initialize seen map without firing notifications
     try {
       const raw = localStorage.getItem(SENTINEL_ORBIT_TASKS_KEY);
@@ -122,10 +178,11 @@ const TaskCompletionWatcher = () => {
     } catch { /* ignore */ }
 
     const iv = window.setInterval(poll, 5000);
-    window.addEventListener(ORBIT_TASKS_UPDATED_EVENT, poll);
+    void poll();
+    window.addEventListener(ORBIT_TASKS_UPDATED_EVENT, checkStoredTasks);
     return () => {
       window.clearInterval(iv);
-      window.removeEventListener(ORBIT_TASKS_UPDATED_EVENT, poll);
+      window.removeEventListener(ORBIT_TASKS_UPDATED_EVENT, checkStoredTasks);
     };
   }, []);
 

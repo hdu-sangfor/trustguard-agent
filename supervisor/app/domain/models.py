@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Literal, TypedDict
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 def _to_camel(value: str) -> str:
@@ -107,6 +107,19 @@ class ConversationSummary(ApiModel):
     message_count: int = Field(default=0, ge=0)
     created_at: str
     updated_at: str
+    pinned: bool = False
+    pinned_at: str | None = None
+
+
+class ConversationUpdateRequest(ApiModel):
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    pinned: bool | None = None
+
+    @model_validator(mode="after")
+    def require_update(self):
+        if self.title is None and self.pinned is None:
+            raise ValueError("title or pinned is required")
+        return self
 
 
 class ProgressSummaryRequest(ApiModel):

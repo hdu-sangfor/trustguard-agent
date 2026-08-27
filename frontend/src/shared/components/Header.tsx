@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { useAppSession } from "@/shared/context/AppSessionContext";
 import { DEMO_FALLBACK_ENABLED } from "@/shared/constants/demoFallback";
 import { ORBIT_TASKS_UPDATED_EVENT, SENTINEL_ORBIT_TASKS_KEY, readStoredOrbitTasks, type StoredOrbitTask } from "@/shared/constants/orbitTasksStorage";
-import { listTasks, toFrontendStatus } from "@/shared/lib/api";
+import { listTasks, toFrontendStatus, type ApiTask } from "@/shared/lib/api";
 import { applyThemeMode, readThemeMode, writeThemeMode, type ThemeMode } from "@/shared/lib/preferences";
 import { displayNameOrUsername } from "@/shared/lib/text";
 import mainLogoSrc from "@/shared/assets/main.jpg";
@@ -26,6 +26,28 @@ type NavLink = {
 
 function countRunningTasks(): number {
   return readStoredOrbitTasks().filter((t) => t.status === "running").length;
+}
+
+function toStoredOrbitTask(apiTask: ApiTask, existing?: StoredOrbitTask): StoredOrbitTask {
+  return {
+    id: apiTask.taskId,
+    name: apiTask.name ?? existing?.name ?? '未命名任务',
+    desc: apiTask.description ?? existing?.desc ?? '',
+    url: apiTask.target ?? existing?.url ?? '',
+    log: existing?.log ?? '',
+    createdAt: existing?.createdAt ?? (new Date(apiTask.createdAt).getTime() || Date.now()),
+    updatedAt: apiTask.updatedAt ? new Date(apiTask.updatedAt).getTime() || undefined : existing?.updatedAt,
+    status: toFrontendStatus(apiTask.status),
+    currentPhase: apiTask.currentPhase,
+  };
+}
+
+function mergeBackendTasks(existing: StoredOrbitTask[], apiTasks: ApiTask[]): StoredOrbitTask[] {
+  const byId = new Map(existing.filter((task) => !/^\d+$/.test(task.id)).map((task) => [task.id, task]));
+  for (const apiTask of apiTasks) {
+    byId.set(apiTask.taskId, toStoredOrbitTask(apiTask, byId.get(apiTask.taskId)));
+  }
+  return [...byId.values()];
 }
 
 const SESSION_UPDATED_EVENT = "sentinel_session_updated";
@@ -120,28 +142,13 @@ const Header = ({ currentPhase = 0 }: HeaderProps) => {
       .then((apiTasks) => {
         if (apiTasks.length === 0) return; // backend empty or unreachable — keep seeds
         const existing = readStoredOrbitTasks();
-        const existingIds = new Set(existing.map((t) => t.id));
-        const merged: StoredOrbitTask[] = [
-          // Keep real (non-numeric-ID) existing tasks
-          ...existing.filter((t) => !/^\d+$/.test(t.id)),
-          // Add backend tasks not yet in localStorage
-          ...apiTasks
-            .filter((at) => !existingIds.has(at.taskId))
-            .map((at) => ({
-              id: at.taskId,
-              name: at.name ?? '未命名任务',
-              desc: at.description ?? '',
-              url: at.target ?? '',
-              log: '',
-              createdAt: new Date(at.createdAt).getTime() || Date.now(),
-              updatedAt: at.updatedAt ? new Date(at.updatedAt).getTime() || undefined : undefined,
-              status: toFrontendStatus(at.status),
-              currentPhase: at.currentPhase,
-            })),
-        ];
+        const merged = mergeBackendTasks(existing, apiTasks);
         try {
-          localStorage.setItem(SENTINEL_ORBIT_TASKS_KEY, JSON.stringify(merged));
-          window.dispatchEvent(new Event(ORBIT_TASKS_UPDATED_EVENT));
+          const serialized = JSON.stringify(merged);
+          if (localStorage.getItem(SENTINEL_ORBIT_TASKS_KEY) !== serialized) {
+            localStorage.setItem(SENTINEL_ORBIT_TASKS_KEY, serialized);
+            window.dispatchEvent(new Event(ORBIT_TASKS_UPDATED_EVENT));
+          }
           setRunningCount(merged.filter((t) => t.status === 'running').length);
         } catch { /* quota */ }
       })

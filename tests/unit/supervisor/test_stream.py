@@ -48,6 +48,15 @@ def test_draft_stream_emits_activity_deltas_result_and_done(monkeypatch):
     assert events[0][1]["status"] == "running"
     assert "delta" in names
     assert names[-2:] == ["result", "done"]
+    activity_events = [data for name, data in events if name == "activity"]
+    assert [(item["title"], item["status"]) for item in activity_events[:6]] == [
+        ("理解任务意图", "running"),
+        ("理解任务意图", "done"),
+        ("检查目标与安全边界", "running"),
+        ("检查目标与安全边界", "done"),
+        ("生成任务草稿", "running"),
+        ("生成任务草稿", "done"),
+    ]
 
     result = next(data for name, data in events if name == "result")
     text = "".join(data["text"] for name, data in events if name == "delta")

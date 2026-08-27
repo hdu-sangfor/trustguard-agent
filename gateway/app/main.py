@@ -930,6 +930,33 @@ async def task_agent_conversation(
     return ok(body)
 
 
+@app.patch("/api/v1/task-agent/conversations/{conversation_id}")
+async def task_agent_conversation_update(
+    conversation_id: str,
+    req: dict[str, Any],
+    user: CurrentUser = Depends(require_roles("ADMIN", "OPERATOR")),
+) -> dict[str, Any]:
+    body = await _supervisor(
+        "PATCH",
+        f"/v1/conversations/{conversation_id}",
+        json_body=req,
+        actor_id=user.user_id,
+    )
+    return ok(body)
+
+
+@app.delete("/api/v1/task-agent/conversations/{conversation_id}", status_code=204)
+async def task_agent_conversation_delete(
+    conversation_id: str,
+    user: CurrentUser = Depends(require_roles("ADMIN", "OPERATOR")),
+) -> None:
+    await _supervisor(
+        "DELETE",
+        f"/v1/conversations/{conversation_id}",
+        actor_id=user.user_id,
+    )
+
+
 @app.post("/api/v1/task-agent/confirm")
 async def task_agent_confirm(
     req: TaskAgentConfirmRequest,
@@ -2544,11 +2571,28 @@ def audit_summary() -> dict[str, Any]:
 
 
 @app.get("/api/v1/admin/analytics/overview")
-def analytics() -> dict[str, Any]:
+async def analytics() -> dict[str, Any]:
     stats = _task_stats()
     rows = _query("SELECT event_type, COUNT(*) AS cnt FROM tg_trace_events GROUP BY event_type ORDER BY cnt DESC LIMIT 50")
     breakdown = {str(r.get("event_type")): int(r.get("cnt") or 0) for r in rows}
     total = stats.get("total", 0)
+
+    # 漏洞严重级别分布：遍历最近任务聚合每条 finding 的严重级别，避免分布恒为 0
+    hist: dict[str, int] = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
+    task_ids = [
+        r["task_id"]
+        for r in _query("SELECT task_id FROM tg_task ORDER BY updated_at DESC LIMIT %s", (_limit(30, 1, 100),))
+    ]
+    for tid in task_ids:
+        try:
+            obs = (await task_observation(tid))["data"]
+            events = (await task_events(tid, 300))["data"]
+            for item in _collect_findings(obs, events):
+                sev = str(item.get("severity") or "info").lower()
+                hist[sev if sev in hist else "info"] += 1
+        except Exception:
+            continue
+
     return ok(
         {
             "task_stats": stats,
@@ -2556,6 +2600,7 @@ def analytics() -> dict[str, Any]:
             "recent_events_count": sum(breakdown.values()),
             "event_type_breakdown": breakdown,
             "skill_execution_breakdown": {},
+            "vuln_severity_breakdown": hist,
             "total_executions": 0,
             "total_plans": 0,
             "generated_at": _now_iso(),
@@ -2617,9 +2662,17 @@ def runtime_config() -> dict[str, Any]:
                 "task_store": os.getenv("ORCH_TASK_STORE_BACKEND", "redis"),
             },
             "features": {
-                "kb_enabled": os.getenv("KB_ENABLED", "true"),
+                "kb_enabled": (
+                    "true"
+                    if (
+                        os.getenv("KB_ENABLED", "false").lower() == "true"
+                        or os.getenv("KNOWLEDGE_MCP_ENABLED", "false").lower() == "true"
+                    )
+                    else "false"
+                ),
                 "manager_agent": os.getenv("ENABLE_MANAGER_AGENT", "false"),
                 "skill_containers": os.getenv("EXECUTOR_USE_SKILL_CONTAINERS", "true"),
+                "trace_redact": os.getenv("ORCH_TRACE_REDACT_SENSITIVE", "true"),
             },
             "deployment": {"mode": os.getenv("DEPLOYMENT_MODE", "docker"), "workspace_root": os.getenv("WORKSPACE_ROOT", "/data/workspace")},
             "generated_at": _now_iso(),
