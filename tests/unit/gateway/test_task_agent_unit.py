@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import sys
 
+from fastapi.testclient import TestClient
 import pytest
 
 from tests.paths import REPO_ROOT
@@ -225,6 +226,31 @@ async def test_task_agent_conversation_list_forwards_actor_and_limit(monkeypatch
         "path": "/v1/conversations?limit=25",
         "actor_id": "user-1",
     }
+
+
+def test_execution_record_requires_authentication_and_proxies_for_authenticated_user(monkeypatch):
+    gw = _load_gateway_main()
+    client = TestClient(gw.app)
+
+    unauthenticated = client.get("/api/v1/executions/request-1")
+
+    assert unauthenticated.status_code == 401
+
+    async def fake_orch(method, path, **kwargs):
+        assert method == "GET"
+        assert path == "/v1/orchestrator/executions/request-1"
+        assert kwargs["timeout"] == 10.0
+        return {"request_id": "request-1", "status": "SUCCEEDED"}
+
+    monkeypatch.setattr(gw, "_orch", fake_orch)
+    gw.app.dependency_overrides[gw.get_current_user] = lambda: _user(gw)
+    try:
+        authenticated = client.get("/api/v1/executions/request-1")
+    finally:
+        gw.app.dependency_overrides.clear()
+
+    assert authenticated.status_code == 200
+    assert authenticated.json()["data"] == {"request_id": "request-1", "status": "SUCCEEDED"}
 
 
 @pytest.mark.asyncio

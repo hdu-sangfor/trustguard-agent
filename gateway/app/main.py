@@ -2123,7 +2123,10 @@ async def task_executions(
 
 
 @app.get("/api/v1/executions/{request_id}")
-async def execution_record(request_id: str) -> dict[str, Any]:
+async def execution_record(
+    request_id: str,
+    _user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
     try:
         data = await _orch("GET", f"/v1/orchestrator/executions/{request_id}", timeout=10.0)
     except Exception:
