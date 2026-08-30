@@ -371,10 +371,16 @@ def _attach_planitem_observe_fields(body: dict[str, Any]) -> None:
 
 
 def _v1_kb_health_summary() -> dict[str, Any]:
-    """与 `/health`、`overview` 共用的 KB 只读摘要（不含密钥明文）。"""
+    """与 `/health`、`overview` 共用的 KB 只读摘要（不含密钥明文）。
+
+    enabled 反映实际生效的知识能力：只要旧 Qdrant KB 或 RAG MCP 任一开启即视为启用，
+    与 gateway `features.kb_enabled` 的门控口径保持一致。
+    """
     kb_cfg = get_kb_config()
+    from app.knowledge.config import knowledge_mcp_enabled
+
     return {
-        "enabled": kb_cfg.enabled,
+        "enabled": kb_cfg.enabled or knowledge_mcp_enabled(),
         "legacy_static_read_enabled": kb_cfg.legacy_static_read_enabled,
         "legacy_experience_read_enabled": kb_cfg.legacy_experience_read_enabled,
         "observe_endpoint_available": True,
@@ -1668,8 +1674,10 @@ async def get_v1_kb_observe() -> dict[str, Any]:
     仅返回编排器侧 KB 配置摘要，不暴露密钥值，不改变运行时行为。
     """
     kb_cfg = get_kb_config()
+    from app.knowledge.config import knowledge_mcp_enabled
+
     return {
-        "enabled": kb_cfg.enabled,
+        "enabled": kb_cfg.enabled or knowledge_mcp_enabled(),
         "legacy_static_read_enabled": kb_cfg.legacy_static_read_enabled,
         "legacy_experience_read_enabled": kb_cfg.legacy_experience_read_enabled,
         "qdrant_url": kb_cfg.qdrant_url,

@@ -12,6 +12,8 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
+screenshots/
+screenshots.zip
 probe-local-mysql.txt
 node_modules
 dist

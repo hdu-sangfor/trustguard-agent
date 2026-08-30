@@ -316,10 +316,17 @@ export default function StatsPage() {
 
   const stats = overview?.task_stats;
   const hasDemoVulnData = demoMode && DEMO_FALLBACK_ENABLED;
-  const vulnSeverity = hasDemoVulnData
-    ? computeVulnSeverity()
-    : VULN_SEVERITY_META.map((meta) => ({ ...meta, count: 0 }));
+  // 后端聚合返回的严重级别分布（严重/高危/中危/低危/信息）
+  const sevKeys = ["critical", "high", "medium", "low", "info"] as const;
+  const backendSev = overview?.vuln_severity_breakdown;
+  const hasBackendVulnData = !demoMode && !!backendSev;
+  const vulnSeverity = hasBackendVulnData
+    ? VULN_SEVERITY_META.map((meta, i) => ({ ...meta, count: backendSev[sevKeys[i]] ?? 0 }))
+    : hasDemoVulnData
+      ? computeVulnSeverity()
+      : VULN_SEVERITY_META.map((meta) => ({ ...meta, count: 0 }));
   const totalVulns = vulnSeverity.reduce((s, v) => s + v.count, 0);
+  const hasVulnData = totalVulns > 0;
 
   // Top skills sorted by count
   const skillBreakdown = overview?.skill_execution_breakdown ?? {};
@@ -399,8 +406,8 @@ export default function StatsPage() {
               />
               <SummaryCard
                 label="已发现漏洞"
-                value={hasDemoVulnData ? totalVulns : "—"}
-                sub={hasDemoVulnData ? `严重/高危 ${vulnSeverity[0].count + vulnSeverity[1].count} 个` : "暂无聚合数据"}
+                value={hasVulnData ? totalVulns : "—"}
+                sub={hasVulnData ? `严重/高危 ${vulnSeverity[0].count + vulnSeverity[1].count} 个` : "暂无聚合数据"}
                 color="#f87171"
               />
               <SummaryCard

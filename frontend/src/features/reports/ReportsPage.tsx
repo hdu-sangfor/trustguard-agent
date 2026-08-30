@@ -10,7 +10,6 @@ import {
   type ApiTask, type ApiReport, type ApiExecutionRecord, type ApiObservation,
   type ApiReportFinding, type ApiReportRecommendation, type ApiReportArtifact, type ApiSeverity,
 } from "@/shared/lib/api";
-import { ORBIT_TASKS_UPDATED_EVENT } from "@/shared/constants/orbitTasksStorage";
 
 // Phase order and colour map
 const PHASE_COLORS: Record<string, string> = {
@@ -408,13 +407,6 @@ const ReportsPage = () => {
   }, []);
 
   useEffect(() => { void refresh(); }, [refresh]);
-
-  // Auto-refresh when a task status changes (e.g., demo simulation finishes)
-  useEffect(() => {
-    const handler = () => { void refresh(); };
-    window.addEventListener(ORBIT_TASKS_UPDATED_EVENT, handler);
-    return () => window.removeEventListener(ORBIT_TASKS_UPDATED_EVENT, handler);
-  }, [refresh]);
 
   // Poll every 12s for newly completed tasks (catches backend-driven completions)
   useEffect(() => {

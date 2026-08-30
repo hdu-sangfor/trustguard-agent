@@ -237,16 +237,16 @@ const TriagePage = () => {
 {/* Task list */}
         <div>
           {loading && tasks.length === 0 && (
-            <div style={{ textAlign: "center", padding: 60, color: "var(--tg-text-muted)", fontFamily: "monospace", fontSize: 12 }}>
-              <Shield size={32} style={{ marginBottom: 12, opacity: 0.4 }} />
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "38vh", textAlign: "center", color: "var(--tg-text-muted)", fontFamily: "monospace", fontSize: 12 }}>
+              <Shield size={36} style={{ marginBottom: 16, opacity: 0.4 }} />
               <div>加载研判任务...</div>
             </div>
           )}
           {!loading && tasks.length === 0 && (
-            <div style={{ textAlign: "center", padding: 60, color: "var(--tg-text-muted)", fontFamily: "monospace", fontSize: 12 }}>
-              <Database size={32} style={{ marginBottom: 12, opacity: 0.4 }} />
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "38vh", textAlign: "center", color: "var(--tg-text-muted)", fontFamily: "monospace", fontSize: 12 }}>
+              <Database size={40} style={{ marginBottom: 16, opacity: 0.45 }} />
               <div>暂无研判任务</div>
-              <div style={{ marginTop: 6, opacity: 0.5 }}>输入告警 UUID 创建第一个研判任务</div>
+              <div style={{ marginTop: 8, opacity: 0.5 }}>输入告警 UUID 创建第一个研判任务</div>
             </div>
           )}
           {tasks.map((task) => {

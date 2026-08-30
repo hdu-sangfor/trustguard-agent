@@ -13,7 +13,10 @@ from app.domain.models import ConversationMessage, ConversationSummary
 log = logging.getLogger("trustguard.supervisor.conversations")
 
 
-def _message_datetime(value: str) -> datetime:
+def _message_datetime(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        aware = value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+        return aware.astimezone(timezone.utc)
     try:
         normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
         parsed = datetime.fromisoformat(normalized)
@@ -40,13 +43,15 @@ def _conversation_summary(item: "Conversation") -> ConversationSummary:
     status_message = next((message for message in reversed(item.messages) if message.task_status), None)
     return ConversationSummary(
         conversation_id=item.conversation_id,
-        title=_compact_text(first_user, 200) or "新会话",
+        title=_compact_text(item.title or first_user, 200) or "新会话",
         preview=_compact_text(latest.text if latest else "", 500),
         task_id=task_message.task_id if task_message else None,
         task_status=status_message.task_status if status_message else None,
         message_count=len(item.messages),
         created_at=_datetime_iso(item.created_at),
         updated_at=_datetime_iso(item.updated_at),
+        pinned=item.pinned,
+        pinned_at=_datetime_iso(item.pinned_at) if item.pinned_at else None,
     )
 
 
@@ -58,6 +63,9 @@ class Conversation:
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     updated_order: int = 0
+    title: str | None = None
+    pinned: bool = False
+    pinned_at: datetime | None = None
 
 
 class ConversationStore(Protocol):
@@ -70,6 +78,12 @@ class ConversationStore(Protocol):
     def append_message(
         self, conversation_id: str, actor_id: str, message: ConversationMessage
     ) -> Conversation: ...
+
+    def update_conversation(
+        self, conversation_id: str, actor_id: str, title: str | None = None, pinned: bool | None = None
+    ) -> ConversationSummary | None: ...
+
+    def delete_conversation(self, conversation_id: str, actor_id: str) -> bool: ...
 
 
 class InMemoryConversationStore:
@@ -93,7 +107,12 @@ class InMemoryConversationStore:
     def list(self, actor_id: str, limit: int = 50) -> list[ConversationSummary]:
         items = sorted(
             (item for (owner, _conversation_id), item in self._items.items() if owner == actor_id),
-            key=lambda item: (item.updated_at, item.updated_order),
+            key=lambda item: (
+                item.pinned,
+                item.pinned_at or datetime(1970, 1, 1, tzinfo=timezone.utc),
+                item.updated_at,
+                item.updated_order,
+            ),
             reverse=True,
         )[:limit]
         return [_conversation_summary(item) for item in items]
@@ -110,6 +129,25 @@ class InMemoryConversationStore:
         item.updated_order = self._update_order
         return item
 
+    def update_conversation(
+        self, conversation_id: str, actor_id: str, title: str | None = None, pinned: bool | None = None
+    ) -> ConversationSummary | None:
+        item = self.get(conversation_id, actor_id)
+        if item is None:
+            return None
+        if title is not None:
+            item.title = title
+        if pinned is not None:
+            item.pinned = pinned
+            item.pinned_at = datetime.now(timezone.utc) if pinned else None
+        item.updated_at = datetime.now(timezone.utc)
+        self._update_order += 1
+        item.updated_order = self._update_order
+        return _conversation_summary(item)
+
+    def delete_conversation(self, conversation_id: str, actor_id: str) -> bool:
+        return self._items.pop((actor_id, conversation_id), None) is not None
+
 
 class RedisConversationStore:
     backend = "redis"
@@ -122,6 +160,10 @@ class RedisConversationStore:
     @staticmethod
     def _key(conversation_id: str, actor_id: str) -> str:
         return f"supervisor:conversation:{actor_id}:{conversation_id}:messages"
+
+    @staticmethod
+    def _meta_key(conversation_id: str, actor_id: str) -> str:
+        return f"supervisor:conversation:{actor_id}:{conversation_id}:meta"
 
     @staticmethod
     def _decode(raw: Any) -> ConversationMessage:
@@ -138,10 +180,29 @@ class RedisConversationStore:
         raw_messages = self._client.lrange(key, 0, -1)
         if not raw_messages:
             return None
+        messages = [self._decode(item) for item in raw_messages]
+        timestamps = [_message_datetime(message.created_at) for message in messages]
+        metadata = {
+            key.decode() if isinstance(key, bytes) else str(key):
+            value.decode() if isinstance(value, bytes) else str(value)
+            for key, value in self._client.hgetall(self._meta_key(conversation_id, actor_id)).items()
+        }
+        pinned_value = metadata.get("pinned")
+        pinned = True if pinned_value == "1" else False if pinned_value == "0" else False
+        pinned_at_value = metadata.get("pinned_at")
         return Conversation(
             conversation_id=conversation_id,
             actor_id=actor_id,
-            messages=[self._decode(item) for item in raw_messages],
+            messages=messages,
+            created_at=min(timestamps),
+            updated_at=(
+                _message_datetime(metadata["updated_at"])
+                if metadata.get("updated_at")
+                else max(timestamps)
+            ),
+            title=metadata.get("title") or None,
+            pinned=pinned,
+            pinned_at=_message_datetime(pinned_at_value) if pinned_at_value else None,
         )
 
     def list(self, actor_id: str, limit: int = 50) -> list[ConversationSummary]:
@@ -156,18 +217,22 @@ class RedisConversationStore:
             item = self.get(conversation_id, actor_id)
             if item is None:
                 continue
-            timestamps = [_message_datetime(message.created_at) for message in item.messages]
-            if timestamps:
-                item.created_at = min(timestamps)
-                item.updated_at = max(timestamps)
             conversations.append(item)
-        conversations.sort(key=lambda item: item.updated_at, reverse=True)
+        conversations.sort(
+            key=lambda item: (
+                item.pinned,
+                item.pinned_at or datetime(1970, 1, 1, tzinfo=timezone.utc),
+                item.updated_at,
+            ),
+            reverse=True,
+        )
         return [_conversation_summary(item) for item in conversations[:limit]]
 
     def append_message(
         self, conversation_id: str, actor_id: str, message: ConversationMessage
     ) -> Conversation:
         key = self._key(conversation_id, actor_id)
+        meta_key = self._meta_key(conversation_id, actor_id)
         serialized = json.dumps(message.model_dump(mode="json"), ensure_ascii=False, separators=(",", ":"))
         # WATCH keeps deterministic message IDs idempotent across SSE reconnects.
         while True:
@@ -177,11 +242,15 @@ class RedisConversationStore:
                     existing = [self._decode(item) for item in pipe.lrange(key, 0, -1)]
                     if any(item.id == message.id for item in existing):
                         pipe.unwatch()
-                        return Conversation(conversation_id=conversation_id, actor_id=actor_id, messages=existing)
+                        return self.get(conversation_id, actor_id) or Conversation(
+                            conversation_id=conversation_id, actor_id=actor_id, messages=existing
+                        )
                     pipe.multi()
                     pipe.rpush(key, serialized)
                     pipe.ltrim(key, -self._max_messages, -1)
+                    pipe.hset(meta_key, mapping={"updated_at": _datetime_iso(datetime.now(timezone.utc))})
                     pipe.expire(key, self._ttl_seconds)
+                    pipe.expire(meta_key, self._ttl_seconds)
                     pipe.execute()
                     break
             except Exception as exc:
@@ -189,6 +258,33 @@ class RedisConversationStore:
                     raise
         return self.get(conversation_id, actor_id) or Conversation(
             conversation_id=conversation_id, actor_id=actor_id, messages=[message]
+        )
+
+    def update_conversation(
+        self, conversation_id: str, actor_id: str, title: str | None = None, pinned: bool | None = None
+    ) -> ConversationSummary | None:
+        item = self.get(conversation_id, actor_id)
+        if item is None:
+            return None
+        metadata = {"updated_at": _datetime_iso(datetime.now(timezone.utc))}
+        if title is not None:
+            metadata["title"] = title
+        if pinned is not None:
+            metadata["pinned"] = "1" if pinned else "0"
+            metadata["pinned_at"] = _datetime_iso(datetime.now(timezone.utc)) if pinned else ""
+        meta_key = self._meta_key(conversation_id, actor_id)
+        self._client.hset(meta_key, mapping=metadata)
+        self._client.expire(self._key(conversation_id, actor_id), self._ttl_seconds)
+        self._client.expire(meta_key, self._ttl_seconds)
+        updated = self.get(conversation_id, actor_id)
+        return _conversation_summary(updated) if updated is not None else None
+
+    def delete_conversation(self, conversation_id: str, actor_id: str) -> bool:
+        return bool(
+            self._client.delete(
+                self._key(conversation_id, actor_id),
+                self._meta_key(conversation_id, actor_id),
+            )
         )
 
 
@@ -209,6 +305,9 @@ class MySqlConversationStore:
                 conversation_id VARCHAR(128) NOT NULL,
                 actor_id VARCHAR(128) NOT NULL,
                 task_id VARCHAR(128) NULL,
+                title VARCHAR(500) NULL,
+                is_pinned TINYINT(1) NOT NULL DEFAULT 0,
+                pinned_at DATETIME(6) NULL,
                 created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
                 updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
                 UNIQUE KEY uk_agent_conversation_actor (actor_id, conversation_id),
@@ -238,6 +337,27 @@ class MySqlConversationStore:
         with self._connection_factory() as conn, conn.cursor() as cursor:
             for statement in statements:
                 cursor.execute(statement)
+            # Migration: add title column if missing (for existing databases)
+            try:
+                cursor.execute("ALTER TABLE tg_agent_conversation ADD COLUMN title VARCHAR(500) NULL AFTER task_id")
+            except Exception:
+                pass  # Column already exists or not supported
+            try:
+                cursor.execute(
+                    "ALTER TABLE tg_agent_conversation "
+                    "ADD COLUMN is_pinned TINYINT(1) NOT NULL DEFAULT 0 AFTER title"
+                )
+            except Exception as exc:
+                if not exc.args or exc.args[0] != 1060:
+                    raise
+            try:
+                cursor.execute(
+                    "ALTER TABLE tg_agent_conversation "
+                    "ADD COLUMN pinned_at DATETIME(6) NULL AFTER is_pinned"
+                )
+            except Exception as exc:
+                if not exc.args or exc.args[0] != 1060:
+                    raise
 
     @staticmethod
     def _created_at(value: str) -> datetime:
@@ -268,6 +388,17 @@ class MySqlConversationStore:
         with self._connection_factory() as conn, conn.cursor() as cursor:
             cursor.execute(
                 """
+                SELECT title, is_pinned, pinned_at, created_at, updated_at
+                FROM tg_agent_conversation
+                WHERE actor_id = %s AND conversation_id = %s
+                """,
+                (actor_id, conversation_id),
+            )
+            metadata = cursor.fetchone()
+            if metadata is None:
+                return None
+            cursor.execute(
+                """
                 SELECT message_id, role, message_text, activities_json, draft_json,
                        confirmation_token, task_id, task_status, created_at
                 FROM tg_agent_conversation_message
@@ -277,8 +408,6 @@ class MySqlConversationStore:
                 (actor_id, conversation_id),
             )
             rows = list(cursor.fetchall() or [])
-        if not rows:
-            return None
         messages = [
             ConversationMessage.model_validate(
                 {
@@ -295,22 +424,47 @@ class MySqlConversationStore:
             )
             for row in rows
         ]
-        return Conversation(conversation_id=conversation_id, actor_id=actor_id, messages=messages)
+        return Conversation(
+            conversation_id=conversation_id,
+            actor_id=actor_id,
+            messages=messages,
+            created_at=_message_datetime(metadata["created_at"]),
+            updated_at=_message_datetime(metadata["updated_at"]),
+            title=metadata.get("title") or None,
+            pinned=bool(metadata.get("is_pinned")),
+            pinned_at=(
+                _message_datetime(metadata["pinned_at"])
+                if metadata.get("pinned_at")
+                else None
+            ),
+        )
 
-    def list(self, actor_id: str, limit: int = 50) -> list[ConversationSummary]:
+    def _summaries(
+        self, actor_id: str, limit: int | None = None, conversation_id: str | None = None
+    ) -> list[ConversationSummary]:
+        where_clause = "WHERE c.actor_id = %s"
+        params: list[Any] = [actor_id]
+        if conversation_id is not None:
+            where_clause += " AND c.conversation_id = %s"
+            params.append(conversation_id)
+        limit_clause = ""
+        if limit is not None:
+            limit_clause = "LIMIT %s"
+            params.append(limit)
         with self._connection_factory() as conn, conn.cursor() as cursor:
             cursor.execute(
-                """
-                SELECT c.conversation_id, c.task_id, c.created_at, c.updated_at,
+                f"""
+                SELECT c.conversation_id, c.task_id, c.is_pinned, c.pinned_at,
+                       c.created_at, c.updated_at,
                        COUNT(m.id) AS message_count,
-                       COALESCE((
+                       COALESCE(c.title, COALESCE((
                            SELECT first_user.message_text
                            FROM tg_agent_conversation_message first_user
                            WHERE first_user.actor_id = c.actor_id
                              AND first_user.conversation_id = c.conversation_id
                              AND first_user.role = 'user'
                            ORDER BY first_user.id ASC LIMIT 1
-                       ), '新会话') AS title,
+                       ), '新会话')) AS title,
                        COALESCE((
                            SELECT latest.message_text
                            FROM tg_agent_conversation_message latest
@@ -329,12 +483,13 @@ class MySqlConversationStore:
                 FROM tg_agent_conversation c
                 LEFT JOIN tg_agent_conversation_message m
                   ON m.actor_id = c.actor_id AND m.conversation_id = c.conversation_id
-                WHERE c.actor_id = %s
-                GROUP BY c.id, c.conversation_id, c.actor_id, c.task_id, c.created_at, c.updated_at
-                ORDER BY c.updated_at DESC, c.id DESC
-                LIMIT %s
+                {where_clause}
+                GROUP BY c.id, c.conversation_id, c.actor_id, c.task_id, c.title,
+                         c.is_pinned, c.pinned_at, c.created_at, c.updated_at
+                ORDER BY c.is_pinned DESC, c.pinned_at DESC, c.updated_at DESC, c.id DESC
+                {limit_clause}
                 """,
-                (actor_id, limit),
+                tuple(params),
             )
             rows = list(cursor.fetchall() or [])
         return [
@@ -347,9 +502,14 @@ class MySqlConversationStore:
                 message_count=int(row.get("message_count") or 0),
                 created_at=_datetime_iso(row.get("created_at")),
                 updated_at=_datetime_iso(row.get("updated_at")),
+                pinned=bool(row.get("is_pinned")),
+                pinned_at=_datetime_iso(row.get("pinned_at")) if row.get("pinned_at") else None,
             )
             for row in rows
         ]
+
+    def list(self, actor_id: str, limit: int = 50) -> list[ConversationSummary]:
+        return self._summaries(actor_id, limit=limit)
 
     def append_message(
         self, conversation_id: str, actor_id: str, message: ConversationMessage
@@ -393,6 +553,66 @@ class MySqlConversationStore:
             conversation_id=conversation_id, actor_id=actor_id, messages=[message]
         )
 
+    def update_conversation(
+        self, conversation_id: str, actor_id: str, title: str | None = None, pinned: bool | None = None
+    ) -> ConversationSummary | None:
+        updates: list[str] = []
+        params: list[Any] = []
+        if title is not None:
+            updates.append("title = %s")
+            params.append(title)
+        if pinned is not None:
+            updates.append("is_pinned = %s")
+            params.append(int(pinned))
+            updates.append("pinned_at = NOW(6)" if pinned else "pinned_at = NULL")
+        if not updates:
+            summaries = self._summaries(actor_id, conversation_id=conversation_id)
+            return summaries[0] if summaries else None
+        params.extend([actor_id, conversation_id])
+        with self._connection_factory() as conn, conn.cursor() as cursor:
+            cursor.execute(
+                f"UPDATE tg_agent_conversation SET {', '.join(updates)} WHERE actor_id = %s AND conversation_id = %s",
+                params,
+            )
+        summaries = self._summaries(actor_id, conversation_id=conversation_id)
+        return summaries[0] if summaries else None
+
+    def restore_conversation_metadata(
+        self,
+        conversation_id: str,
+        actor_id: str,
+        title: str | None,
+        pinned: bool,
+        pinned_at: datetime | None,
+    ) -> ConversationSummary | None:
+        stored_pinned_at = None
+        if pinned_at is not None:
+            aware = pinned_at if pinned_at.tzinfo is not None else pinned_at.replace(tzinfo=timezone.utc)
+            stored_pinned_at = aware.astimezone(timezone.utc).replace(tzinfo=None)
+        with self._connection_factory() as conn, conn.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE tg_agent_conversation
+                SET title = %s, is_pinned = %s, pinned_at = %s
+                WHERE actor_id = %s AND conversation_id = %s
+                """,
+                (title, int(pinned), stored_pinned_at, actor_id, conversation_id),
+            )
+        summaries = self._summaries(actor_id, conversation_id=conversation_id)
+        return summaries[0] if summaries else None
+
+    def delete_conversation(self, conversation_id: str, actor_id: str) -> bool:
+        with self._connection_factory() as conn, conn.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM tg_agent_conversation_message WHERE actor_id = %s AND conversation_id = %s",
+                (actor_id, conversation_id),
+            )
+            cursor.execute(
+                "DELETE FROM tg_agent_conversation WHERE actor_id = %s AND conversation_id = %s",
+                (actor_id, conversation_id),
+            )
+            return cursor.rowcount > 0
+
 
 class MirroredConversationStore:
     """Writes MySQL first and mirrors Redis for hot-state compatibility."""
@@ -404,11 +624,22 @@ class MirroredConversationStore:
         self._cache = cache
 
     def _migrate_cached(self, conversation_id: str, actor_id: str) -> Conversation | None:
+        durable = self._durable.get(conversation_id, actor_id)
+        if durable is not None:
+            return durable
         cached = self._cache.get(conversation_id, actor_id)
         if cached is None:
             return None
         for message in cached.messages:
             self._durable.append_message(conversation_id, actor_id, message)
+        if cached.title is not None or cached.pinned:
+            self._durable.restore_conversation_metadata(
+                conversation_id,
+                actor_id,
+                title=cached.title,
+                pinned=cached.pinned,
+                pinned_at=cached.pinned_at,
+            )
         return self._durable.get(conversation_id, actor_id)
 
     def get(self, conversation_id: str, actor_id: str) -> Conversation | None:
@@ -438,6 +669,28 @@ class MirroredConversationStore:
         except Exception:
             log.exception("failed to mirror conversation message to Redis")
         return durable
+
+    def update_conversation(
+        self, conversation_id: str, actor_id: str, title: str | None = None, pinned: bool | None = None
+    ) -> ConversationSummary | None:
+        if self._durable.get(conversation_id, actor_id) is None:
+            self._migrate_cached(conversation_id, actor_id)
+        durable = self._durable.update_conversation(conversation_id, actor_id, title, pinned)
+        if durable is None:
+            return None
+        try:
+            self._cache.update_conversation(conversation_id, actor_id, title, pinned)
+        except Exception:
+            log.exception("failed to mirror conversation metadata to Redis")
+        return durable
+
+    def delete_conversation(self, conversation_id: str, actor_id: str) -> bool:
+        try:
+            self._cache.delete_conversation(conversation_id, actor_id)
+        except Exception:
+            log.exception("failed to delete conversation from Redis cache")
+            raise
+        return self._durable.delete_conversation(conversation_id, actor_id)
 
 
 def _redis_store_from_env() -> RedisConversationStore:

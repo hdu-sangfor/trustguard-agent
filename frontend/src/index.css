@@ -956,8 +956,13 @@ html[data-theme="light"] .task-agent-page {
   margin-top: 60px;
   display: grid;
   grid-template-columns: 260px minmax(420px, 1fr) 310px;
+  transition: grid-template-columns 220ms cubic-bezier(.22, 1, .36, 1);
   overflow: hidden;
   background: var(--tg-page-bg);
+}
+
+.task-agent-layout.sidebar-collapsed {
+  grid-template-columns: 56px minmax(420px, 1fr) 310px;
 }
 
 .task-agent-conversations,
@@ -976,12 +981,23 @@ html[data-theme="light"] .task-agent-page {
   background: var(--tg-panel-muted);
 }
 
+.task-agent-conversations.collapsed {
+  padding-inline: 8px;
+  align-items: center;
+}
+
 .task-agent-conversations-header {
   min-height: 34px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   margin: 0 6px 14px;
+}
+
+.task-agent-conversations-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
 }
 
 .task-agent-product-name {
@@ -1022,6 +1038,34 @@ html[data-theme="light"] .task-agent-page {
   color: var(--tg-text);
 }
 
+.task-agent-conversation-rail {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.task-agent-sidebar-icon-button {
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--tg-text-muted);
+  cursor: pointer;
+}
+
+.task-agent-sidebar-icon-button:hover,
+.task-agent-sidebar-icon-button:focus-visible {
+  background: var(--tg-hover-bg);
+  color: var(--tg-text);
+}
+
 .task-agent-new-conversation {
   min-height: 40px;
   display: flex;
@@ -1045,6 +1089,9 @@ html[data-theme="light"] .task-agent-page {
 }
 
 .task-agent-conversation-list {
+  /* 填满剩余高度：会话未铺满时提供可视空间，避免重命名/删除弹窗被滚动容器裁切；
+     只有会话数量铺满侧边栏时，overflow-y 滚动才实际生效。 */
+  flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   scrollbar-gutter: stable;
@@ -1053,6 +1100,12 @@ html[data-theme="light"] .task-agent-page {
   gap: 3px;
   margin-top: 13px;
   padding-right: 3px;
+  padding-bottom: 6px;
+}
+
+.task-agent-conversation-group {
+  display: grid;
+  gap: 3px;
 }
 
 .task-agent-conversation-list,
@@ -1170,14 +1223,220 @@ html[data-theme="light"] .task-agent-page {
   font-size: 11px;
   line-height: 1.6;
 }
+.task-agent-conversation-group-label {
+  padding: 6px 12px 3px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--tg-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.task-agent-conversation-item { position: relative; }
+.task-agent-conversation-item-actions {
+  position: absolute;
+  right: 6px;
+  top: 6px;
+  opacity: 0;
+  transition: opacity 0.12s;
+  z-index: 2;
+}
+.task-agent-conversation-item:hover .task-agent-conversation-item-actions {
+  opacity: 1;
+}
+.task-agent-conversation-item:focus-within .task-agent-conversation-item-actions {
+  opacity: 1;
+}
+.task-agent-conversation-item-menu {
+  padding: 2px 4px;
+  border: none;
+  background: none;
+  color: var(--tg-text-muted);
+  font-size: 14px;
+  cursor: pointer;
+  line-height: 1;
+  letter-spacing: 2px;
+}
+.task-agent-conversation-item-menu:hover {
+  color: var(--tg-text-primary);
+}
+.task-agent-conversation-item-dropdown {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  z-index: 20;
+  min-width: 100px;
+  background: var(--tg-panel-bg);
+  border: 1px solid rgba(148,163,184,0.15);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+  padding: 4px;
+}
+.task-agent-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  background: none;
+  color: var(--tg-text-primary);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.1s;
+}
+.task-agent-dropdown-item:hover {
+  background: rgba(148,163,184,0.08);
+}
+.task-agent-dropdown-item.danger {
+  color: var(--tg-danger);
+}
+.task-agent-dropdown-item.danger:hover {
+  background: var(--tg-danger-soft);
+}
+.task-agent-rename-input {
+  width: 100%;
+  padding: 3px 6px;
+  border: 1px solid var(--tg-accent);
+  border-radius: 4px;
+  background: var(--tg-panel-bg);
+  color: var(--tg-text-primary);
+  font-size: 12px;
+  outline: none;
+  box-sizing: border-box;
+}
 
 .task-agent-conversation-error { color: var(--tg-danger); }
+
+.task-agent-search-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--tg-modal-backdrop);
+  animation: tg-search-overlay-in 160ms ease-out both;
+}
+
+.task-agent-search-dialog {
+  width: min(560px, 100%);
+  max-height: min(640px, calc(100vh - 48px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 20px;
+  border: 1px solid var(--tg-panel-border);
+  border-radius: 14px;
+  background: var(--tg-panel-bg);
+  box-shadow: var(--tg-shadow);
+  animation: tg-search-dialog-in 160ms ease-out both;
+}
+
+@keyframes tg-search-overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes tg-search-dialog-in {
+  from { opacity: 0; transform: scale(.98); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.task-agent-search-dialog h2 {
+  margin: 0 0 14px;
+  color: var(--tg-text);
+  font-size: 17px;
+}
+
+.task-agent-search-field {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 12px;
+  border: 1px solid var(--tg-panel-border);
+  border-radius: 10px;
+  background: var(--tg-input-bg);
+  color: var(--tg-text-muted);
+}
+
+.task-agent-search-field:focus-within {
+  border-color: var(--tg-accent);
+}
+
+.task-agent-search-field input {
+  flex: 1;
+  min-width: 0;
+  height: 42px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--tg-text);
+  font: inherit;
+  font-size: 13px;
+}
+
+.task-agent-search-field input::placeholder {
+  color: var(--tg-text-faint);
+}
+
+.task-agent-search-results {
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  overflow-y: auto;
+  margin-top: 12px;
+}
+
+.task-agent-search-results button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--tg-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.task-agent-search-results button:hover {
+  background: var(--tg-hover-bg);
+}
+
+.task-agent-search-results button.current {
+  background: var(--tg-accent-soft);
+}
+
+.task-agent-search-results button span {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.task-agent-search-results button small {
+  color: var(--tg-text-muted);
+  font-size: 11px;
+}
+
+.task-agent-search-empty {
+  margin: 0;
+  padding: 18px 12px;
+  color: var(--tg-text-muted);
+  font-size: 12px;
+  text-align: center;
+}
 
 .task-agent-chat {
   display: flex;
   flex-direction: column;
   overflow: hidden;
   background: var(--tg-page-bg);
+  position: relative;
 }
 
 .task-agent-chat-scroll {
@@ -1201,6 +1460,12 @@ html[data-theme="light"] .task-agent-page {
   margin-bottom: 26px;
   font-size: 14px;
   line-height: 1.72;
+  animation: tg-message-in 160ms ease-out both;
+}
+
+@keyframes tg-message-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .task-agent-message.user {
@@ -1222,8 +1487,266 @@ html[data-theme="light"] .task-agent-page {
 
 .task-agent-message-bubble {
   max-width: min(680px, calc(100% - 40px));
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
+  line-height: 1.72;
+}
+
+/* ── Markdown rendered content ── */
+.tg-markdown {
+  line-height: 1.72;
+}
+.tg-markdown p { margin: 0 0 0.75em; }
+.tg-markdown p:last-child { margin-bottom: 0; }
+.tg-markdown h1,
+.tg-markdown h2,
+.tg-markdown h3 { margin: 1.2em 0 0.5em; font-weight: 600; line-height: 1.35; }
+.tg-markdown h1 { font-size: 1.3em; }
+.tg-markdown h2 { font-size: 1.15em; }
+.tg-markdown h3 { font-size: 1.05em; }
+.tg-markdown ul,
+.tg-markdown ol { padding-left: 1.5em; margin: 0.5em 0; }
+.tg-markdown li { margin-bottom: 0.25em; }
+.tg-markdown code {
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 0.88em;
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+  background: rgba(148,163,184,0.12);
+  color: #f472b6;
+}
+.tg-markdown pre {
+  margin: 0.75em 0;
+  border-radius: 8px;
+  overflow-x: auto;
+}
+.tg-markdown pre code {
+  display: block;
+  padding: 14px 16px;
+  background: none;
+  color: inherit;
+  font-size: 0.85em;
+  line-height: 1.55;
+}
+.tg-markdown blockquote {
+  margin: 0.75em 0;
+  padding: 0.5em 1em;
+  border-left: 3px solid rgba(148,163,184,0.3);
+  color: var(--tg-text-muted);
+  font-style: italic;
+}
+.tg-markdown table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.75em 0;
+  font-size: 0.92em;
+}
+.tg-markdown th,
+.tg-markdown td {
+  padding: 6px 10px;
+  border: 1px solid rgba(148,163,184,0.2);
+  text-align: left;
+}
+.tg-markdown th {
+  background: rgba(148,163,184,0.06);
+  font-weight: 600;
+}
+.tg-markdown a {
+  color: var(--tg-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.tg-markdown a:hover { opacity: 0.8; }
+.tg-markdown hr {
+  border: none;
+  border-top: 1px solid rgba(148,163,184,0.15);
+  margin: 1em 0;
+}
+.tg-markdown strong { font-weight: 600; }
+
+/* ── Thinking Block ── */
+.tg-thinking {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+  color: var(--tg-text-muted);
+  font-size: 13px;
+}
+.tg-thinking-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--tg-accent);
+  opacity: 0.6;
+  animation: tg-thinking-pulse 1.4s ease-in-out infinite;
+}
+@keyframes tg-thinking-pulse {
+  0%, 100% { opacity: 0.6; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.15); }
+}
+.tg-thinking-text {
+  color: var(--tg-text-muted);
+}
+
+/* ── ToolCall Block ── */
+.tg-toolcall {
+  margin: 12px 0;
+  border: 1px solid rgba(148,163,184,0.15);
+  border-radius: 10px;
+  overflow: hidden;
+  background: rgba(148,163,184,0.03);
+}
+.tg-toolcall-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  color: var(--tg-text-primary);
+  text-align: left;
+  transition: background 0.15s;
+}
+.tg-toolcall-header:hover { background: rgba(148,163,184,0.05); }
+.tg-toolcall-icon {
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  border-radius: 50%;
+  background: rgba(52,211,153,0.1);
+  color: #34d399;
+}
+.tg-toolcall-icon.running {
+  background: rgba(99,102,241,0.12);
+  color: var(--tg-accent);
+  animation: tg-toolcall-pulse 1.2s ease-in-out infinite;
+}
+.tg-toolcall-icon.blocked {
+  background: var(--tg-danger-soft);
+  color: var(--tg-danger);
+}
+@keyframes tg-toolcall-pulse {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
+}
+.tg-toolcall-title {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.tg-toolcall-title strong { font-weight: 600; }
+.tg-toolcall-title small {
+  font-size: 11px;
+  color: var(--tg-text-muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.tg-toolcall-chevron {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  transition: transform 0.2s;
+  color: var(--tg-text-muted);
+}
+.tg-toolcall-chevron::after {
+  content: "▼";
+  font-size: 8px;
+}
+.tg-toolcall-chevron.expanded { transform: rotate(180deg); }
+.tg-toolcall-body-shell {
+  display: grid;
+  grid-template-rows: minmax(0, 0fr);
+  opacity: 0;
+  visibility: hidden;
+  transition: grid-template-rows 180ms ease, opacity 180ms ease, visibility 0s linear 180ms;
+}
+.tg-toolcall-body-shell.expanded {
+  grid-template-rows: minmax(0, 1fr);
+  opacity: 1;
+  visibility: visible;
+  transition-delay: 0s;
+}
+.tg-toolcall-body {
+  min-height: 0;
+  overflow: hidden;
+}
+.tg-toolcall-body-shell.expanded .tg-toolcall-body {
+  border-top: 1px solid rgba(148,163,184,0.1);
+  padding: 4px 0;
+}
+.tg-toolcall-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 12px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.tg-toolcall-item-icon {
+  flex: 0 0 16px;
+  font-size: 12px;
+  line-height: 1.45;
+  text-align: center;
+}
+.tg-toolcall-item.running .tg-toolcall-item-icon {
+  animation: tg-toolcall-pulse 1.2s ease-in-out infinite;
+}
+.tg-toolcall-item-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.tg-toolcall-item-title { font-weight: 500; }
+.tg-toolcall-item-detail {
+  font-size: 12px;
+  color: var(--tg-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tg-toolcall-item-duration {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--tg-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Scroll to bottom button ── */
+.tg-scroll-bottom {
+  position: absolute;
+  bottom: 100px;
+  right: 24px;
+  z-index: 10;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid rgba(148,163,184,0.25);
+  background: var(--tg-panel-bg);
+  color: var(--tg-text-muted);
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  transition: opacity 0.2s, transform 0.2s;
+  opacity: 0.9;
+}
+.tg-scroll-bottom:hover {
+  opacity: 1;
+  transform: translateY(-1px);
 }
 
 .task-agent-message.user .task-agent-message-bubble {
@@ -1231,145 +1754,6 @@ html[data-theme="light"] .task-agent-page {
   padding: 10px 14px;
   border-radius: 16px 16px 4px 16px;
   background: var(--tg-panel-muted);
-}
-
-.task-agent-inline-reasoning {
-  width: calc(100% - 39px);
-  margin: -9px 0 26px 39px;
-  overflow: hidden;
-  border: 1px solid var(--tg-panel-border);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--tg-panel-muted) 72%, transparent);
-}
-
-.task-agent-inline-reasoning-header {
-  width: 100%;
-  min-height: 52px;
-  display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) 18px;
-  align-items: center;
-  gap: 9px;
-  padding: 10px 12px;
-  border: 0;
-  background: transparent;
-  color: var(--tg-text);
-  font-family: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.task-agent-inline-reasoning-header > svg {
-  color: var(--tg-text-muted);
-  transition: transform .18s ease;
-}
-
-.task-agent-inline-reasoning-header > svg.expanded {
-  transform: rotate(180deg);
-}
-
-.task-agent-inline-reasoning-icon {
-  width: 24px;
-  height: 24px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--tg-success) 12%, transparent);
-  color: var(--tg-success);
-}
-
-.task-agent-inline-reasoning-icon.running {
-  background: var(--tg-accent-soft);
-  color: var(--tg-accent);
-}
-
-.task-agent-inline-reasoning-title {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.task-agent-inline-reasoning-title strong {
-  overflow: hidden;
-  font-size: 11px;
-  font-weight: 680;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.task-agent-inline-reasoning-title small {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--tg-text-muted);
-  font-family: var(--tg-font-mono);
-  font-size: 9px;
-}
-
-.task-agent-inline-reasoning-body {
-  padding: 0 12px 7px 47px;
-  border-top: 1px solid var(--tg-panel-border);
-}
-
-.task-agent-inline-step {
-  position: relative;
-  display: grid;
-  grid-template-columns: 17px minmax(0, 1fr);
-  gap: 8px;
-  padding: 10px 0;
-}
-
-.task-agent-inline-step + .task-agent-inline-step {
-  border-top: 1px solid color-mix(in srgb, var(--tg-panel-border) 72%, transparent);
-}
-
-.task-agent-inline-step-state {
-  padding-top: 2px;
-  color: var(--tg-success);
-}
-
-.task-agent-inline-step.running .task-agent-inline-step-state { color: var(--tg-accent); }
-.task-agent-inline-step.blocked .task-agent-inline-step-state { color: var(--tg-danger); }
-
-.task-agent-inline-step-content,
-.task-agent-inline-step-content > small {
-  min-width: 0;
-  display: block;
-  overflow-wrap: anywhere;
-}
-
-.task-agent-inline-step-heading {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.task-agent-inline-step-heading strong {
-  color: var(--tg-text);
-  font-size: 10px;
-  font-weight: 650;
-}
-
-.task-agent-inline-step-heading time {
-  flex: 0 0 auto;
-  color: var(--tg-text-faint);
-  font-family: var(--tg-font-mono);
-  font-size: 9px;
-}
-
-.task-agent-inline-step-content > small {
-  margin-top: 3px;
-  color: var(--tg-text-muted);
-  font-size: 9px;
-  line-height: 1.55;
-}
-
-.task-agent-inline-reasoning-pagination {
-  margin-top: 2px;
 }
 
 .task-agent-draft {
@@ -1740,6 +2124,10 @@ html[data-theme="light"] .task-agent-page {
     grid-template-columns: 230px minmax(390px, 1fr) 270px;
   }
 
+  .task-agent-layout.sidebar-collapsed {
+    grid-template-columns: 56px minmax(390px, 1fr) 270px;
+  }
+
   .task-agent-chat-scroll,
   .task-agent-composer-wrap {
     padding-inline: 34px;
@@ -1751,6 +2139,10 @@ html[data-theme="light"] .task-agent-page {
     grid-template-columns: 230px minmax(0, 1fr);
   }
 
+  .task-agent-layout.sidebar-collapsed {
+    grid-template-columns: 56px minmax(0, 1fr);
+  }
+
   .task-agent-monitor {
     display: none;
   }
@@ -1758,6 +2150,10 @@ html[data-theme="light"] .task-agent-page {
 
 @media (max-width: 680px) {
   .task-agent-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .task-agent-layout.sidebar-collapsed {
     grid-template-columns: minmax(0, 1fr);
   }
 
@@ -1774,12 +2170,17 @@ html[data-theme="light"] .task-agent-page {
     max-width: 88%;
   }
 
-  .task-agent-inline-reasoning {
-    width: 100%;
-    margin-left: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .task-agent-layout,
+  .tg-toolcall-body-shell {
+    transition: none;
   }
 
-  .task-agent-inline-reasoning-body {
-    padding-left: 12px;
+  .task-agent-message,
+  .task-agent-search-overlay,
+  .task-agent-search-dialog {
+    animation: none;
   }
 }

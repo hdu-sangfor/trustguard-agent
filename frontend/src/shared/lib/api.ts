@@ -108,7 +108,14 @@ export interface ApiTaskAgentConversationSummary {
   messageCount: number;
   createdAt: string;
   updatedAt: string;
+  pinned: boolean;
+  pinnedAt?: string | null;
 }
+
+export type TaskAgentConversationUpdate = {
+  title?: string;
+  pinned?: boolean;
+};
 
 export interface ApiTaskTerminalResult {
   taskId: string;
@@ -269,10 +276,16 @@ async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
     } catch { /* keep HTTP fallback */ }
     throw new Error(detail);
   }
-  const json = (await resp.json()) as ApiResponse<T>;
+  let json: ApiResponse<T> | undefined;
+  try {
+    json = (await resp.json()) as ApiResponse<T>;
+  } catch {
+    // 204 No Content / 空响应体（例如 DELETE）——无 data，直接返回。
+    json = undefined;
+  }
   // Backend returns code as string "0"; tolerate both "0" and 0 for older responses.
-  if (json.code !== '0' && json.code !== 0) throw new Error(json.message ?? 'API error');
-  return json.data;
+  if (json && json.code !== '0' && json.code !== 0) throw new Error(json.message ?? 'API error');
+  return json?.data as T;
 }
 
 function normalizeUser(user: ApiUser): ApiUser {
@@ -425,6 +438,25 @@ export async function listTaskAgentConversations(
 ): Promise<ApiTaskAgentConversationSummary[]> {
   return apiFetch<ApiTaskAgentConversationSummary[]>(
     `/api/v1/task-agent/conversations?limit=${Math.max(1, Math.min(limit, 100))}`,
+  );
+}
+
+export async function updateTaskAgentConversation(
+  conversationId: string,
+  update: TaskAgentConversationUpdate,
+): Promise<ApiTaskAgentConversationSummary> {
+  return apiFetch<ApiTaskAgentConversationSummary>(
+    `/api/v1/task-agent/conversations/${encodeURIComponent(conversationId)}`,
+    { method: 'PATCH', body: JSON.stringify(update), headers: { 'Content-Type': 'application/json' } },
+  );
+}
+
+export async function deleteTaskAgentConversation(
+  conversationId: string,
+): Promise<void> {
+  await apiFetch<void>(
+    `/api/v1/task-agent/conversations/${encodeURIComponent(conversationId)}`,
+    { method: 'DELETE' },
   );
 }
 
@@ -613,7 +645,9 @@ export async function getTaskTrace(
 ): Promise<ApiTrace> {
   const resp = await fetch(
     `${API_BASE}/api/v1/tasks/${taskId}/trace?executions_limit=${executionsLimit}`,
+    { headers: { ...authHeaders() } },
   );
+  if (resp.status === 401) { fireUnauthorized(); throw new Error('未授权，请重新登录'); }
   if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
   const json = (await resp.json()) as Record<string, unknown>;
   // Unwrap standard ApiResponse wrapper if present
@@ -629,7 +663,8 @@ export async function getTaskTrace(
  * query: include_validation_error (default true)
  */
 export async function getTracePlan(taskId: string): Promise<Record<string, unknown>> {
-  const resp = await fetch(`${API_BASE}/api/v1/tasks/${taskId}/trace/plan`);
+  const resp = await fetch(`${API_BASE}/api/v1/tasks/${taskId}/trace/plan`, { headers: { ...authHeaders() } });
+  if (resp.status === 401) { fireUnauthorized(); throw new Error('未授权，请重新登录'); }
   if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
   const json = (await resp.json()) as Record<string, unknown>;
   if ('code' in json && 'data' in json) {
@@ -643,7 +678,8 @@ export async function getTracePlan(taskId: string): Promise<Record<string, unkno
  * GET /api/v1/tasks/{taskId}/trace/compile — compile segment only.
  */
 export async function getTraceCompile(taskId: string): Promise<Record<string, unknown>> {
-  const resp = await fetch(`${API_BASE}/api/v1/tasks/${taskId}/trace/compile`);
+  const resp = await fetch(`${API_BASE}/api/v1/tasks/${taskId}/trace/compile`, { headers: { ...authHeaders() } });
+  if (resp.status === 401) { fireUnauthorized(); throw new Error('未授权，请重新登录'); }
   if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
   const json = (await resp.json()) as Record<string, unknown>;
   if ('code' in json && 'data' in json) {
@@ -702,6 +738,7 @@ export interface ApiAnalyticsOverview {
   recent_events_count: number;
   event_type_breakdown: Record<string, number>;
   skill_execution_breakdown?: Record<string, number>;
+  vuln_severity_breakdown?: Partial<Record<"critical" | "high" | "medium" | "low" | "info", number>>;
   total_executions?: number;
   total_plans?: number;
   generated_at: string;
@@ -785,7 +822,9 @@ export async function getTaskExecutions(
 ): Promise<ApiExecutionRecord[]> {
   const resp = await fetch(
     `${API_BASE}/api/v1/tasks/${taskId}/executions?limit=${limit}&offset=${offset}`,
+    { headers: { ...authHeaders() } },
   );
+  if (resp.status === 401) { fireUnauthorized(); throw new Error('未授权，请重新登录'); }
   if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
   const json = (await resp.json()) as Record<string, unknown>;
   if ('code' in json && 'data' in json) {
@@ -799,7 +838,8 @@ export async function getTaskExecutions(
 }
 
 export async function getExecutionRecord(requestId: string): Promise<ApiExecutionRecord> {
-  const resp = await fetch(`${API_BASE}/api/v1/executions/${requestId}`);
+  const resp = await fetch(`${API_BASE}/api/v1/executions/${requestId}`, { headers: { ...authHeaders() } });
+  if (resp.status === 401) { fireUnauthorized(); throw new Error('未授权，请重新登录'); }
   if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
   const json = (await resp.json()) as Record<string, unknown>;
   if ('code' in json && 'data' in json) {

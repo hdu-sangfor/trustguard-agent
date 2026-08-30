@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Check, ChevronDown, ChevronLeft, ChevronRight, Circle, Clock, Loader2, Plus, RefreshCw, Send, ShieldCheck, Square, SquareTerminal } from 'lucide-react';
+import { Check, ChevronDown, ChevronLeft, ChevronRight, Circle, Loader2, PanelLeftClose, PanelLeftOpen, Pencil, Pin, PinOff, Plus, Search, Send, ShieldCheck, Square, SquareTerminal, Trash2 } from 'lucide-react';
 import Header from '@/shared/components/Header';
 import { useAppSession } from '@/shared/context/AppSessionContext';
 import {
@@ -12,6 +12,9 @@ import {
   listTaskAgentConversations,
   streamTaskAgentDraft,
   streamTaskEvents,
+  updateTaskAgentConversation,
+  deleteTaskAgentConversation,
+  toFrontendStatus,
   type ApiAgentActivity,
   type ApiAlertTriageDraft,
   type ApiConversationMessage,
@@ -21,8 +24,13 @@ import {
   type ApiTask,
   type ApiTaskAgentConversationSummary,
 } from '@/shared/lib/api';
+import { SENTINEL_ORBIT_TASKS_KEY, ORBIT_TASKS_UPDATED_EVENT, readStoredOrbitTasks, type StoredOrbitTask } from '@/shared/constants/orbitTasksStorage';
+import MarkdownBlock from '@/shared/components/MarkdownBlock';
+import ThinkingBlock from '@/shared/components/ThinkingBlock';
+import ToolCallBlock from '@/shared/components/ToolCallBlock';
 
 const CONVERSATION_STORAGE_KEY = 'trustguard.agent.conversationId';
+const ACTIVITY_SETTLE_DELAY_MS = 800;
 const WELCOME_MESSAGE: ChatMessage = {
   id: 'welcome',
   role: 'assistant',
@@ -38,6 +46,7 @@ type ChatMessage = {
   draft?: ApiPentestDraft | ApiAlertTriageDraft | null;
   confirmationToken?: string | null;
   streaming?: boolean;
+  thinking?: { startedAt: number } | null;
 };
 
 function toChatMessage(message: ApiConversationMessage, confirmedTaskId?: string | null): ChatMessage {
@@ -74,17 +83,40 @@ function conversationStatus(status?: string | null): string {
 
 const terminalStatuses = new Set<ApiTask['status']>(['DONE', 'FAILED', 'CANCELLED']);
 
-function settleActivities(activities: ApiAgentActivity[] | undefined): ApiAgentActivity[] | undefined {
+function settleActivities(
+  activities: ApiAgentActivity[] | undefined,
+  status: 'done' | 'blocked' = 'done',
+): ApiAgentActivity[] | undefined {
   const finishedAt = new Date().toISOString();
   const now = Date.now();
   return activities?.map((activity) => activity.status === 'running'
     ? {
         ...activity,
-        status: 'done',
+        status,
         finishedAt,
         durationMs: activityDurationMs(activity, now),
       }
     : activity);
+}
+
+function blockDraftResponse(
+  activities: ApiAgentActivity[] | undefined,
+  detail: string,
+): ApiAgentActivity[] {
+  const settled = settleActivities(activities, 'blocked') ?? [];
+  if (settled.some((activity) => activity.status === 'blocked')) return settled;
+  const timestamp = new Date().toISOString();
+  return [...settled, {
+    id: 'draft-response-blocked',
+    kind: 'result',
+    title: '生成任务回复',
+    detail,
+    status: 'blocked',
+    timestamp,
+    startedAt: timestamp,
+    finishedAt: timestamp,
+    durationMs: 0,
+  }];
 }
 
 function settleMessages(items: ChatMessage[]): ChatMessage[] {
@@ -301,17 +333,6 @@ function activityDurationMs(activity: ApiAgentActivity, now: number): number | n
   return null;
 }
 
-function formatDuration(durationMs: number | null): string {
-  if (durationMs === null) return '—';
-  if (durationMs < 1000) return `${Math.max(0, Math.round(durationMs))} 毫秒`;
-  const seconds = durationMs / 1000;
-  if (seconds < 10) return `${seconds.toFixed(1)} 秒`;
-  if (seconds < 60) return `${Math.round(seconds)} 秒`;
-  const minutes = Math.floor(seconds / 60);
-  const remainingSeconds = Math.floor(seconds % 60);
-  return `${minutes} 分 ${String(remainingSeconds).padStart(2, '0')} 秒`;
-}
-
 const reasoningLabels: Record<string, string> = {
   TASK_UNDERSTANDING: '任务理解',
   TASK_PLANNING: '任务规划',
@@ -371,86 +392,6 @@ function reasoningStepActivities(steps: ApiReasoningStep[]): ApiAgentActivity[] 
   return steps.reduce<ApiAgentActivity[]>(
     (activities, step, index) => mergeReasoningStep(activities, step, index),
     [],
-  );
-}
-
-function InlineReasoningTrace({ activities }: { activities: ApiAgentActivity[] }) {
-  const [expanded, setExpanded] = useState(true);
-  const [page, setPage] = useState(1);
-  const hasRunning = activities.some((activity) => activity.status === 'running');
-  const [now, setNow] = useState(() => Date.now());
-  const pageSize = 8;
-  const totalPages = Math.max(1, Math.ceil(activities.length / pageSize));
-  const visibleActivities = activities.slice((page - 1) * pageSize, page * pageSize);
-
-  useEffect(() => {
-    if (!hasRunning) return undefined;
-    setNow(Date.now());
-    const timer = window.setInterval(() => setNow(Date.now()), 500);
-    return () => window.clearInterval(timer);
-  }, [hasRunning]);
-  useEffect(() => setPage(totalPages), [activities.length, totalPages]);
-
-  const startedTimes = activities
-    .map((activity) => parsedTime(activity.startedAt ?? activity.timestamp))
-    .filter((value): value is number => value !== null);
-  const firstStartedAt = startedTimes.length > 0 ? Math.min(...startedTimes) : null;
-  const finishedTimes = activities
-    .map((activity) => parsedTime(activity.finishedAt))
-    .filter((value): value is number => value !== null);
-  const lastFinishedAt = finishedTimes.length > 0 ? Math.max(...finishedTimes) : null;
-  const totalDuration = firstStartedAt === null
-    ? null
-    : Math.max(0, (hasRunning ? now : lastFinishedAt ?? now) - firstStartedAt);
-  const runningActivity = [...activities].reverse().find((activity) => activity.status === 'running');
-
-  return (
-    <div className="task-agent-inline-reasoning">
-      <button
-        type="button"
-        className="task-agent-inline-reasoning-header"
-        onClick={() => setExpanded((value) => !value)}
-        aria-expanded={expanded}
-      >
-        <span className={`task-agent-inline-reasoning-icon${hasRunning ? ' running' : ''}`}>
-          {hasRunning ? <Loader2 size={14} className="tg-spin" /> : <Check size={14} />}
-        </span>
-        <span className="task-agent-inline-reasoning-title">
-          <strong>{hasRunning ? `正在执行：${runningActivity?.title ?? '结构化推理'}` : `已执行 ${activities.length} 个推理步骤`}</strong>
-          <small><Clock size={11} /> {formatDuration(totalDuration)}</small>
-        </span>
-        <ChevronDown size={14} className={expanded ? 'expanded' : undefined} />
-      </button>
-      {expanded && (
-        <div className="task-agent-inline-reasoning-body">
-          {visibleActivities.map((activity) => (
-            <div key={activity.id} className={`task-agent-inline-step ${activity.status}`}>
-              <span className="task-agent-inline-step-state">
-                {activity.status === 'running'
-                  ? <Loader2 size={12} className="tg-spin" />
-                  : activity.status === 'blocked'
-                    ? <Circle size={9} fill="currentColor" />
-                    : <Check size={12} />}
-              </span>
-              <span className="task-agent-inline-step-content">
-                <span className="task-agent-inline-step-heading">
-                  <strong>{activity.title}</strong>
-                  <time>{formatDuration(activityDurationMs(activity, now))}</time>
-                </span>
-                {activity.detail && <small>{activity.detail}</small>}
-              </span>
-            </div>
-          ))}
-          {totalPages > 1 && (
-            <div className="task-agent-activity-pagination task-agent-inline-reasoning-pagination">
-              <button type="button" aria-label="上一页推理步骤" onClick={() => setPage((current) => Math.max(1, current - 1))} disabled={page === 1}><ChevronLeft size={13} /></button>
-              <span>步骤 {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, activities.length)} / {activities.length}</span>
-              <button type="button" aria-label="下一页推理步骤" onClick={() => setPage((current) => Math.min(totalPages, current + 1))} disabled={page === totalPages}><ChevronRight size={13} /></button>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
   );
 }
 
@@ -540,9 +481,17 @@ export default function TaskAgentPage() {
   const [conversationsLoading, setConversationsLoading] = useState(false);
   const [conversationLoading, setConversationLoading] = useState(false);
   const [conversationError, setConversationError] = useState('');
-  const endRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
+  const [isNearBottom, setIsNearBottom] = useState(true);
   const draftAbortRef = useRef<AbortController | null>(null);
   const conversationLoadRef = useRef(0);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [conversationSearch, setConversationSearch] = useState('');
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
 
   useEffect(() => {
     document.documentElement.classList.add('task-agent-no-page-scroll');
@@ -552,6 +501,15 @@ export default function TaskAgentPage() {
       document.body.classList.remove('no-page-scroll');
     };
   }, []);
+
+  useEffect(() => {
+    if (!searchOpen) return undefined;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setSearchOpen(false);
+    };
+    document.addEventListener('keydown', closeOnEscape);
+    return () => document.removeEventListener('keydown', closeOnEscape);
+  }, [searchOpen]);
 
   const appendMessage = useCallback((message: ChatMessage) => setMessages((items) => (
     items.some((item) => item.id === message.id) ? items : [...items, message]
@@ -629,8 +587,39 @@ export default function TaskAgentPage() {
     setConversationError('');
   }, []);
 
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, liveActivities, reasoningActivities]);
+  // Auto-scroll: follow content when user is near bottom
+  useEffect(() => {
+    if (isNearBottom) {
+      scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'instant' });
+    }
+  }, [messages, liveActivities, reasoningActivities, isNearBottom]);
+
+  // Detect user scroll to determine if near bottom
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      const threshold = 100;
+      const near = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+      setIsNearBottom(near);
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+  }, []);
+
+  const scrollToBottom = useCallback(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+    setIsNearBottom(true);
+  }, []);
+
   useEffect(() => () => draftAbortRef.current?.abort(), []);
+
+  useEffect(() => {
+    const textarea = composerRef.current;
+    if (!textarea) return;
+    textarea.style.height = 'auto';
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 130)}px`;
+  }, [input]);
 
   useEffect(() => {
     if (!loggedIn) return;
@@ -760,7 +749,7 @@ export default function TaskAgentPage() {
     setMessages((items) => [
       ...items,
       { id: `u-${requestId}`, role: 'user', text: message },
-      { id: assistantId, role: 'assistant', text: '', activities: [], streaming: true },
+      { id: assistantId, role: 'assistant', text: '', activities: [], streaming: true, thinking: { startedAt: Date.now() } },
     ]);
     setBusy(true);
     try {
@@ -792,18 +781,32 @@ export default function TaskAgentPage() {
         controller.signal,
       );
     } catch (error) {
+      const stopped = controller.signal.aborted;
+      const detail = stopped
+        ? '用户已停止生成'
+        : `回复生成失败：${error instanceof Error ? error.message : String(error)}`;
       setMessages((items) => items.map((item) => item.id === assistantId ? {
         ...item,
-        text: controller.signal.aborted
+        text: stopped
           ? `${item.text}${item.text ? '\n\n' : ''}已停止生成。`
           : `${item.text}${item.text ? '\n\n' : ''}请求失败：${error instanceof Error ? error.message : String(error)}`,
+        activities: blockDraftResponse(item.activities, detail),
       } : item));
     } finally {
       setMessages((items) => items.map((item) => item.id === assistantId ? { ...item, streaming: false } : item));
+      window.setTimeout(() => {
+        setMessages((items) => items.map((item) => item.id === assistantId ? { ...item, thinking: null } : item));
+      }, ACTIVITY_SETTLE_DELAY_MS);
       if (draftAbortRef.current === controller) draftAbortRef.current = null;
       setBusy(false);
     }
   };
+
+  const composerHint = conversationLoading
+    ? '正在恢复会话…'
+    : busy
+      ? '正在生成，点击停止按钮可中断'
+      : 'Enter 发送 · Shift + Enter 换行';
 
   const confirm = async (message: ChatMessage) => {
     if (!message.confirmationToken || draftBusy) return;
@@ -824,10 +827,34 @@ export default function TaskAgentPage() {
           : [...updated, toChatMessage(response.message, response.task.taskId)];
       });
       void refreshConversations();
+      syncTaskToLocalStorage(response.task);
     } catch (error) {
       setMessages((items) => [...items, { id: `e-${Date.now()}`, role: 'assistant', text: `确认失败：${error instanceof Error ? error.message : String(error)}` }]);
     } finally { setDraftBusy(false); }
   };
+
+  function syncTaskToLocalStorage(apiTask: ApiTask) {
+    try {
+      const existing = readStoredOrbitTasks();
+      const existingIds = new Set(existing.map((t) => t.id));
+      if (!existingIds.has(apiTask.taskId)) {
+        const entry: StoredOrbitTask = {
+          id: apiTask.taskId,
+          name: apiTask.name ?? '未命名任务',
+          desc: apiTask.description ?? '',
+          url: apiTask.target ?? '',
+          log: '',
+          createdAt: new Date(apiTask.createdAt).getTime() || Date.now(),
+          updatedAt: apiTask.updatedAt ? new Date(apiTask.updatedAt).getTime() || undefined : undefined,
+          status: toFrontendStatus(apiTask.status),
+          currentPhase: apiTask.currentPhase,
+        };
+        existing.push(entry);
+        localStorage.setItem(SENTINEL_ORBIT_TASKS_KEY, JSON.stringify(existing));
+        window.dispatchEvent(new Event(ORBIT_TASKS_UPDATED_EVENT));
+      }
+    } catch { /* quota */ }
+  }
 
   const isAlertTriage = task?.workflowId === 'alert_triage' || task?.taskId.startsWith('at-') === true;
   const workflowPhases = isAlertTriage ? alertTriagePhases : pentestPhases;
@@ -867,6 +894,153 @@ export default function TaskAgentPage() {
       : undefined;
     return taskMessage?.id;
   }, [messages, reasoningActivities.length, task?.taskId]);
+
+  const groupConversations = (list: ApiTaskAgentConversationSummary[]) => {
+    const now = Date.now();
+    const day = 86400000;
+    const today: ApiTaskAgentConversationSummary[] = [];
+    const yesterday: ApiTaskAgentConversationSummary[] = [];
+    const thisWeek: ApiTaskAgentConversationSummary[] = [];
+    const older: ApiTaskAgentConversationSummary[] = [];
+    for (const c of list) {
+      const diff = now - new Date(c.updatedAt).getTime();
+      if (diff < day) today.push(c);
+      else if (diff < day * 2) yesterday.push(c);
+      else if (diff < day * 7) thisWeek.push(c);
+      else older.push(c);
+    }
+    return { today, yesterday, thisWeek, older };
+  };
+
+  const pinnedConversations = conversations.filter((conversation) => conversation.pinned);
+  const groupedConversations = groupConversations(conversations.filter((conversation) => !conversation.pinned));
+  const searchResults = conversationSearch.trim()
+    ? conversations.filter((conversation) => conversation.title.toLowerCase().includes(conversationSearch.trim().toLowerCase()))
+    : conversations;
+  const groupLabels: Record<string, string> = { today: '今天', yesterday: '昨天', thisWeek: '最近 7 天', older: '更早' };
+
+  const handlePinConversation = async (conversation: ApiTaskAgentConversationSummary) => {
+    setOpenMenuId(null);
+    try {
+      await updateTaskAgentConversation(conversation.conversationId, { pinned: !conversation.pinned });
+      await refreshConversations();
+    } catch (error) {
+      setConversationError(`会话${conversation.pinned ? '取消置顶' : '置顶'}失败：${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
+  const handleRenameConversation = async (conversation: ApiTaskAgentConversationSummary) => {
+    const title = renameValue.trim();
+    if (!title) {
+      setRenamingId(null);
+      return;
+    }
+    try {
+      await updateTaskAgentConversation(conversation.conversationId, { title });
+      setRenamingId(null);
+      await refreshConversations();
+    } catch (error) {
+      setRenamingId(null);
+      setConversationError(`会话重命名失败：${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
+  const handleDeleteConversation = async (conversation: ApiTaskAgentConversationSummary) => {
+    setOpenMenuId(null);
+    try {
+      await deleteTaskAgentConversation(conversation.conversationId);
+      if (conversation.conversationId === conversationId) startNewConversation();
+      await refreshConversations();
+    } catch (error) {
+      setConversationError(`会话删除失败：${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
+  const renderConversation = (conversation: ApiTaskAgentConversationSummary) => {
+    const statusText = conversationStatus(conversation.taskStatus);
+    const isRenaming = renamingId === conversation.conversationId;
+    const openConversation = () => {
+      if (conversation.conversationId !== conversationId) void loadConversation(conversation.conversationId);
+    };
+    return (
+      <div
+        key={conversation.conversationId}
+        className={`task-agent-conversation-item${conversation.conversationId === conversationId ? ' active' : ''}`}
+        onClick={openConversation}
+        onKeyDown={(event) => {
+          if (event.target !== event.currentTarget) return;
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            openConversation();
+          }
+        }}
+        role="button"
+        tabIndex={0}
+        aria-label={conversation.title}
+        title={conversation.title}
+      >
+        {isRenaming ? (
+          <input
+            type="text"
+            value={renameValue}
+            onChange={(event) => setRenameValue(event.target.value)}
+            onKeyDown={async (event) => {
+              event.stopPropagation();
+              if (event.key === 'Enter') {
+                await handleRenameConversation(conversation);
+              }
+              if (event.key === 'Escape') setRenamingId(null);
+            }}
+            onBlur={() => setRenamingId(null)}
+            autoFocus
+            onClick={(event) => event.stopPropagation()}
+            className="task-agent-rename-input"
+          />
+        ) : (
+          <>
+            <span className="task-agent-conversation-title">{conversation.title}</span>
+            <span className="task-agent-conversation-preview">{conversation.preview || '暂无回复'}</span>
+            <span className="task-agent-conversation-meta">
+              <span>{conversationTime(conversation.updatedAt)}</span>
+              {statusText && <span className={`status-${String(conversation.taskStatus).toLowerCase()}`}>{statusText}</span>}
+            </span>
+          </>
+        )}
+        <div className="task-agent-conversation-item-actions" onClick={(event) => event.stopPropagation()}>
+          <button
+            type="button"
+            className="task-agent-conversation-item-menu"
+            aria-label={`管理 ${conversation.title}`}
+            onClick={() => setOpenMenuId(openMenuId === conversation.conversationId ? null : conversation.conversationId)}
+          >···</button>
+          {openMenuId === conversation.conversationId && (
+            <div className="task-agent-conversation-item-dropdown">
+              <button
+                type="button"
+                className="task-agent-dropdown-item"
+                onClick={() => {
+                  setRenamingId(conversation.conversationId);
+                  setRenameValue(conversation.title);
+                  setOpenMenuId(null);
+                }}
+              ><Pencil size={13} /> <span>重命名</span></button>
+              <button
+                type="button"
+                className="task-agent-dropdown-item"
+                onClick={() => void handlePinConversation(conversation)}
+              >{conversation.pinned ? <PinOff size={13} /> : <Pin size={13} />} <span>{conversation.pinned ? '取消置顶' : '置顶'}</span></button>
+              <button
+                type="button"
+                className="task-agent-dropdown-item danger"
+                onClick={() => void handleDeleteConversation(conversation)}
+              ><Trash2 size={13} /> <span>删除</span></button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   if (!loggedIn) {
     return <><Header /><main style={{ paddingTop: 110, maxWidth: 760, margin: '0 auto', paddingInline: 24 }}><h2>请先登录可信卫士</h2><button type="button" onClick={() => navigate('/login')}>前往登录</button></main></>;
   }
@@ -874,47 +1048,60 @@ export default function TaskAgentPage() {
   return (
     <div className="task-agent-page">
       <Header />
-      <main className="task-agent-layout">
-        <nav className="task-agent-conversations" aria-label="可信卫士会话列表">
-          <div className="task-agent-conversations-header">
-            <span className="task-agent-product-name"><ShieldCheck size={17} /> 可信卫士</span>
-            <button type="button" onClick={() => void refreshConversations()} aria-label="刷新会话列表" title="刷新会话列表">
-              <RefreshCw size={13} className={conversationsLoading ? 'tg-spin' : undefined} />
-            </button>
-          </div>
-          <button type="button" className={`task-agent-new-conversation${conversationId ? '' : ' active'}`} onClick={startNewConversation}>
-            <Plus size={14} /> 新建会话
-          </button>
-          {conversationError && <div className="task-agent-conversation-error">{conversationError}</div>}
-          <div className="task-agent-conversation-list">
-            {!conversationsLoading && conversations.length === 0 && (
-              <div className="task-agent-conversation-empty">还没有历史会话。发送第一条消息后，会话会保存在这里。</div>
-            )}
-            {conversations.map((conversation) => {
-              const statusText = conversationStatus(conversation.taskStatus);
-              return (
-                <button
-                  type="button"
-                  key={conversation.conversationId}
-                  className={`task-agent-conversation-item${conversation.conversationId === conversationId ? ' active' : ''}`}
-                  onClick={() => {
-                    if (conversation.conversationId !== conversationId) void loadConversation(conversation.conversationId);
-                  }}
-                  title={conversation.title}
-                >
-                  <span className="task-agent-conversation-title">{conversation.title}</span>
-                  <span className="task-agent-conversation-preview">{conversation.preview || '暂无回复'}</span>
-                  <span className="task-agent-conversation-meta">
-                    <span>{conversationTime(conversation.updatedAt)}</span>
-                    {statusText && <span className={`status-${String(conversation.taskStatus).toLowerCase()}`}>{statusText}</span>}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
+      <main className={`task-agent-layout${sidebarCollapsed ? ' sidebar-collapsed' : ''}`}>
+        <nav className={`task-agent-conversations${sidebarCollapsed ? ' collapsed' : ''}`} aria-label="可信卫士会话列表">
+          {sidebarCollapsed ? (
+            <div className="task-agent-conversation-rail">
+              <button type="button" className="task-agent-sidebar-icon-button" onClick={() => setSidebarCollapsed(false)} aria-label="展开会话栏" title="展开会话栏">
+                <PanelLeftOpen size={17} />
+              </button>
+              <button type="button" className="task-agent-sidebar-icon-button" onClick={startNewConversation} aria-label="新建会话" title="新建会话">
+                <Plus size={17} />
+              </button>
+              <button type="button" className="task-agent-sidebar-icon-button" onClick={() => setSearchOpen(true)} aria-label="搜索会话" title="搜索会话">
+                <Search size={17} />
+              </button>
+            </div>
+          ) : (
+            <>
+              <div className="task-agent-conversations-header">
+                <span className="task-agent-product-name"><ShieldCheck size={17} /> 可信卫士</span>
+                <span className="task-agent-conversations-header-actions">
+                  <button type="button" onClick={() => setSearchOpen(true)} aria-label="搜索会话" title="搜索会话">
+                    <Search size={14} />
+                  </button>
+                  <button type="button" onClick={() => setSidebarCollapsed(true)} aria-label="收起会话栏" title="收起会话栏">
+                    <PanelLeftClose size={14} />
+                  </button>
+                </span>
+              </div>
+              <button type="button" className={`task-agent-new-conversation${conversationId ? '' : ' active'}`} onClick={startNewConversation}>
+                <Plus size={14} /> 新建会话
+              </button>
+              {conversationError && <div className="task-agent-conversation-error">{conversationError}</div>}
+              <div className="task-agent-conversation-list">
+                {!conversationsLoading && conversations.length === 0 && (
+                  <div className="task-agent-conversation-empty">还没有历史会话。发送第一条消息后，会话会保存在这里。</div>
+                )}
+                {conversationsLoading && conversations.length === 0 && <div className="task-agent-conversation-empty">加载中...</div>}
+                {pinnedConversations.length > 0 && (
+                  <div className="task-agent-conversation-group">
+                    <div className="task-agent-conversation-group-label">置顶</div>
+                    {pinnedConversations.map(renderConversation)}
+                  </div>
+                )}
+                {Object.entries(groupedConversations).map(([key, items]) => items.length > 0 && (
+                  <div className="task-agent-conversation-group" key={key}>
+                    <div className="task-agent-conversation-group-label">{groupLabels[key] ?? key}</div>
+                    {items.map(renderConversation)}
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
         </nav>
         <section className="task-agent-chat" aria-label="对话">
-          <div className="task-agent-chat-scroll">
+          <div className="task-agent-chat-scroll" ref={scrollRef}>
             {conversationLoading && <div className="task-agent-conversation-loading"><Loader2 size={14} className="tg-spin" /> 正在恢复会话…</div>}
             <div className="task-agent-message-column">
               {messages.map((message) => (
@@ -922,24 +1109,40 @@ export default function TaskAgentPage() {
                   <div className={`task-agent-message ${message.role}`}>
                     {message.role === 'assistant' && <span className="task-agent-message-mark" aria-hidden="true"><ShieldCheck size={15} /></span>}
                     <div className="task-agent-message-bubble">
-                      {message.text || (message.streaming ? '正在整理任务…' : '')}
+                      {message.role === 'assistant' ? (
+                        <>
+                          {message.thinking && !(message.activities?.length) && <ThinkingBlock
+                            hasContent={!!message.text}
+                            streaming={!!message.streaming}
+                          />}
+                          {message.text && <MarkdownBlock content={message.text} />}
+                          {message.activities && message.activities.length > 0 && <ToolCallBlock
+                            activities={message.activities}
+                            live={Boolean(message.thinking)}
+                          />}
+                        </>
+                      ) : (
+                        message.text
+                      )}
                       {message.streaming && <span className="tg-stream-cursor" aria-hidden="true" />}
                       {message.draft && message.confirmationToken && <DraftCard draft={message.draft} onConfirm={() => void confirm(message)} busy={draftBusy || Boolean(message.streaming)} />}
                     </div>
                   </div>
-                  {message.id === reasoningAnchorMessageId && <InlineReasoningTrace activities={reasoningActivities} />}
+                  {message.id === reasoningAnchorMessageId && <ToolCallBlock activities={reasoningActivities} />}
                 </Fragment>
               ))}
-              {reasoningActivities.length > 0 && !reasoningAnchorMessageId && <InlineReasoningTrace activities={reasoningActivities} />}
+              {reasoningActivities.length > 0 && !reasoningAnchorMessageId && <ToolCallBlock activities={reasoningActivities} />}
             </div>
-            <div ref={endRef} />
           </div>
+          {!isNearBottom && (
+            <button type="button" className="tg-scroll-bottom" onClick={scrollToBottom} aria-label="滚动到底部">↓</button>
+          )}
           <div className="task-agent-composer-wrap">
             <div className="task-agent-composer">
-              <textarea value={input} disabled={conversationLoading} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void submit(); } }} placeholder="描述测试目标，或输入告警 UUID 进行研判" rows={2} />
+              <textarea ref={composerRef} value={input} disabled={conversationLoading} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void submit(); } }} placeholder="描述测试目标，或输入告警 UUID 进行研判" rows={2} />
               <button type="button" onClick={() => busy ? draftAbortRef.current?.abort() : void submit()} disabled={conversationLoading || (!busy && !input.trim())} aria-label={busy ? '停止生成' : '发送'}>{busy ? <Square size={13} fill="currentColor" /> : <Send size={16} />}</button>
             </div>
-            <span className="task-agent-composer-hint">Enter 发送 · Shift + Enter 换行</span>
+            <span className="task-agent-composer-hint" role="status" aria-live="polite">{composerHint}</span>
           </div>
         </section>
         <aside className="task-agent-monitor" aria-label="任务状态与执行轨迹">
@@ -974,6 +1177,48 @@ export default function TaskAgentPage() {
           </section>
         </aside>
       </main>
+      {searchOpen && (
+        <div className="task-agent-search-overlay" onClick={() => setSearchOpen(false)}>
+          <section
+            className="task-agent-search-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="task-agent-search-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h2 id="task-agent-search-title">搜索会话</h2>
+            <div className="task-agent-search-field">
+              <Search size={16} aria-hidden="true" />
+              <input
+                type="text"
+                value={conversationSearch}
+                onChange={(event) => setConversationSearch(event.target.value)}
+                aria-label="搜索会话"
+                placeholder="按标题搜索"
+                autoFocus
+              />
+            </div>
+            <div className="task-agent-search-results">
+              {searchResults.length === 0 && <p className="task-agent-search-empty">没有匹配的会话</p>}
+              {searchResults.map((conversation) => (
+                <button
+                  type="button"
+                  key={conversation.conversationId}
+                  className={conversation.conversationId === conversationId ? 'current' : undefined}
+                  onClick={() => {
+                    void loadConversation(conversation.conversationId);
+                    setSearchOpen(false);
+                    setConversationSearch('');
+                  }}
+                >
+                  <span>{conversation.title}</span>
+                  <small>{conversation.preview || '暂无回复'}</small>
+                </button>
+              ))}
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }
